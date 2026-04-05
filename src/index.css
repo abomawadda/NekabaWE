@@ -1,0 +1,15 @@
+/* 1. يجب أن يكون استيراد تايلوند والخط في المقدمة تماماً وبدون أي تعليقات قبلهما */
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap');
+
+/* 2. تخصيص الثيم (اختياري ولكن محترف) */
+@theme {
+  --font-cairo: "Cairo", sans-serif;
+}
+
+/* 3. تطبيق التنسيقات على جسم الصفحة */
+body {
+  font-family: var(--font-cairo);
+  background-color: var(--color-slate-50); /* استبدال @apply بكود CSS مباشر لتجنب تعارض المحرك في البداية */
+  color: var(--color-slate-900);
+}
