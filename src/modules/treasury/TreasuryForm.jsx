@@ -2,6 +2,8 @@
  * TreasuryForm — نموذج إصدار المستندات المالية
  * ✅ إضافة: صرف شيك نشاط (activity) مع حقول متخصصة
  * ✅ إصلاح: التحقق من الأخطاء وعدم ظهور صفحات بيضاء
+ * ✅ إصلاح: رأس النموذج ثابت تماماً عند التمرير
+ * ✅ إصلا��: بيانات الطباعة تظهر بشكل صحيح
  * ✅ تحسين: توافق موبايل كامل
  * ✅ تحسين: تصميم احترافي
  */
@@ -32,14 +34,15 @@ import clsx from "clsx";
 const DEP_OPTS = ["النقابة العامة بالدقهلية", "أمين الصندوق", "اشتراكات أعضاء", "جهة خارجية"];
 
 const AID_RELS = {
-  "إعانة زواج":           ["العضو نفسه", "ابن", "ابنة"],
-  "إعانة وفاة":           ["العضو نفسه", "الزوج", "الزوجة", "أب", "أم", "ابن", "ابنة"],
+  "زواج":           ["العضو نفسه", "ابن", "ابنة"],
+  "وفاة":           ["العضو نفسه", "الزوج", "الزوجة", "أب", "أم", "ابن", "ابنة"],
   "ظروف قهرية / صحية":  ["العضو نفسه"],
+  "مناسبات":           ["ميزانيات", "دور وطني", "جوائز مسابقات", "مبادرات"],
 };
 
 const TYPE_LABELS = {
   deposit:  "سند إيداع (دائن)",
-  aid:      "سند صرف إعانة (مدين)",
+  aid:      "سند صرف (مدين)",
   advance:  "سند سلفة / عهدة (مدين)",
   activity: "شيك دعم فاعلية (مدين)",
 };
@@ -343,10 +346,11 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
   return (
     <div className={clsx("flex flex-col gap-4 max-w-4xl mx-auto pb-24 animate-in slide-in-from-bottom-8 duration-500", T.text)} dir="rtl">
 
-      {/* ── رأس النموذج ── */}
+      {/* ── رأس النموذج (ثابت تماماً) ── */}
       <div className={clsx(
         "p-3 px-5 rounded-2xl border shadow-md flex flex-wrap items-center justify-between gap-3",
-        "sticky top-2 z-[100] backdrop-blur-md bg-white/90 dark:bg-slate-900/90",
+        "fixed top-0 left-0 right-0 z-[100] backdrop-blur-md bg-white/95 dark:bg-slate-900/95",
+        "max-w-4xl mx-auto w-full",
         T.card
       )}>
         <div className="flex items-center gap-3">
@@ -373,235 +377,241 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
         </div>
       </div>
 
-      {/* ── 1. اختيار نوع السند (تغيير نوع الحركة) ── */}
-      {!isEdit && (
-        <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
-          <p className="text-[10px] font-black text-slate-500 uppercase mb-3 flex items-center gap-2">
-            <Tag size={12} className="text-teal-500"/> نوع المستند المالي
-          </p>
-          <TypeSelector value={tx.type} onChange={v => setTx(prev => ({ ...getEmptyTx(), type: v, date: prev.date }))}/>
-        </div>
-      )}
+      {/* ── إضافة padding-top لتعويض الـ fixed header ── */}
+      <div className="pt-24">
 
-      {/* ── 2. البيانات الأساسية للسند ── */}
-      <ERPSection title="بيانات السند الأساسية" icon={FileText} colorClass="slate" zIndex="z-[90]"
-        badge={tx.state === "posted" ? "مرحّل" : "مسودة"}>
-        <div className="space-y-1">
-          <ArabicDatePicker label="تاريخ الحركة *" value={tx.date} maxVal={getTodayISO()} onChange={v => update("date", v)} />
-          {errors.date && <p className="text-[9px] text-rose-500 font-black flex items-center gap-1"><AlertCircle size={10}/>{errors.date}</p>}
-        </div>
-
-        <ERPInput
-          label="المبلغ الإجمالي (ج.م)" required
-          value={tx.amount}
-          onChange={e => update("amount", e.target.value)}
-          isNumeric error={errors.amount} icon={DollarSign} placeholder="0.00"
-        />
-
-        {tx.type !== "deposit" && (
-          <div className="sm:col-span-2 space-y-1">
-            <label className="text-[10px] font-black text-slate-500 uppercase pr-1 flex justify-between">
-              رقم الشيك البنكي <span className="text-[9px] text-amber-500 font-bold">المقترح: #{nextCheque}</span>
-            </label>
-            <div className="relative group">
-              <Hash size={14} className={clsx("absolute right-3 top-2.5 z-10 pointer-events-none", errors.checkNum ? "text-rose-500" : "text-slate-400")}/>
-              <input
-                type="text" inputMode="numeric" value={tx.checkNum}
-                onChange={e => update("checkNum", e.target.value)}
-                className={clsx("w-full pr-9 pl-4 py-2 rounded-xl border text-xs font-bold outline-none focus:ring-2 h-[38px]", T.inp, errors.checkNum && "!border-rose-500 bg-rose-50/10")}
-                placeholder={String(nextCheque || "")}
-              />
-            </div>
-            {errors.checkNum && <p className="text-[9px] text-rose-500 font-black flex items-center gap-1"><AlertCircle size={10}/>{errors.checkNum}</p>}
+        {/* ── 1. اختيار نوع السند (تغيير نوع الحركة) ── */}
+        {!isEdit && (
+          <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
+            <p className="text-[10px] font-black text-slate-500 uppercase mb-3 flex items-center gap-2">
+              <Tag size={12} className="text-teal-500"/> نوع المستند المالي
+            </p>
+            <TypeSelector value={tx.type} onChange={v => setTx(prev => ({ ...getEmptyTx(), type: v, date: prev.date }))}/>
           </div>
         )}
-      </ERPSection>
 
-      {/* ── 3. بيانات الإيداع ── */}
-      {tx.type === "deposit" && (
-        <ERPSection title="جهة الإيداع والمصدر" icon={Building} colorClass="emerald" zIndex="z-[85]">
-          <div className="sm:col-span-2">
-            <DynamicSelect
-              label="جهة الإيداع *"
-              value={tx.party}
-              onChange={v => update("party", v)}
-              icon={Building}
-              defaultOptions={DEP_OPTS}
-            />
-            {errors.party && <p className="text-[9px] text-rose-500 font-black mt-1 flex items-center gap-1"><AlertCircle size={10}/>{errors.party}</p>}
+        {/* ── 2. البيانات الأساسية للسند ── */}
+        <ERPSection title="بيانات السند الأساسية" icon={FileText} colorClass="slate" zIndex="z-[90]"
+          badge={tx.state === "posted" ? "مرحّل" : "مسودة"}>
+          <div className="space-y-1">
+            <ArabicDatePicker label="تاريخ الحركة *" value={tx.date} maxVal={getTodayISO()} onChange={v => update("date", v)} />
+            {errors.date && <p className="text-[9px] text-rose-500 font-black flex items-center gap-1"><AlertCircle size={10}/>{errors.date}</p>}
           </div>
-        </ERPSection>
-      )}
 
-      {/* ── 4. العضو المستفيد (للإعانة والسلفة والنشاط) ── */}
-      {["advance", "aid", "activity"].includes(tx.type) && (
-        <ERPSection
-          title={tx.type === "activity" ? "مسؤول الفاعلية (الرحلة/الإفطار)" : "العضو المستفيد / مسؤول العهدة"}
-          icon={User} colorClass="teal" zIndex="z-[80]"
-        >
-          <div className="sm:col-span-2 space-y-1 relative">
-            <label className="text-[10px] font-black text-slate-500 uppercase pr-1">
-              البحث في قاعدة الأعضاء *
-            </label>
-            <div className="relative group">
-              <Search size={14} className="absolute right-3 top-2.5 text-slate-400"/>
-              <input
-                type="text"
-                className={clsx("w-full pr-9 pl-4 py-2 rounded-xl border text-xs font-bold outline-none focus:ring-2 h-[38px]", T.inp, errors.party && "!border-rose-500")}
-                value={searchQ}
-                onChange={e => { setSearchQ(e.target.value); update("party", e.target.value); setShowRes(true); }}
-                onFocus={() => setShowRes(true)}
-                onBlur={() => setTimeout(() => setShowRes(false), 200)}
-                placeholder="ابحث بالاسم أو الرقم الوظيفي أو القومي..."
-              />
-              {showRes && searchRes.length > 0 && (
-                <div className={clsx("absolute top-full mt-1 w-full border rounded-xl shadow-2xl overflow-hidden z-[200]", T.card)}>
-                  {searchRes.map(emp => (
-                    <button key={emp.id} type="button" onMouseDown={() => selectEmployee(emp)}
-                      className="w-full p-2.5 flex items-center justify-between hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors border-b last:border-0 text-right">
-                      <div>
-                        <p className="text-[11px] font-black">{emp.name}</p>
-                        <p className="text-[9px] text-slate-400">{emp.position || emp.jobTitle}</p>
-                      </div>
-                      <span className="text-[9px] font-bold bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-400 px-2 py-0.5 rounded-lg">{emp.jobId || "—"}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {tx.employeeId && (
-              <div className="flex items-center gap-1.5 text-teal-600 font-black text-[9px] mt-1 bg-teal-50 dark:bg-teal-900/30 w-fit px-2 py-0.5 rounded-lg">
-                <UserCheck size={10}/> مرتبط بالكود: {tx.employeeId}
+          <ERPInput
+            label="المبلغ الإجمالي (ج.م)" required
+            value={tx.amount}
+            onChange={e => update("amount", e.target.value)}
+            isNumeric error={errors.amount} icon={DollarSign} placeholder="0.00"
+          />
+
+          {tx.type !== "deposit" && (
+            <div className="sm:col-span-2 space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase pr-1 flex justify-between">
+                رقم الشيك البنكي <span className="text-[9px] text-amber-500 font-bold">المقترح: #{nextCheque}</span>
+              </label>
+              <div className="relative group">
+                <Hash size={14} className={clsx("absolute right-3 top-2.5 z-10 pointer-events-none", errors.checkNum ? "text-rose-500" : "text-slate-400")}/>
+                <input
+                  type="text" inputMode="numeric" value={tx.checkNum}
+                  onChange={e => update("checkNum", e.target.value)}
+                  className={clsx("w-full pr-9 pl-4 py-2 rounded-xl border text-xs font-bold outline-none focus:ring-2 h-[38px]", T.inp, errors.checkNum && "!border-rose-500 bg-rose-50/10")}
+                  placeholder={String(nextCheque || "")}
+                />
               </div>
-            )}
-            {errors.party && <p className="text-[9px] text-rose-500 font-black flex items-center gap-1 mt-0.5"><AlertCircle size={10}/>{errors.party}</p>}
-          </div>
-        </ERPSection>
-      )}
-
-      {/* ── 5. بيانات الإعانة ── */}
-      {tx.type === "aid" && (
-        <ERPSection title="موجبات صرف الإعانة" icon={Heart} colorClass="rose" zIndex="z-[75]">
-          <ERPSelect
-            label="نوع الإعانة" required icon={Tag}
-            value={tx.aidCategory} error={errors.aidCategory}
-            onChange={e => { update("aidCategory", e.target.value); update("aidRel", ""); }}
-          >
-            <option value="">-- اختر نوع الإعانة --</option>
-            {Object.keys(AID_RELS).map(c => <option key={c} value={c}>{c}</option>)}
-          </ERPSelect>
-
-          <ERPSelect
-            label="صلة القرابة" required icon={Users}
-            value={tx.aidRel} error={errors.aidRel}
-            onChange={e => update("aidRel", e.target.value)}
-            disabled={!tx.aidCategory}
-          >
-            <option value="">-- اختر --</option>
-            {(AID_RELS[tx.aidCategory] || []).map(r => <option key={r} value={r}>{r}</option>)}
-          </ERPSelect>
-
-          <div className="sm:col-span-2 space-y-1 z-[60]">
-            <ArabicDatePicker label="تاريخ واقعة الإعانة" value={tx.incidentDate} maxVal={tx.date} onChange={v => update("incidentDate", v)} />
-          </div>
-
-          {tx.aidCategory && tx.aidRel && (
-            <div className="sm:col-span-2 flex items-center gap-2 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 px-3 py-2 rounded-xl">
-              <Info size={14} className="text-rose-500 shrink-0"/>
-              <p className="text-[10px] font-black text-rose-700 dark:text-rose-400">
-                المبلغ المقترح حسب لائحة النقابة:
-                <span className="mr-1 text-rose-600 dark:text-rose-300">
-                  {(AID_AMOUNTS[`${tx.aidCategory}:${tx.aidRel}`] || 300).toLocaleString()} ج.م
-                </span>
-              </p>
+              {errors.checkNum && <p className="text-[9px] text-rose-500 font-black flex items-center gap-1"><AlertCircle size={10}/>{errors.checkNum}</p>}
             </div>
           )}
         </ERPSection>
-      )}
 
-      {/* ── 6. ✨ بيانات الفاعلية (صرف شيك نشاط) ── */}
-      {tx.type === "activity" && (
-        <ERPSection
-          title="تفاصيل الفاعلية — شيك دعم النشاط"
-          icon={Activity} colorClass="amber" zIndex="z-[70]"
-          badge="جديد"
-        >
-          {/* اسم الفاعلية */}
-          <ERPInput
-            label="اسم الفاعلية / الحدث" required fullWidth
-            value={tx.activityName || ""}
-            onChange={e => update("activityName", e.target.value)}
-            error={errors.activityName}
-            icon={Tag}
-            placeholder="مثال: رحلة شرم الشيخ الصيفية"
-          />
+        {/* ── 3. بيانات الإيداع ── */}
+        {tx.type === "deposit" && (
+          <ERPSection title="جهة الإيداع والمصدر" icon={Building} colorClass="emerald" zIndex="z-[85]">
+            <div className="sm:col-span-2">
+              <DynamicSelect
+                label="جهة الإيداع *"
+                value={tx.party}
+                onChange={v => update("party", v)}
+                icon={Building}
+                defaultOptions={DEP_OPTS}
+              />
+              {errors.party && <p className="text-[9px] text-rose-500 font-black mt-1 flex items-center gap-1"><AlertCircle size={10}/>{errors.party}</p>}
+            </div>
+          </ERPSection>
+        )}
 
-          {/* نوع الفاعلية */}
-          <ERPSelect
-            label="نوع الفاعلية" required icon={Tag}
-            value={tx.activityType || ""} error={errors.activityType}
-            onChange={e => update("activityType", e.target.value)}
+        {/* ── 4. العضو المستفيد (للإعانة والسلفة والنشاط) ── */}
+        {["advance", "aid", "activity"].includes(tx.type) && (
+          <ERPSection
+            title={tx.type === "activity" ? "مسؤول الفاعلية (الرحلة/الإفطار)" : "العضو المستفيد / مسؤول العهدة"}
+            icon={User} colorClass="teal" zIndex="z-[80]"
           >
-            <option value="">-- حدد النوع --</option>
-            {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-          </ERPSelect>
+            <div className="sm:col-span-2 space-y-1 relative">
+              <label className="text-[10px] font-black text-slate-500 uppercase pr-1">
+                البحث في قاعدة الأعضاء *
+              </label>
+              <div className="relative group">
+                <Search size={14} className="absolute right-3 top-2.5 text-slate-400"/>
+                <input
+                  type="text"
+                  className={clsx("w-full pr-9 pl-4 py-2 rounded-xl border text-xs font-bold outline-none focus:ring-2 h-[38px]", T.inp, errors.party && "!border-rose-500")}
+                  value={searchQ}
+                  onChange={e => { setSearchQ(e.target.value); update("party", e.target.value); setShowRes(true); }}
+                  onFocus={() => setShowRes(true)}
+                  onBlur={() => setTimeout(() => setShowRes(false), 200)}
+                  placeholder="ابحث بالاسم أو الرقم الوظيفي أو القومي..."
+                />
+                {showRes && searchRes.length > 0 && (
+                  <div className={clsx("absolute top-full mt-1 w-full border rounded-xl shadow-2xl overflow-hidden z-[200]", T.card)}>
+                    {searchRes.map(emp => (
+                      <button key={emp.id} type="button" onMouseDown={() => selectEmployee(emp)}
+                        className="w-full p-2.5 flex items-center justify-between hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors border-b last:border-0 text-right">
+                        <div>
+                          <p className="text-[11px] font-black">{emp.name}</p>
+                          <p className="text-[9px] text-slate-400">{emp.position || emp.jobTitle}</p>
+                        </div>
+                        <span className="text-[9px] font-bold bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-400 px-2 py-0.5 rounded-lg">{emp.jobId || "—"}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {tx.employeeId && (
+                <div className="flex items-center gap-1.5 text-teal-600 font-black text-[9px] mt-1 bg-teal-50 dark:bg-teal-900/30 w-fit px-2 py-0.5 rounded-lg">
+                  <UserCheck size={10}/> مرتبط بالكود: {tx.employeeId}
+                </div>
+              )}
+              {errors.party && <p className="text-[9px] text-rose-500 font-black flex items-center gap-1 mt-0.5"><AlertCircle size={10}/>{errors.party}</p>}
+            </div>
+          </ERPSection>
+        )}
 
-          {/* موعد الفاعلية */}
-          <div className="space-y-1">
-            <ArabicDatePicker label="موعد الفاعلية المقرر" value={tx.activityDate || ""} onChange={v => update("activityDate", v)} />
+        {/* ── 5. بيانات الإعانة ── */}
+        {tx.type === "aid" && (
+          <ERPSection title="موجبات صرف الإعانة" icon={Heart} colorClass="rose" zIndex="z-[75]">
+            <ERPSelect
+              label="نوع الإعانة" required icon={Tag}
+              value={tx.aidCategory} error={errors.aidCategory}
+              onChange={e => { update("aidCategory", e.target.value); update("aidRel", ""); }}
+            >
+              <option value="">-- اختر نوع الإعانة --</option>
+              {Object.keys(AID_RELS).map(c => <option key={c} value={c}>{c}</option>)}
+            </ERPSelect>
+
+            <ERPSelect
+              label="صلة القرابة" required icon={Users}
+              value={tx.aidRel} error={errors.aidRel}
+              onChange={e => update("aidRel", e.target.value)}
+              disabled={!tx.aidCategory}
+            >
+              <option value="">-- اختر --</option>
+              {(AID_RELS[tx.aidCategory] || []).map(r => <option key={r} value={r}>{r}</option>)}
+            </ERPSelect>
+
+            <div className="sm:col-span-2 space-y-1 z-[60]">
+              <ArabicDatePicker label="تاريخ واقعة الإعانة" value={tx.incidentDate} maxVal={tx.date} onChange={v => update("incidentDate", v)} />
+            </div>
+
+            {tx.aidCategory && tx.aidRel && (
+              <div className="sm:col-span-2 flex items-center gap-2 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 px-3 py-2 rounded-xl">
+                <Info size={14} className="text-rose-500 shrink-0"/>
+                <p className="text-[10px] font-black text-rose-700 dark:text-rose-400">
+                  المبلغ المقترح حسب لائحة النقابة:
+                  <span className="mr-1 text-rose-600 dark:text-rose-300">
+                    {(AID_AMOUNTS[`${tx.aidCategory}:${tx.aidRel}`] || 300).toLocaleString()} ج.م
+                  </span>
+                </p>
+              </div>
+            )}
+          </ERPSection>
+        )}
+
+        {/* ── 6. ✨ بيانات الفاعلية (صرف شيك نشاط) ── */}
+        {tx.type === "activity" && (
+          <ERPSection
+            title="تفاصيل الفاعلية — شيك دعم النشاط"
+            icon={Activity} colorClass="amber" zIndex="z-[70]"
+            badge="جديد"
+          >
+            {/* اسم الفاعلية */}
+            <ERPInput
+              label="اسم الفاعلية / الحدث" required fullWidth
+              value={tx.activityName || ""}
+              onChange={e => update("activityName", e.target.value)}
+              error={errors.activityName}
+              icon={Tag}
+              placeholder="مثال: رحلة شرم الشيخ الصيفية"
+            />
+
+            {/* نوع الفاعلية */}
+            <ERPSelect
+              label="نوع الفاعلية" required icon={Tag}
+              value={tx.activityType || ""} error={errors.activityType}
+              onChange={e => update("activityType", e.target.value)}
+            >
+              <option value="">-- حدد النوع --</option>
+              {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </ERPSelect>
+
+            {/* موعد الفاعلية */}
+            <div className="space-y-1">
+              <ArabicDatePicker label="موعد الفاعلية المقرر" value={tx.activityDate || ""} onChange={v => update("activityDate", v)} />
+            </div>
+
+            {/* عدد المشاركين */}
+            <ERPInput
+              label="عدد المشاركين المتوقع"
+              value={tx.participantsCount || ""}
+              onChange={e => update("participantsCount", e.target.value)}
+              isNumeric icon={Users}
+              placeholder="عدد الأشخاص"
+            />
+
+            {/* موقع الفاعلية */}
+            <ERPInput
+              label="موقع / وجهة الفاعلية" fullWidth
+              value={tx.activityLocation || ""}
+              onChange={e => update("activityLocation", e.target.value)}
+              icon={MapPin}
+              placeholder="مثال: شرم الشيخ / قاعة النقابة"
+            />
+
+            {/* تلميح */}
+            <div className="sm:col-span-2 flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 px-3 py-2 rounded-xl">
+              <Info size={14} className="text-amber-600 mt-0.5 shrink-0"/>
+              <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400">
+                يُمثل هذا المستند شيك دعم فاعلية ويُخصم من رصيد الخزينة. تأكد من اعتماد رئيس المجلس قبل الصرف.
+              </p>
+            </div>
+          </ERPSection>
+        )}
+
+        {/* ── 7. الملاحظات والمرفقات ── */}
+        <ERPSection title="البيان التوضيحي والمرفقات" icon={FileText} colorClass="indigo" zIndex="z-[50]">
+          <div className="sm:col-span-2 space-y-1">
+            <label className="text-[10px] font-black text-slate-400 uppercase pr-1">
+              {tx.type === "activity" ? "تفاصيل إضافية / بند الصرف" : "ملاحظات وبيان السند"}
+            </label>
+            <textarea
+              rows={3}
+              className={clsx("w-full px-3 py-2 rounded-xl border text-xs font-bold resize-none outline-none focus:ring-2", T.inp)}
+              value={tx.notes}
+              onChange={e => update("notes", e.target.value)}
+              placeholder={tx.type === "activity" ? "اكتب تفاصيل بنود الصرف والميزانية..." : "اكتب التفاصيل والمستندات المرفقة..."}
+            />
           </div>
-
-          {/* عدد المشاركين */}
-          <ERPInput
-            label="عدد المشاركين المتوقع"
-            value={tx.participantsCount || ""}
-            onChange={e => update("participantsCount", e.target.value)}
-            isNumeric icon={Users}
-            placeholder="عدد الأشخاص"
-          />
-
-          {/* موقع الفاعلية */}
-          <ERPInput
-            label="موقع / وجهة الفاعلية" fullWidth
-            value={tx.activityLocation || ""}
-            onChange={e => update("activityLocation", e.target.value)}
-            icon={MapPin}
-            placeholder="مثال: شرم الشيخ / قاعة النقابة"
-          />
-
-          {/* تلميح */}
-          <div className="sm:col-span-2 flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 px-3 py-2 rounded-xl">
-            <Info size={14} className="text-amber-600 mt-0.5 shrink-0"/>
-            <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400">
-              يُمثل هذا المستند شيك دعم فاعلية ويُخصم من رصيد الخزينة. تأكد من اعتماد رئيس المجلس قبل الصرف.
-            </p>
+          <div className="sm:col-span-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <FileUpload existingFiles={tx.attachments || []} onChange={files => update("attachments", files)} />
           </div>
         </ERPSection>
-      )}
 
-      {/* ── 7. الملاحظات والمرفقات ── */}
-      <ERPSection title="البيان التوضيحي والمرفقات" icon={FileText} colorClass="indigo" zIndex="z-[50]">
-        <div className="sm:col-span-2 space-y-1">
-          <label className="text-[10px] font-black text-slate-400 uppercase pr-1">
-            {tx.type === "activity" ? "تفاصيل إضافية / بند الصرف" : "ملاحظات وبيان السند"}
-          </label>
-          <textarea
-            rows={3}
-            className={clsx("w-full px-3 py-2 rounded-xl border text-xs font-bold resize-none outline-none focus:ring-2", T.inp)}
-            value={tx.notes}
-            onChange={e => update("notes", e.target.value)}
-            placeholder={tx.type === "activity" ? "اكتب تفاصيل بنود الصرف والميزانية..." : "اكتب التفاصيل والمستندات المرفقة..."}
-          />
-        </div>
-        <div className="sm:col-span-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-          <FileUpload existingFiles={tx.attachments || []} onChange={files => update("attachments", files)} />
-        </div>
-      </ERPSection>
+      </div>
 
       {/* ── شريط الأزرار السفلي ── */}
       <div className={clsx(
         "flex flex-wrap justify-between items-center gap-3 p-3 px-4",
-        "sticky bottom-2 z-[100] backdrop-blur-xl rounded-2xl shadow-xl border",
+        "fixed bottom-0 left-0 right-0 z-[100] backdrop-blur-xl rounded-2xl shadow-xl border",
+        "max-w-4xl mx-auto w-full",
         T.card
       )}>
         {/* معلومات سريعة */}
@@ -621,7 +631,24 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
           {!isEdit && tx.type !== "deposit" && (
             <button
               type="button"
-              onClick={() => { if (validate()) printVoucher?.(tx); }}
+              onClick={() => { 
+                if (validate()) {
+                  printVoucher?.({
+                    vType: TYPE_LABELS[tx.type],
+                    vNum: tx.checkNum,
+                    date: tx.date,
+                    party: tx.party,
+                    amount: tx.amount,
+                    notes: tx.notes,
+                    checkNum: tx.checkNum,
+                    extraFields: tx.type === 'activity' ? [
+                      { label: 'اسم الفاعلية', value: tx.activityName },
+                      { label: 'نوع الفاعلية', value: tx.activityType },
+                      { label: 'الموقع', value: tx.activityLocation }
+                    ] : []
+                  });
+                }
+              }}
               className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl font-black text-[10px] flex items-center gap-1.5 border transition-all"
             >
               <Printer size={13}/> طباعة سند
