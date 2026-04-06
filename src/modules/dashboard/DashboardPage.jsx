@@ -10,7 +10,8 @@ import {
   Wallet, TrendingUp, TrendingDown, Users, AlertTriangle,
   ArrowDownRight, ArrowUpRight, FileText, ReceiptText,
   ChevronLeft, RefreshCw, Activity, Calendar, ShieldCheck, Star,
-  Briefcase, Landmark, PlusCircle, UserCircle, CreditCard
+  Briefcase, Landmark, PlusCircle, UserCircle, CreditCard,
+  UploadCloud // 👈 تم إضافة أيقونة الرفع هنا
 } from "lucide-react";
 
 // ── الثوابت ──
@@ -257,13 +258,14 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         
         <div className="lg:col-span-2 space-y-5">
-          {/* بوابات النظام */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {/* بوابات النظام (محدثة بإضافة زر الاستيراد وتنسيق sm:grid-cols-5) */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {[
               { title: "الأعضاء", icon: Users, color: "teal", link: "/employees" },
               { title: "الخزينة", icon: Wallet, color: "emerald", link: "/treasury/admin" },
               { title: "العهد", icon: Briefcase, color: "amber", link: "/treasury/settlements" },
               { title: "كشف الحساب", icon: ReceiptText, color: "purple", link: "/treasury/ledger" },
+              { title: "استيراد بيانات", icon: UploadCloud, color: "blue", link: "/importer" }, // 👈 الزر الجديد هنا
             ].map((mod, i) => {
               const MIcon = mod.icon;
               return (

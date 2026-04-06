@@ -1,46 +1,53 @@
 import { Routes, Route } from "react-router-dom";
 import MainLayout from "./layout/MainLayout";
 
-// 🎯 استيراد الشاشات الأساسية
+// الشاشات الأساسية
 import DashboardPage from "../modules/dashboard/DashboardPage";
-import EmployeesPage from "../modules/employees/EmployeeDashboard";
+import EmployeesPage from "../modules/employees/EmployeesPage";
 import TreasuryPage from "../modules/treasury/TreasuryPage";
 import TreasuryLedger from "../modules/treasury/TreasuryLedger";
 import SettlementTab from "../modules/settlements/SettlementTab";
-import BoardDashboard from "../modules/board/BoardDashboard"; 
+import BoardDashboard from "../modules/board/BoardDashboard";
 
-// 🎯 استيراد شاشات الأنشطة والفعاليات الجديدة
+// شاشات الأنشطة والفعاليات
 import EventsMaster from "../modules/activities/EventsMaster";
 import EventBookings from "../modules/activities/EventBookings";
+
+// الإعدادات والتقارير
+import DataImporter from "../modules/settings/DataImporter";
+import ReportBuilder from "../modules/reports/ReportBuilder";
+
+function NotFoundPage() {
+  return (
+    <div className="p-20 flex flex-col items-center justify-center min-h-screen text-slate-400" dir="rtl">
+      <h1 className="text-4xl font-black mb-2">404</h1>
+      <p className="text-sm font-bold">الصفحة غير موجودة</p>
+    </div>
+  );
+}
 
 export default function Router() {
   return (
     <Routes>
       <Route element={<MainLayout />}>
-        
-        {/* 🎯 الصفحة الرئيسية */}
         <Route path="/" element={<DashboardPage />} />
         <Route path="/dashboardpage" element={<DashboardPage />} />
 
-        {/* ── مسار الموظفين والأعضاء ── */}
         <Route path="/employees" element={<EmployeesPage />} />
-
-        {/* ── مسار مجلس الإدارة ── */}
         <Route path="/board" element={<BoardDashboard />} />
 
-        {/* ── 🏕️ مسارات الأنشطة والفعاليات ── */}
         <Route path="/activities/master" element={<EventsMaster />} />
         <Route path="/activities/bookings" element={<EventBookings />} />
 
-        {/* ── 💰 مسارات الخزينة ── */}
         <Route path="/treasury/admin" element={<TreasuryPage />} />
         <Route path="/treasury/ledger" element={<TreasuryLedger />} />
         <Route path="/treasury/settlements" element={<SettlementTab />} />
-        
+
+        <Route path="/importer" element={<DataImporter />} />
+        <Route path="/reports" element={<ReportBuilder />} />
       </Route>
 
-      {/* ── شاشة 404 (في حال إدخال مسار خاطئ) ── */}
-      <Route path="*" element={<div className="p-20 text-center font-black">404 - الصفحة غير موجودة</div>} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }

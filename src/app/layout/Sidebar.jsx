@@ -13,32 +13,45 @@ export default function Sidebar({ isOpen, setIsOpen }) {
   // 🎯 حالات القوائم المنسدلة
   const [isTreasuryOpen, setIsTreasuryOpen] = useState(pathname.includes('/treasury'));
   const [isActivitiesOpen, setIsActivitiesOpen] = useState(pathname.includes('/activities'));
+  const [isReportsOpen, setIsReportsOpen] = useState(pathname.includes('/reports'));
+  const [isSettingsOpen, setIsSettingsOpen] = useState(pathname.includes('/importer'));
 
   // تحديث حالة القوائم بناءً على الرابط الحالي
   useEffect(() => {
     if (pathname.includes('/treasury')) setIsTreasuryOpen(true);
     if (pathname.includes('/activities')) setIsActivitiesOpen(true);
+    if (pathname.includes('/reports')) setIsReportsOpen(true);
+    if (pathname.includes('/importer')) setIsSettingsOpen(true);
   }, [pathname]);
 
+  // 🎯 القوائم الثابتة (التي لا تحتاج لانسدال)
   const menuGroups = [
     { title: "العامة", links: [{ label: "الرئيسية", path: "/dashboardpage", icon: "🏠" }] },
     { title: "شؤون المجلس", links: [{ label: "مجلس الإدارة", path: "/board", icon: "🛡️" }] }, 
     { title: "شؤون الأعضاء", links: [{ label: "إدارة الأعضاء", path: "/employees", icon: "👥" }] },
   ];
 
-  // 🎯 روابط الأنشطة والفعاليات
+  // 🎯 روابط الأقسام المنسدلة
   const activitiesLinks = [
-    { label: "دليل الفعاليات (تأسيس)", path: "/activities/master" },
-    { label: "محرك الحجز والتذاكر", path: "/activities/bookings" },
+    { label: "الفعاليات", path: "/activities/master" },
+    { label: "الحجز والتذاكر", path: "/activities/bookings" },
   ];
 
   const treasuryLinks = [
-    { label: "سجل الشيكات", path: "/treasury/admin" },
+    { label: " الشيكات", path: "/treasury/admin" },
     { label: "إضافة إيداع", path: "/treasury/admin?type=deposit" },
     { label: "صرف إعانة", path: "/treasury/admin?type=aid" },
     { label: "صرف سلفة", path: "/treasury/admin?type=advance" },
-    { label: "تسوية السلف والأنشطة", path: "/treasury/settlements" }, 
-    { label: "كشف حساب الخزينة", path: "/treasury/ledger" }
+    { label: "تسوية السلف ", path: "/treasury/settlements" }, 
+    { label: "كشف حساب ", path: "/treasury/ledger" }
+  ];
+
+  const reportsLinks = [
+    { label: "تقارير مخصصة", path: "/reports" },
+  ];
+
+  const settingsLinks = [
+    { label: "استيراد البيانات", path: "/importer" },
   ];
 
   // دالة لإغلاق السايد بار تلقائياً في الموبايل
@@ -71,7 +84,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
 
       <nav className="space-y-4 flex-1 overflow-y-auto pr-2 custom-scrollbar pb-20">
         
-        {/* القوائم الأساسية */}
+        {/* ── القوائم الأساسية ── */}
         {menuGroups.map((group) => (
           <div key={group.title}>
             <h2 className={clsx("px-4 text-[10px] font-bold mb-1.5 uppercase tracking-widest", T.muted)}>{group.title}</h2>
@@ -94,16 +107,16 @@ export default function Sidebar({ isOpen, setIsOpen }) {
           </div>
         ))}
 
-        {/* ── 🏕️ قسم الأنشطة والفعاليات (الجديد) ── */}
+        {/* ── 🏕️ قسم الأنشطة ── */}
         <div>
-           <h2 className={clsx("px-4 text-[10px] font-bold mb-1.5 uppercase tracking-widest", T.muted)}>الخدمات النقابية</h2>
+           <h2 className={clsx("px-4 text-[10px] font-bold mb-1.5 uppercase tracking-widest mt-2", T.muted)}>الخدمات النقابية</h2>
            <div className="space-y-1">
              <button onClick={() => setIsActivitiesOpen(!isActivitiesOpen)}
                 className={clsx(
                   "w-full group flex items-center justify-between px-4 py-2 rounded-xl text-sm font-bold transition-all duration-200 border",
                   isActivitiesOpen ? (T.dark ? "bg-indigo-900/30 text-indigo-400 border-indigo-800" : "bg-indigo-50 text-indigo-700 border-indigo-200") : clsx(T.btn, "border-transparent")
                 )}>
-                <div className="flex items-center gap-3"><span className="text-base">🏕️</span> الأنشطة والفعاليات</div>
+                <div className="flex items-center gap-3"><span className="text-base">🏕️</span> الأنشطة</div>
                 {isActivitiesOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
              </button>
 
@@ -129,7 +142,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
            </div>
         </div>
 
-        {/* ── 💰 قسم الخزينة السندات ── */}
+        {/* ── 💰 قسم الشيكات (الخزينة) ── */}
         <div>
            <h2 className={clsx("px-4 text-[10px] font-bold mb-1.5 uppercase tracking-widest mt-2", T.muted)}>شؤون الخزينة</h2>
            <div className="space-y-1">
@@ -138,7 +151,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
                   "w-full group flex items-center justify-between px-4 py-2 rounded-xl text-sm font-bold transition-all duration-200 border",
                   isTreasuryOpen ? (T.dark ? "bg-slate-800/50 text-teal-400 border-slate-700" : "bg-slate-50 text-teal-700 border-slate-200") : clsx(T.btn, "border-transparent")
                 )}>
-                <div className="flex items-center gap-3"><span className="text-base">💰</span> الخزينة والسندات</div>
+                <div className="flex items-center gap-3"><span className="text-base">💰</span> الماليات </div>
                 {isTreasuryOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
              </button>
 
@@ -155,6 +168,76 @@ export default function Sidebar({ isOpen, setIsOpen }) {
                             : "text-slate-500 hover:text-teal-600 dark:text-slate-400 dark:hover:text-teal-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                         )}>
                         {isActive && <span className="inline-block w-1.5 h-1.5 bg-teal-500 rounded-full ml-1.5"></span>}
+                        {l.label}
+                     </Link>
+                   )
+                 })}
+               </div>
+             )}
+           </div>
+        </div>
+
+        {/* ── 📊 قسم التقارير ── */}
+        <div>
+           <h2 className={clsx("px-4 text-[10px] font-bold mb-1.5 uppercase tracking-widest mt-2", T.muted)}>التحليل والبيانات</h2>
+           <div className="space-y-1">
+             <button onClick={() => setIsReportsOpen(!isReportsOpen)}
+                className={clsx(
+                  "w-full group flex items-center justify-between px-4 py-2 rounded-xl text-sm font-bold transition-all duration-200 border",
+                  isReportsOpen ? (T.dark ? "bg-amber-900/30 text-amber-400 border-amber-800" : "bg-amber-50 text-amber-700 border-amber-200") : clsx(T.btn, "border-transparent")
+                )}>
+                <div className="flex items-center gap-3"><span className="text-base">📊</span> التقارير</div>
+                {isReportsOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+             </button>
+
+             {isReportsOpen && (
+               <div className="pr-6 pt-1 pb-1 space-y-0.5 border-r-2 border-amber-100 dark:border-amber-900 mr-6 mt-1 animate-in fade-in slide-in-from-top-2">
+                 {reportsLinks.map(l => {
+                   const isActive = (pathname + search) === l.path;
+                   return (
+                     <Link key={l.path} to={l.path} onClick={handleLinkClick}
+                        className={clsx(
+                          "block w-full text-right text-xs font-bold py-2 px-3 rounded-lg transition-all",
+                          isActive 
+                            ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 translate-x-1" 
+                            : "text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                        )}>
+                        {isActive && <span className="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full ml-1.5"></span>}
+                        {l.label}
+                     </Link>
+                   )
+                 })}
+               </div>
+             )}
+           </div>
+        </div>
+
+        {/* ── ⚙️ قسم الإعدادات ── */}
+        <div>
+           <h2 className={clsx("px-4 text-[10px] font-bold mb-1.5 uppercase tracking-widest mt-2", T.muted)}>إدارة النظام</h2>
+           <div className="space-y-1">
+             <button onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                className={clsx(
+                  "w-full group flex items-center justify-between px-4 py-2 rounded-xl text-sm font-bold transition-all duration-200 border",
+                  isSettingsOpen ? (T.dark ? "bg-slate-800/50 text-slate-300 border-slate-700" : "bg-slate-100 text-slate-700 border-slate-300") : clsx(T.btn, "border-transparent")
+                )}>
+                <div className="flex items-center gap-3"><span className="text-base">⚙️</span> الإعدادات</div>
+                {isSettingsOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+             </button>
+
+             {isSettingsOpen && (
+               <div className="pr-6 pt-1 pb-1 space-y-0.5 border-r-2 border-slate-200 dark:border-slate-700 mr-6 mt-1 animate-in fade-in slide-in-from-top-2">
+                 {settingsLinks.map(l => {
+                   const isActive = (pathname + search) === l.path;
+                   return (
+                     <Link key={l.path} to={l.path} onClick={handleLinkClick}
+                        className={clsx(
+                          "block w-full text-right text-xs font-bold py-2 px-3 rounded-lg transition-all",
+                          isActive 
+                            ? "bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200 translate-x-1" 
+                            : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                        )}>
+                        {isActive && <span className="inline-block w-1.5 h-1.5 bg-slate-500 rounded-full ml-1.5"></span>}
                         {l.label}
                      </Link>
                    )

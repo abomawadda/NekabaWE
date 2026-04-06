@@ -1,17 +1,14 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { collection, query, onSnapshot, doc, deleteDoc, addDoc, setDoc } from "firebase/firestore";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { collection, query, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
-
-// 🎯 استيراد المكونات العالمية
-import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
-import ResponsiveTable from "../../ui/ResponsiveTable"; // 🎯 الأداة الجديدة للجدول المتجاوب
 
 import { 
   UserPlus, Search, Eye, Edit3, Trash2, 
   Users, X, CheckCircle2, AlertCircle, 
-  LayoutGrid, List, Heart, ShieldCheck, ChevronRight, 
-  Briefcase, Building, Phone, CreditCard, UserCircle, MessageSquare, Hash, Star
+  ShieldCheck, Briefcase, Phone, UserCircle, MessageSquare, 
+  Cake, GraduationCap, HeartHandshake, Mail, ArrowRight, CalendarClock, 
+  PieChart, Award, Activity, Building, Hash, RefreshCw
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -20,359 +17,461 @@ import EmployeeProfile from "./EmployeeProfile";
 
 export default function EmployeeDashboard() {
   const T = useT();
-  const { openEmployeeModal } = useEmployeeModal();
 
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
+  
+  const [searchQ, setSearchQ] = useState("");
+  const [visibleCount, setVisibleCount] = useState(10); 
+
   const [toast, setToast] = useState(null);
   
-  const [viewMode, setViewMode] = useState("list"); 
-  const [modalMode, setModalMode] = useState(null); // 'add', 'edit', 'view'
+  const [currentView, setCurrentView] = useState("dashboard"); 
   const [selectedEmp, setSelectedEmp] = useState(null);
-  const [empToDelete, setEmpToDelete] = useState(null); 
 
-  useEffect(() => {
-    const unsub = onSnapshot(query(collection(db, "employees")), (snap) => {
-      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
-    return unsub;
-  }, []);
-
-  const filteredEmployees = useMemo(() => {
-    return employees.filter(emp => 
-      emp.name?.includes(searchTerm) || 
-      emp.jobId?.toString().includes(searchTerm) ||
-      emp.nationalId?.includes(searchTerm)
-    );
-  }, [employees, searchTerm]);
-
-  const stats = {
-    total: employees.length,
-    males: employees.filter(e => e.gender !== 'أنثى').length, 
-    females: employees.filter(e => e.gender === 'أنثى').length,
-    generalSyndicate: employees.filter(e => e.membershipStatus === 'نقابة عامة').length,
-    independentSyndicate: employees.filter(e => e.membershipStatus === 'نقابة مستقلة').length,
-  };
-
-  const showToast = (msg, type = "success") => {
+  const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
-  };
+  }, []);
 
-  const handleSave = async (data) => {
-    try {
-      const cleanData = JSON.parse(JSON.stringify(data)); // التنظيف العميق
-      const { id, ...dataToSave } = cleanData;
+  useEffect(() => {
+    const unsubEmp = onSnapshot(query(collection(db, "employees")), (snap) => {
+      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, (err) => {
+      console.error(err);
+      setLoading(false);
+    });
+    return () => unsubEmp();
+  }, []);
 
-      if (modalMode === 'add') {
-        await addDoc(collection(db, "employees"), { ...dataToSave, createdAt: new Date().toISOString() });
-        showToast("✅ تم حفظ العضو بنجاح! يمكنك إضافة عضو آخر الآن.");
-      } else {
-        await setDoc(doc(db, "employees", selectedEmp.id), dataToSave, { merge: true });
-        showToast("✅ تم تحديث بيانات العضو بنجاح");
-        setModalMode(null); 
+  const stats = useMemo(() => {
+    let totalActiveCount = 0; 
+    let generalCount = 0, independentCount = 0;
+    let males = 0, females = 0;
+    let activeCount = 0, inactiveCount = 0;
+
+    let retiringList = [];
+    let bDays = { today: [], tomorrow: [], yesterday: [] };
+    let anniversaries = [];
+
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    
+    const getDayStr = (offset) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() + offset);
+      return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+    };
+    const todayStr = getDayStr(0);
+    const tomorrowStr = getDayStr(1);
+    const yesterdayStr = getDayStr(-1);
+
+    const parseDate = (dStr) => {
+      if (!dStr) return null;
+      const s = String(dStr).trim();
+      if (s.includes('-')) {
+        const p = s.split('-');
+        if (p[0].length === 4) return { y: parseInt(p[0]), m: p[1].padStart(2, '0'), d: p[2].substring(0,2).padStart(2, '0') };
       }
-    } catch (e) { 
-      console.error("Firebase Error:", e);
-      showToast(`❌ حدث خطأ: ${e.message}`, "error"); 
+      if (s.includes('/')) {
+        const p = s.split('/');
+        if (p[2] && p[2].length >= 4) return { y: parseInt(p[2]), m: p[1].padStart(2, '0'), d: p[0].padStart(2, '0') };
+      }
+      return null;
+    };
+
+    employees.forEach(emp => {
+      const inactiveStates = ['معاش', 'موقوف', 'استقالة', 'وفاة', 'إجازة'];
+      const state = emp.memberState?.trim() || "نشط";
+      const isActive = !inactiveStates.some(x => state.includes(x));
+
+      if (isActive) {
+        activeCount++;
+        totalActiveCount++;
+        if (emp.membershipStatus?.includes('مستقل')) independentCount++;
+        else generalCount++;
+        
+        if (emp.gender === 'ذكر') males++;
+        else if (emp.gender === 'أنثى') females++;
+      } else {
+        inactiveCount++;
+      }
+
+      const bDateParsed = parseDate(emp.birthDate || emp.dateOfBirth);
+      if (bDateParsed) {
+        const empBdayStr = `${bDateParsed.d}/${bDateParsed.m}`;
+        if (empBdayStr === todayStr) bDays.today.push(emp);
+        else if (empBdayStr === tomorrowStr) bDays.tomorrow.push(emp);
+        else if (empBdayStr === yesterdayStr) bDays.yesterday.push(emp);
+
+        let retYear;
+        let calcRetDate = emp.retirementDate;
+        if (calcRetDate) {
+            const retParsed = parseDate(calcRetDate);
+            if (retParsed) retYear = retParsed.y;
+        }
+        if (!retYear && bDateParsed.y && !isNaN(bDateParsed.y)) {
+          const retAge = bDateParsed.y >= 1979 ? 65 : bDateParsed.y >= 1971 ? 61 : 60;
+          retYear = bDateParsed.y + retAge;
+          calcRetDate = `${bDateParsed.d}/${bDateParsed.m}/${retYear}`;
+        }
+        
+        if (retYear === currentYear && isActive) {
+          retiringList.push({ ...emp, displayRetDate: calcRetDate });
+        }
+      }
+
+      const hDateParsed = parseDate(emp.hireDate);
+      if (hDateParsed) {
+        const hireDayStr = `${hDateParsed.d}/${hDateParsed.m}`;
+        if (hireDayStr === todayStr && hDateParsed.y < currentYear) {
+          const yos = currentYear - hDateParsed.y;
+          if (!isNaN(yos)) {
+              anniversaries.push({ ...emp, yearsOfService: yos });
+          }
+        }
+      }
+    });
+
+    retiringList.sort((a, b) => {
+      const getTimestamp = (dStr) => {
+        if (!dStr) return 0;
+        const p = dStr.split('/');
+        return new Date(p[2], p[1] - 1, p[0]).getTime();
+      };
+      return getTimestamp(b.displayRetDate) - getTimestamp(a.displayRetDate);
+    });
+
+    return { 
+      totalActiveCount, generalCount, independentCount, 
+      males, females, activeCount, inactiveCount,
+      retiringList, bDays, anniversaries 
+    };
+  }, [employees]);
+
+  const searchResults = useMemo(() => {
+    if (!searchQ.trim()) return employees;
+    const lowerQ = searchQ.toLowerCase().trim();
+    return employees.filter(e => 
+      e.name?.toLowerCase().includes(lowerQ) || 
+      e.jobId?.toString().includes(lowerQ) || 
+      e.nationalId?.includes(lowerQ) ||
+      e.phone?.includes(lowerQ)
+    );
+  }, [searchQ, employees]);
+
+  const openAddForm = () => { setSelectedEmp(null); setCurrentView("form"); };
+  const openEditForm = (emp) => { setSelectedEmp(emp); setCurrentView("form"); };
+  const openProfile = (emp) => { setSelectedEmp(emp); setCurrentView("profile"); };
+  const closeToDashboard = () => { setSelectedEmp(null); setCurrentView("dashboard"); };
+
+  const handleDelete = async (emp) => {
+    if(window.confirm(`هل أنت متأكد من حذف العضو "${emp.name}" نهائياً من قاعدة البيانات؟`)) {
+      try {
+        await deleteDoc(doc(db, "employees", emp.id));
+        showToast("تم حذف السجل بنجاح", "success");
+      } catch (err) {
+        showToast("حدث خطأ أثناء الحذف", "error");
+      }
     }
   };
 
-  const confirmDelete = async () => {
-    if (!empToDelete || !empToDelete.id) return;
-    const idToDelete = empToDelete.id;
-    setEmployees(prev => prev.filter(e => e.id !== idToDelete));
-    setEmpToDelete(null);
-
+  const handleSaveEmp = async (formData) => {
     try {
-      await deleteDoc(doc(db, "employees", idToDelete));
-      showToast("🗑️ تم حذف السجل نهائياً");
-    } catch (error) { 
-      console.error("Delete Error:", error);
-      showToast(`❌ فشل الحذف: ${error.message}`, "error"); 
+      if (currentView === 'form' && !selectedEmp) {
+        const newDocRef = doc(collection(db, "employees"));
+        await setDoc(newDocRef, { ...formData, id: newDocRef.id, createdAt: serverTimestamp() });
+        showToast("تم تسجيل العضو بنجاح!");
+      } else {
+        await setDoc(doc(db, "employees", formData.id || selectedEmp.id), { ...formData, updatedAt: serverTimestamp() }, { merge: true });
+        showToast("تم تحديث السجل بنجاح!");
+      }
+      closeToDashboard();
+    } catch (err) {
+      showToast("حدث خطأ أثناء الحفظ", "error");
     }
   };
 
   if (loading) return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
-      <div className="w-10 h-10 border-4 border-teal-500 border-t-transparent rounded-full animate-spin"></div>
-      <p className="font-black text-slate-400 animate-pulse text-sm">جاري تحميل سجلات النقابة...</p>
+      <RefreshCw size={32} className="animate-spin text-teal-500"/>
+      <p className="font-black text-slate-500">جاري تحميل السجلات...</p>
     </div>
   );
 
-  return (
-    <div className={clsx("max-w-[1600px] mx-auto animate-in fade-in duration-700", T.text)} dir="rtl">
-      
-      {/* ── الإشعارات ── */}
-      {toast && (
-        <div className={clsx("fixed top-10 left-1/2 -translate-x-1/2 z-[5000] px-5 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-white font-bold animate-in slide-in-from-top-10", toast.type === "error" ? "bg-rose-600" : "bg-teal-600")}>
-          {toast.type === "error" ? <AlertCircle size={18}/> : <CheckCircle2 size={18}/>}
-          <span className="text-[11px] leading-tight">{toast.msg}</span>
-        </div>
-      )}
-
-      {/* ── نافذة تأكيد الحذف ── */}
-      {empToDelete && (
-        <div className="fixed inset-0 z-[3000] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className={clsx("w-full max-w-sm p-5 rounded-2xl border shadow-2xl text-center space-y-4", T.card)}>
-            <div className="w-14 h-14 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-1"><Trash2 size={28}/></div>
-            <h2 className="text-base font-black">تأكيد حذف العضو</h2>
-            <p className="text-[11px] font-bold text-slate-500 leading-relaxed">
-              هل أنت متأكد من حذف بيانات "<span className="text-rose-600 font-black">{empToDelete.name}</span>" نهائياً؟ <br/> لا يمكن التراجع عن هذا الإجراء.
-            </p>
-            <div className="flex gap-2 pt-3">
-              <button onClick={() => setEmpToDelete(null)} className="flex-1 px-4 py-2.5 rounded-xl border text-[11px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">إلغاء الأمر</button>
-              <button onClick={confirmDelete} className="flex-1 px-4 py-2.5 rounded-xl bg-rose-600 text-white text-[11px] font-black hover:bg-rose-700 shadow-md shadow-rose-600/20 active:scale-95 transition-all">نعم، احذف نهائياً</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── الشاشة الرئيسية ── */}
-      {!modalMode ? (
-        <div className="space-y-4">
-          
-          {/* الهيدر وزر الإضافة */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2">
-            <div className="space-y-0.5">
-              <h1 className="text-2xl font-black tracking-tight flex items-center gap-2">
-                <div className="p-2 bg-teal-500/10 rounded-xl text-teal-600"><Users size={24}/></div>
-                إدارة أعضاء النقابة
-              </h1>
-              <p className="text-slate-400 font-bold text-[11px] pr-12">إجمالي المقيدين: {employees.length} عضو</p>
-            </div>
-            
-            <button 
-              onClick={() => { setSelectedEmp(null); setModalMode('add'); }}
-              className="group bg-teal-600 hover:bg-teal-700 text-white px-6 py-3 rounded-xl font-black text-[11px] flex items-center gap-2 shadow-lg shadow-teal-600/20 transition-all active:scale-95"
-            >
-              <UserPlus size={16} className="group-hover:rotate-12 transition-transform"/>
-              إضافة عضو جديد
+  // 🎯 شاشة فورم الموظف (كاملة)
+  if (currentView === "form") {
+    return (
+      <div className={clsx("max-w-7xl mx-auto space-y-4 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500", T.text)} dir="rtl">
+        <div className={clsx("p-4 rounded-2xl border shadow-sm flex items-center justify-between", T.card)}>
+          <div className="flex items-center gap-3">
+            <button onClick={closeToDashboard} className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-xl transition-all">
+              <ArrowRight size={20} className="text-slate-600 dark:text-slate-300" />
             </button>
-          </div>
-
-          {/* الإحصائيات (KPIs) */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className={clsx("p-4 rounded-2xl border flex items-center justify-between shadow-sm", T.card)}>
-              <div><p className="text-[9px] font-black text-slate-400 uppercase">إجمالي الأعضاء</p><p className="text-2xl font-black">{stats.total}</p></div>
-              <div className="w-10 h-10 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center"><Users size={20}/></div>
-            </div>
-            <div className={clsx("p-4 rounded-2xl border flex items-center justify-between shadow-sm", T.card)}>
-              <div><p className="text-[9px] font-black text-slate-400 uppercase">ذكور</p><p className="text-2xl font-black">{stats.males}</p></div>
-              <div className="w-10 h-10 bg-sky-50 text-sky-600 rounded-full flex items-center justify-center"><ShieldCheck size={20}/></div>
-            </div>
-            <div className={clsx("p-4 rounded-2xl border flex items-center justify-between shadow-sm", T.card)}>
-              <div><p className="text-[9px] font-black text-slate-400 uppercase">إناث</p><p className="text-2xl font-black">{stats.females}</p></div>
-              <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center"><Heart size={20}/></div>
-            </div>
-            <div className={clsx("p-4 rounded-2xl border flex items-center justify-between shadow-sm", T.card)}>
-              <div><p className="text-[9px] font-black text-slate-400 uppercase">نقابة عامة</p><p className="text-2xl font-black text-teal-600">{stats.generalSyndicate}</p></div>
-              <div className="w-10 h-10 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center"><Building size={20}/></div>
-            </div>
-            <div className={clsx("p-4 rounded-2xl border flex items-center justify-between shadow-sm", T.card)}>
-              <div><p className="text-[9px] font-black text-slate-400 uppercase">نقابة مستقلة</p><p className="text-2xl font-black text-sky-600">{stats.independentSyndicate}</p></div>
-              <div className="w-10 h-10 bg-sky-50 text-sky-600 rounded-full flex items-center justify-center"><Building size={20}/></div>
+            <div>
+              <h2 className="text-xl font-black">{selectedEmp ? 'تحديث السجل الوظيفي' : 'تسجيل عضو جديد'}</h2>
+              <p className="text-[10px] font-bold text-slate-500 mt-0.5">إدارة السجلات وبيانات الموارد البشرية بالنقابة</p>
             </div>
           </div>
-
-          {/* شريط البحث */}
-          <div className={clsx("p-2 rounded-2xl border shadow-sm flex flex-col-reverse md:flex-row items-center gap-2", T.card)}>
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-full md:w-auto">
-              <button onClick={() => setViewMode("list")} className={clsx("flex-1 md:flex-none p-2 rounded-lg transition-all", viewMode === "list" ? "bg-white dark:bg-slate-700 shadow-sm text-teal-600" : "text-slate-400")}><List size={18} className="mx-auto"/></button>
-              <button onClick={() => setViewMode("grid")} className={clsx("flex-1 md:flex-none p-2 rounded-lg transition-all", viewMode === "grid" ? "bg-white dark:bg-slate-700 shadow-sm text-teal-600" : "text-slate-400")}><LayoutGrid size={18} className="mx-auto"/></button>
-            </div>
-            <div className="relative flex-1 w-full">
-              <Search size={16} className="absolute right-3 top-3 text-slate-400"/>
-              <input type="text" placeholder="ابحث بالاسم أو الرقم القومي..." className={clsx("w-full pr-10 pl-4 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-teal-500 transition-all", T.inp)} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-            </div>
-          </div>
-
-          {/* ── منطقة عرض البيانات (شبكة كروت أو جدول متجاوب) ── */}
-          {viewMode === "grid" ? (
-            
-            // وضع الشبكة (Grid View) التقليدي للكمبيوتر والموبايل
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-              {filteredEmployees.map((emp) => (
-                <div key={emp.id} className={clsx("p-4 rounded-2xl border shadow-sm flex flex-col items-center text-center group hover:shadow-md transition-all duration-300", T.card)}>
-                  <button 
-                    onClick={() => openEmployeeModal(emp)}
-                    className="flex flex-col items-center outline-none focus:ring-4 focus:ring-teal-500/20 rounded-2xl p-2 transition-all w-full cursor-pointer"
-                    title="عرض البطاقة السريعة"
-                  >
-                    <div className="w-16 h-16 rounded-full bg-teal-600 text-white flex items-center justify-center text-2xl font-black mb-2 shadow-sm overflow-hidden border-2 border-teal-100 dark:border-teal-900 group-hover:scale-105 transition-transform">
-                      {emp.photo ? <img src={emp.photo} className="w-full h-full object-cover" alt="صورة"/> : emp.name?.[0]}
-                    </div>
-                    <h3 className="font-black text-sm text-slate-800 dark:text-slate-100 group-hover:text-teal-600 transition-colors">{emp.name}</h3>
-                  </button>
-
-                  <p className="text-[11px] font-black text-teal-600 mt-1">{emp.jobTitle || "بدون وظيفة"}</p>
-                  <p className="text-[10px] font-bold text-slate-500 mt-0.5">{emp.workplace || "السنترال غير محدد"}</p>
-                  <p className="text-[9px] font-bold text-slate-400 mt-1 mb-3 tracking-wider">{emp.nationalId || "—"}</p>
-                  
-                  <div className="flex items-center justify-center gap-1.5 w-full mt-auto pt-3 border-t border-slate-100 dark:border-slate-800">
-                    <button onClick={() => setEmpToDelete(emp)} className="p-2 bg-rose-50 dark:bg-rose-900/20 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg transition-all" title="حذف السجل"><Trash2 size={14}/></button>
-                    <button onClick={() => { setSelectedEmp(emp); setModalMode('edit'); }} className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-500 hover:bg-blue-500 hover:text-white rounded-lg transition-all" title="تعديل البيانات"><Edit3 size={14}/></button>
-                    <button onClick={() => { setSelectedEmp(emp); setModalMode('view'); }} className="p-2 bg-teal-50 dark:bg-teal-900/20 text-teal-600 hover:bg-teal-600 hover:text-white rounded-lg transition-all" title="الملف الشامل"><Eye size={14}/></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            
-            /* 🎯 🎯 🎯 استخدام المكون الذكي ResponsiveTable لوضع الجدول 🎯 🎯 🎯 */
-            <ResponsiveTable 
-              data={filteredEmployees}
-              emptyMessage="لم يتم العثور على أي أعضاء يطابقون بحثك"
-              
-              // 1. العناوين (تظهر في الكمبيوتر فقط)
-              headers={[
-                { label: "العضو والوظيفة" },
-                { label: "الرقم القومي" },
-                { label: "الموبايل" },
-                { label: "حالة النقابة", className: "text-center" },
-                { label: "إجراءات", className: "text-left" }
-              ]}
-
-              // 2. تصميم صف الجدول (يظهر في الكمبيوتر فقط)
-              renderDesktopRow={(emp) => (
-                <tr className="group hover:bg-teal-500/5 transition-all duration-300">
-                  <td className="p-4">
-                    <button 
-                      onClick={() => openEmployeeModal(emp)}
-                      className="flex items-center gap-3 text-right outline-none w-full cursor-pointer group/btn"
-                    >
-                      <div className="w-12 h-12 rounded-xl bg-teal-600 flex items-center justify-center font-black text-white text-lg shadow-sm overflow-hidden flex-shrink-0 group-hover/btn:scale-105 transition-transform">
-                        {emp.photo ? <img src={emp.photo} className="w-full h-full object-cover" alt="صورة"/> : emp.name?.[0]}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-black text-sm text-slate-800 dark:text-slate-100 truncate group-hover/btn:text-teal-600 transition-colors">{emp.name}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-black text-slate-500 truncate flex items-center gap-1"><Briefcase size={10}/> {emp.jobTitle || "—"}</span>
-                          <span className="text-[10px] font-bold text-slate-400 truncate hidden sm:flex items-center gap-1 border-r pr-2 border-slate-200 dark:border-slate-700"><Building size={10}/> {emp.workplace || "—"}</span>
-                        </div>
-                      </div>
-                    </button>
-                  </td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                      <CreditCard size={12} className="text-slate-400"/>
-                      {emp.nationalId || "—"}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                      <Phone size={12} className="text-slate-400"/>
-                      {emp.phone ? emp.phone.split('-')[0].trim() : "—"}
-                    </div>
-                  </td>
-                  <td className="p-4 text-center">
-                    <span className={clsx(
-                      "inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-black",
-                      emp.membershipStatus === "نقابة عامة" ? "bg-teal-100 text-teal-700 dark:bg-teal-900/30" :
-                      emp.membershipStatus === "نقابة مستقلة" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30" :
-                      "bg-slate-100 text-slate-600 dark:bg-slate-800"
-                    )}>
-                      {emp.membershipStatus || "غير محدد"}
-                    </span>
-                  </td>
-                  <td className="p-4">
-                    <div className="flex justify-end gap-1.5 opacity-100 xl:opacity-0 group-hover:opacity-100 transition-all transform xl:translate-x-2 group-hover:translate-x-0">
-                      <button onClick={() => { setSelectedEmp(emp); setModalMode('view'); }} className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-teal-600 rounded-lg transition-all"><Eye size={16}/></button>
-                      <button onClick={() => { setSelectedEmp(emp); setModalMode('edit'); }} className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-blue-600 rounded-lg transition-all"><Edit3 size={16}/></button>
-                      <button onClick={() => setEmpToDelete(emp)} className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-rose-600 rounded-lg transition-all"><Trash2 size={16}/></button>
-                    </div>
-                  </td>
-                </tr>
-              )}
-
-              // 3. تصميم الكارت (يظهر في الموبايل والتابلت فقط ويخفي الجدول)
-              renderMobileCard={(emp) => (
-                <div className={clsx("p-4 rounded-2xl border shadow-sm flex flex-col group", T.card)}>
-                  <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800/50 pb-3 mb-3">
-                    <button onClick={() => openEmployeeModal(emp)} className="w-12 h-12 rounded-xl bg-teal-600 text-white flex items-center justify-center font-black text-lg overflow-hidden shrink-0">
-                      {emp.photo ? <img src={emp.photo} className="w-full h-full object-cover"/> : emp.name?.[0]}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-black text-sm text-slate-800 dark:text-slate-100 truncate">{emp.name}</h3>
-                      <p className="text-[10px] font-bold text-teal-600 mt-0.5 truncate">{emp.jobTitle || "بدون وظيفة"}</p>
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-2 mb-4">
-                    <div className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-400 font-black">الرقم القومي:</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300">{emp.nationalId || "—"}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-400 font-black">الموبايل:</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300">{emp.phone || "—"}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-400 font-black">حالة النقابة:</span>
-                      <span className={clsx(
-                        "px-2 py-0.5 rounded-md font-black text-[9px]",
-                        emp.membershipStatus === "نقابة عامة" ? "bg-teal-100 text-teal-700 dark:bg-teal-900/30" :
-                        emp.membershipStatus === "نقابة مستقلة" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30" :
-                        "bg-slate-100 text-slate-600 dark:bg-slate-800"
-                      )}>
-                        {emp.membershipStatus || "غير محدد"}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2 mt-auto">
-                    <button onClick={() => { setSelectedEmp(emp); setModalMode('view'); }} className="flex-1 py-2 bg-slate-50 dark:bg-slate-800 text-teal-600 rounded-xl text-[11px] font-black transition-colors hover:bg-teal-50 hover:text-teal-700 flex items-center justify-center gap-1.5"><Eye size={14}/> عرض</button>
-                    <button onClick={() => { setSelectedEmp(emp); setModalMode('edit'); }} className="flex-1 py-2 bg-slate-50 dark:bg-slate-800 text-blue-600 rounded-xl text-[11px] font-black transition-colors hover:bg-blue-50 hover:text-blue-700 flex items-center justify-center gap-1.5"><Edit3 size={14}/> تعديل</button>
-                    <button onClick={() => setEmpToDelete(emp)} className="flex-1 py-2 bg-rose-50 dark:bg-rose-900/20 text-rose-600 rounded-xl text-[11px] font-black transition-colors hover:bg-rose-500 hover:text-white flex items-center justify-center gap-1.5"><Trash2 size={14}/> حذف</button>
-                  </div>
-                </div>
-              )}
-            />
-          )}
         </div>
-      ) : (
-        
-        /* ── وضع عرض أو تعديل أو إضافة الملف الشامل ── */
-        <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 w-full pb-8">
-          <div className={clsx("flex justify-between items-center p-3 md:p-4 rounded-2xl border shadow-sm mb-4", T.card)}>
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={() => setModalMode(null)} 
-                className="p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-all text-slate-700 dark:text-slate-200 flex items-center justify-center gap-1"
-              >
-                <ChevronRight size={18}/>
-                <span className="font-bold text-[11px] hidden md:inline">الرجوع</span>
-              </button>
-              <div>
-                <h2 className="text-base md:text-lg font-black">
-                  {modalMode === 'add' ? 'تسجيل بيانات عضو جديد' : modalMode === 'edit' ? 'تحديث السجل الوظيفي' : 'الملف الشخصي الشامل'}
-                </h2>
-                <p className="text-[9px] md:text-[10px] font-bold text-slate-400 mt-0.5">
-                  إدارة السجلات وبيانات الموارد البشرية بالنقابة
-                </p>
-              </div>
+        <div className={clsx("p-2 md:p-6 rounded-3xl border shadow-sm", T.card)}>
+          <EmployeeForm 
+            initialData={selectedEmp} 
+            modalMode={selectedEmp ? "edit" : "add"} 
+            onSave={handleSaveEmp} 
+            onCancel={closeToDashboard} 
+            employeesDB={employees} 
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // 🎯 شاشة البروفايل (كاملة)
+  if (currentView === "profile") {
+    return (
+      <div className={clsx("max-w-7xl mx-auto space-y-4 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500", T.text)} dir="rtl">
+        <div className={clsx("p-4 rounded-2xl border shadow-sm flex items-center justify-between", T.card)}>
+          <div className="flex items-center gap-3">
+            <button onClick={closeToDashboard} className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-xl transition-all">
+              <ArrowRight size={20} className="text-slate-600 dark:text-slate-300" />
+            </button>
+            <div>
+              <h2 className="text-xl font-black">الملف الشخصي الشامل</h2>
+              <p className="text-[10px] font-bold text-slate-500 mt-0.5">الرؤية الكاملة لبيانات العضو</p>
             </div>
           </div>
+        </div>
+        <div className={clsx("p-2 md:p-6 rounded-3xl border shadow-sm", T.card)}>
+          <EmployeeProfile data={selectedEmp} />
+        </div>
+      </div>
+    );
+  }
 
-          <div className="w-full max-w-6xl mx-auto">
-            {modalMode === 'view' ? (
-              <EmployeeProfile data={selectedEmp} />
-            ) : (
-              <div className={clsx("p-3 md:p-4 rounded-2xl border shadow-sm", T.card)}>
-                <EmployeeForm 
-                  initialData={selectedEmp} 
-                  modalMode={modalMode} 
-                  onSave={handleSave} 
-                  onCancel={() => setModalMode(null)} 
-                  employeesDB={employees} 
-                />
+  // 🎯 الداش بورد
+  return (
+    <div className={clsx("max-w-7xl mx-auto space-y-6 pb-20 animate-in fade-in duration-500", T.text)} dir="rtl">
+      
+      {toast && (
+        <div className={clsx("fixed top-10 left-1/2 -translate-x-1/2 z-[5000] px-5 py-2.5 rounded-xl shadow-xl flex items-center gap-2 text-white font-black animate-in fade-in slide-in-from-top-4", toast.type === "error" ? "bg-rose-600" : "bg-teal-600")}>
+          {toast.type === "error" ? <AlertCircle size={18}/> : <CheckCircle2 size={18}/>} <span className="text-xs">{toast.msg}</span>
+        </div>
+      )}
+
+      <div className={clsx("p-6 rounded-3xl border shadow-sm flex flex-col md:flex-row gap-4 justify-between items-center bg-gradient-to-l from-teal-600 to-emerald-700 text-white", T.card)}>
+        <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="p-3 bg-white/20 backdrop-blur-sm rounded-2xl"><Users size={28} className="text-white"/></div>
+          <div>
+            <h1 className="text-2xl font-black tracking-tight">إدارة شؤون الأعضاء</h1>
+            <p className="text-[11px] font-bold text-teal-100 mt-1">لوحة تحكم ذكية للبحث والمتابعة</p>
+          </div>
+        </div>
+        <div className="flex w-full md:w-auto gap-2">
+          <button onClick={openAddForm} className="px-5 py-2.5 bg-white text-teal-700 hover:bg-teal-50 rounded-xl font-black text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 flex-1 md:flex-none">
+            <UserPlus size={16}/> تسجيل عضو جديد
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className={clsx("p-4 rounded-2xl border shadow-sm relative overflow-hidden", T.card)}>
+          <div className="p-3 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 rounded-xl w-fit mb-3"><PieChart size={20}/></div>
+          <p className="text-[10px] font-black text-slate-500 uppercase">إجمالي الأعضاء (النشطين)</p>
+          <p className="text-3xl font-black text-indigo-600 mt-1">{stats.totalActiveCount.toLocaleString()}</p>
+        </div>
+        <div className={clsx("p-4 rounded-2xl border shadow-sm relative overflow-hidden", T.card)}>
+          <div className="p-3 bg-teal-50 dark:bg-teal-900/30 text-teal-600 rounded-xl w-fit mb-3"><Building size={20}/></div>
+          <p className="text-[10px] font-black text-slate-500 uppercase">نقابة عامة / مستقلة</p>
+          <p className="text-2xl font-black text-teal-600 mt-1 flex items-baseline gap-1">
+            {stats.generalCount.toLocaleString()} <span className="text-[10px] text-slate-400">عامة</span>
+          </p>
+          <p className="text-xs font-bold text-amber-500 mt-0.5">{stats.independentCount.toLocaleString()} مستقلة</p>
+        </div>
+        <div className={clsx("p-4 rounded-2xl border shadow-sm relative overflow-hidden", T.card)}>
+          <div className="p-3 bg-sky-50 dark:bg-sky-900/30 text-sky-600 rounded-xl w-fit mb-3"><UserCircle size={20}/></div>
+          <p className="text-[10px] font-black text-slate-500 uppercase">ذكور / إناث (نشط)</p>
+          <p className="text-2xl font-black text-sky-600 mt-1 flex items-baseline gap-1">
+            {stats.males.toLocaleString()} <span className="text-[10px] text-slate-400">ذكر</span>
+          </p>
+          <p className="text-xs font-bold text-pink-500 mt-0.5">{stats.females.toLocaleString()} أنثى</p>
+        </div>
+        <div className={clsx("p-4 rounded-2xl border shadow-sm relative overflow-hidden", T.card)}>
+          <div className="p-3 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 rounded-xl w-fit mb-3"><Activity size={20}/></div>
+          <p className="text-[10px] font-black text-slate-500 uppercase">نشط / غير نشط (الكل)</p>
+          <p className="text-2xl font-black text-emerald-600 mt-1 flex items-baseline gap-1">
+            {stats.activeCount.toLocaleString()} <span className="text-[10px] text-slate-400">نشط</span>
+          </p>
+          <p className="text-xs font-bold text-rose-500 mt-0.5">{stats.inactiveCount.toLocaleString()} موقوف/معاش</p>
+        </div>
+        <div className={clsx("p-4 rounded-2xl border shadow-sm relative overflow-hidden", T.card)}>
+          <div className="p-3 bg-rose-50 dark:bg-rose-900/30 text-rose-600 rounded-xl w-fit mb-3"><GraduationCap size={20}/></div>
+          <p className="text-[10px] font-black text-slate-500 uppercase">مُحالين للمعاش هذا العام</p>
+          <p className="text-3xl font-black text-rose-600 mt-1">{stats.retiringList.length}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-2 mt-2">
+        <div className={clsx("rounded-2xl border shadow-sm overflow-hidden flex flex-col h-[250px]", T.card)}>
+          <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-emerald-50/50 dark:bg-emerald-900/10 flex items-center justify-between">
+            <h3 className="font-black text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5"><Award size={14}/> أعياد التعيين (اليوم)</h3>
+            <span className="text-[9px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-md">{stats.anniversaries.length} عضو</span>
+          </div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1.5">
+            {stats.anniversaries.length === 0 ? (
+              <p className="text-center text-[10px] font-bold text-slate-400 mt-6">لا توجد أعياد تعيين اليوم</p>
+            ) : stats.anniversaries.map(emp => (
+              <div key={emp.id} className="flex items-center gap-2 p-2 rounded-xl border bg-white dark:bg-slate-900 cursor-pointer hover:border-emerald-200 transition-colors" onClick={() => openProfile(emp)}>
+                <div className="w-6 h-6 rounded-md bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0"><Award size={12}/></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-black truncate">{emp.name}</p>
+                  <p className="text-[8px] font-bold text-slate-500">أكمل <span className="text-emerald-600 font-black">{emp.yearsOfService}</span> سنة بالخدمة</p>
+                </div>
               </div>
+            ))}
+          </div>
+        </div>
+
+        <div className={clsx("rounded-2xl border shadow-sm overflow-hidden flex flex-col h-[250px]", T.card)}>
+          <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-sky-50/50 dark:bg-sky-900/10 flex items-center justify-between">
+            <h3 className="font-black text-[11px] text-sky-700 dark:text-sky-400 flex items-center gap-1.5"><Cake size={14}/> أعياد الميلاد</h3>
+          </div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-3">
+            {['today', 'tomorrow', 'yesterday'].map(dayKey => {
+              const dayLabel = dayKey === 'today' ? '🎉 اليوم' : dayKey === 'tomorrow' ? 'غداً' : 'الأمس';
+              const list = stats.bDays[dayKey];
+              if(list.length === 0) return null;
+              return (
+                <div key={dayKey} className="space-y-1.5">
+                  <h4 className="text-[9px] font-black text-slate-400 border-b border-slate-100 dark:border-slate-800 pb-1">{dayLabel}</h4>
+                  {list.map(emp => (
+                    <div key={emp.id} className="flex items-center gap-2 p-1.5 rounded-xl border shadow-sm bg-white dark:bg-slate-900">
+                      <div className="min-w-0 flex-1 cursor-pointer pl-1" onClick={() => openProfile(emp)}>
+                        <p className="text-[10px] font-black truncate">{emp.name}</p>
+                        <p className="text-[8px] font-bold text-slate-500" dir="ltr">{emp.birthDate || emp.dateOfBirth}</p>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        {emp.phone && <a href={`https://wa.me/2${emp.phone}`} target="_blank" rel="noreferrer" title="إرسال تهنئة" className="p-1 bg-emerald-100 text-emerald-600 hover:bg-emerald-500 hover:text-white rounded-md transition-colors"><MessageSquare size={12}/></a>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
+            {stats.bDays.today.length === 0 && stats.bDays.tomorrow.length === 0 && stats.bDays.yesterday.length === 0 && (
+              <p className="text-center text-[10px] font-bold text-slate-400 mt-6">لا توجد أعياد ميلاد قريبة</p>
             )}
           </div>
         </div>
-      )}
+
+        <div className={clsx("rounded-2xl border shadow-sm overflow-hidden flex flex-col h-[250px]", T.card)}>
+          <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-rose-50/50 dark:bg-rose-900/10 flex items-center justify-between">
+            <h3 className="font-black text-[11px] text-rose-700 dark:text-rose-400 flex items-center gap-1.5"><CalendarClock size={14}/> إحالات المعاش (العام الحالي)</h3>
+            <span className="text-[9px] font-bold bg-rose-100 text-rose-700 px-2 py-0.5 rounded-md">{stats.retiringList.length} عضو</span>
+          </div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {stats.retiringList.length === 0 ? (
+              <p className="text-center text-[10px] font-bold text-slate-400 mt-6">لا يوجد محالين للمعاش</p>
+            ) : (
+              <table className="w-full text-right whitespace-nowrap">
+                <thead className="bg-slate-50 dark:bg-slate-800/80 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
+                  <tr>
+                    <th className="py-2 px-2 font-black text-[9px] text-slate-500">التاريخ</th>
+                    <th className="py-2 px-2 font-black text-[9px] text-slate-500">الاسم والسنترال</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {stats.retiringList.map(emp => (
+                    <tr key={emp.id} className="hover:bg-rose-50/50 dark:hover:bg-rose-900/20 cursor-pointer transition-colors" onClick={() => openProfile(emp)}>
+                      <td className="py-1.5 px-2">
+                        <span className="font-black text-[9px] text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded">{emp.displayRetDate}</span>
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <p className="font-black text-[10px] text-slate-800 dark:text-slate-200 truncate max-w-[130px]">{emp.name}</p>
+                        <p className="text-[8px] font-bold text-slate-500 truncate max-w-[130px]">{emp.workplace}</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+      </div>
+
+      <div className={clsx("p-3 rounded-2xl border shadow-sm flex flex-col md:flex-row gap-3 items-center", T.card)}>
+        <div className="relative w-full">
+          <Search size={16} className="absolute right-4 top-3 text-slate-400 pointer-events-none"/>
+          <input value={searchQ} onChange={e => { setSearchQ(e.target.value); setVisibleCount(10); }}
+            placeholder="بحث سريع بالاسم، الكود، الرقم القومي، الهاتف..."
+            className={clsx("w-full pr-10 pl-4 py-2.5 rounded-xl border text-sm font-bold outline-none focus:ring-2 focus:border-teal-500 transition-all", T.inp)}/>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+          <h2 className="text-sm font-black flex items-center gap-2 text-teal-600 dark:text-teal-400">
+            <Users size={18}/> دليل الأعضاء <span className="bg-teal-100 text-teal-700 dark:bg-teal-900/50 px-2 py-0.5 rounded-lg text-xs">{searchResults.length}</span>
+          </h2>
+        </div>
+
+        {searchResults.length === 0 ? (
+          <div className={clsx("p-10 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center text-slate-400", T.card)}>
+            <Search size={40} className="opacity-20 mb-3"/>
+            <p className="text-sm font-black">لم يتم العثور على أعضاء</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {searchResults.slice(0, visibleCount).map(emp => (
+              <div key={emp.id} className={clsx("p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all flex flex-col justify-between group", T.card)}>
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center border shadow-sm shrink-0">
+                    {emp.photo ? <img src={emp.photo} className="w-full h-full object-cover" alt={emp.name}/> : <UserCircle size={28} className="text-slate-400"/>}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-black text-sm text-slate-800 dark:text-slate-100 truncate" title={emp.name}>{emp.name}</p>
+                    <p className="text-[10px] font-bold text-teal-600 dark:text-teal-400 mt-0.5 truncate flex items-center gap-1"><Briefcase size={10}/> {emp.jobTitle}</p>
+                    <p className="text-[10px] font-bold text-slate-500 mt-0.5 truncate flex items-center gap-1"><Building size={10}/> {emp.workplace || "بدون سنترال"}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[10px] mb-4 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-xl border border-slate-100 dark:border-slate-700">
+                  <div className="font-black text-slate-600 dark:text-slate-300 flex items-center gap-1"><Hash size={10} className="text-sky-500"/> {emp.jobId || "—"}</div>
+                  <div className="font-black text-slate-600 dark:text-slate-300 flex items-center gap-1"><Phone size={10} className="text-emerald-500"/> {emp.phone || "—"}</div>
+                  <div className="col-span-2 flex items-center gap-2 mt-1 pt-1 border-t border-slate-200 dark:border-slate-700">
+                    <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black shadow-sm", emp.membershipStatus === 'نقابة مستقلة' ? "bg-amber-100 text-amber-700" : "bg-teal-100 text-teal-700")}>{emp.membershipStatus || "عضو"}</span>
+                    <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black border", emp.memberState === "نشط" ? "border-emerald-200 text-emerald-600 bg-emerald-50" : "border-rose-200 text-rose-600 bg-rose-50")}>{emp.memberState || "نشط"}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 mt-auto">
+                  <button onClick={() => openProfile(emp)} className="flex flex-col items-center justify-center p-2 bg-teal-50 hover:bg-teal-600 text-teal-600 hover:text-white rounded-xl transition-colors group/btn">
+                    <Eye size={16} className="mb-1"/> <span className="text-[9px] font-black">عرض الملف</span>
+                  </button>
+                  <button onClick={() => openEditForm(emp)} className="flex flex-col items-center justify-center p-2 bg-sky-50 hover:bg-sky-600 text-sky-600 hover:text-white rounded-xl transition-colors group/btn">
+                    <Edit3 size={16} className="mb-1"/> <span className="text-[9px] font-black">تعديل</span>
+                  </button>
+                  <button onClick={() => handleDelete(emp)} className="flex flex-col items-center justify-center p-2 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white rounded-xl transition-colors group/btn">
+                    <Trash2 size={16} className="mb-1"/> <span className="text-[9px] font-black">حذف</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {visibleCount < searchResults.length && (
+          <div className="flex justify-center mt-6">
+            <button onClick={() => setVisibleCount(v => v + 10)}
+              className="px-8 py-3 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 hover:border-teal-500 hover:text-teal-600 text-slate-500 rounded-xl font-black text-xs transition-all shadow-sm active:scale-95 flex items-center gap-2">
+              <RefreshCw size={16}/> تحميل المزيد من الأعضاء ({searchResults.length - visibleCount} متبقي)
+            </button>
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }
