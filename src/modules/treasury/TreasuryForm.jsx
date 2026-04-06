@@ -1,11 +1,11 @@
 /**
  * TreasuryForm — نموذج إصدار المستندات المالية
  * ✅ إضافة: صرف شيك نشاط (activity) مع حقول متخصصة
- * ✅ إصلاح: التحقق من الأخطاء وعدم ظهور صفحات بيضاء
- * ✅ إصلاح: رأس النموذج ثابت تماماً عند التمرير
- * ✅ إصلا��: بيانات الطباعة تظهر بشكل صحيح
+ * ✅ إضافة: طباعة طلب مقدم للرعاية (Aid Request)
+ * ✅ إصلاح: العنوان الرئيسي ثابت تماماً بدون حركة
+ * ✅ إصلاح: بيانات الطباعة تظهر بشكل صحيح
+ * ✅ تحسين: نظام ERP متكامل
  * ✅ تحسين: توافق موبايل كامل
- * ✅ تحسين: تصميم احترافي
  */
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -34,15 +34,15 @@ import clsx from "clsx";
 const DEP_OPTS = ["النقابة العامة بالدقهلية", "أمين الصندوق", "اشتراكات أعضاء", "جهة خارجية"];
 
 const AID_RELS = {
-  "زواج":           ["العضو نفسه", "ابن", "ابنة"],
-  "وفاة":           ["العضو نفسه", "الزوج", "الزوجة", "أب", "أم", "ابن", "ابنة"],
+  "رعاية زواج":           ["العضو نفسه", "ابن", "ابنة"],
+  "رعاية وفاة":           ["العضو نفسه", "الزوج", "الزوجة", "أب", "أم", "ابن", "ابنة"],
   "ظروف قهرية / صحية":  ["العضو نفسه"],
-  "مناسبات":           ["ميزانيات", "دور وطني", "جوائز مسابقات", "مبادرات"],
+  "مناسبات":              ["ميزانيات", "دور وطني", "جوائز مسابقات", "مبادرات"],
 };
 
 const TYPE_LABELS = {
   deposit:  "سند إيداع (دائن)",
-  aid:      "سند صرف (مدين)",
+  aid:      "سند صرف رعاية (مدين)",
   advance:  "سند سلفة / عهدة (مدين)",
   activity: "شيك دعم فاعلية (مدين)",
 };
@@ -55,9 +55,9 @@ const TYPE_COLORS = {
 };
 
 const AID_AMOUNTS = {
-  "إعانة وفاة:العضو نفسه": 500, "إعانة وفاة:الزوج": 500, "إعانة وفاة:الزوجة": 500,
-  "إعانة وفاة:أب": 300, "إعانة وفاة:أم": 300, "إعانة وفاة:ابن": 300, "إعانة وفاة:ابنة": 300,
-  "إعانة زواج:العضو نفسه": 500, "إعانة زواج:ابن": 300, "إعانة زواج:ابنة": 300,
+  "رعاية وفاة:العضو نفسه": 500, "رعاية وفاة:الزوج": 500, "رعاية وفاة:الزوجة": 500,
+  "رعاية وفاة:أب": 300, "رعاية وفاة:أم": 300, "رعاية وفاة:ابن": 300, "رعاية وفاة:ابنة": 300,
+  "رعاية زواج:العضو نفسه": 500, "رعاية زواج:ابن": 300, "رعاية زواج:ابنة": 300,
   "ظروف قهرية / صحية:العضو نفسه": 300,
 };
 
@@ -80,6 +80,7 @@ function ERPSection({ title, icon: Icon, colorClass = "teal", children, zIndex =
     )}>
       <div className="flex items-center justify-between border-b pb-2.5 border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2">
+          <div className="w-1 h-5 bg-gradient-to-b from-teal-500 to-teal-600 rounded-full"></div>
           <div className={clsx("p-1.5 rounded-lg", `bg-${colorClass}-500/10`)}>
             <Icon size={14} className={`text-${colorClass}-600`} />
           </div>
@@ -173,7 +174,7 @@ function TypeSelector({ value, onChange }) {
   const T = useT();
   const types = [
     { id: "deposit",  label: "إيداع",    sub: "سند دائن",    icon: DollarSign, color: "emerald" },
-    { id: "aid",      label: "إعانة",    sub: "سند مدين",    icon: Heart,      color: "rose"    },
+    { id: "aid",      label: "رعاية",    sub: "سند مدين",    icon: Heart,      color: "rose"    },
     { id: "advance",  label: "سلفة",     sub: "عهدة مدين",   icon: User,       color: "purple"  },
     { id: "activity", label: "نشاط",     sub: "شيك فاعلية",  icon: Activity,   color: "amber"   },
   ];
@@ -228,7 +229,6 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
     aidCategory:    "",
     aidRel:         "",
     incidentDate:   "",
-    // حقول النشاط الجديدة
     activityName:   "",
     activityType:   "",
     activityDate:   "",
@@ -245,6 +245,7 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
   const [searchQ, setSearchQ]   = useState(initialData?.party || "");
   const [searchRes, setSearchRes] = useState([]);
   const [showRes, setShowRes]   = useState(false);
+  const [empData, setEmpData]   = useState(null);
 
   // تحديث الحقل
   const update = useCallback((key, value) => {
@@ -275,24 +276,25 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
     );
   }, [searchQ, showRes, employeesDB]);
 
-  // تعيين مبلغ الإعانة تلقائياً
+  // تعيين مبلغ الرعاية تلقائياً
   useEffect(() => {
     if (tx.type !== "aid" || isEdit) return;
     if (!tx.aidCategory || !tx.aidRel) return;
     const key = `${tx.aidCategory}:${tx.aidRel}`;
     update("amount", AID_AMOUNTS[key] || 300);
-  }, [tx.aidCategory, tx.aidRel, tx.type, isEdit]);
+  }, [tx.aidCategory, tx.aidRel, tx.type, isEdit, update]);
 
   // إعادة تعيين رقم الشيك عند تغيير النوع
   useEffect(() => {
     if (!isEdit) {
       update("checkNum", tx.type !== "deposit" ? (nextCheque || "") : "");
     }
-  }, [tx.type]);
+  }, [tx.type, nextCheque, isEdit, update]);
 
   const selectEmployee = (emp) => {
     update("party", emp.name);
     update("employeeId", emp.jobId || emp.id);
+    setEmpData(emp);
     setSearchQ(emp.name);
     setShowRes(false);
   };
@@ -305,7 +307,7 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
     if (!tx.party?.trim())                       e.party      = "الجهة أو العضو مطلوب";
     if (tx.type !== "deposit" && !tx.checkNum)   e.checkNum   = "رقم الشيك مطلوب";
     if (tx.type === "aid") {
-      if (!tx.aidCategory)  e.aidCategory = "اختر نوع الإعانة";
+      if (!tx.aidCategory)  e.aidCategory = "اختر نوع الرعاية";
       if (!tx.aidRel)       e.aidRel      = "اختر صلة القرابة";
     }
     if (tx.type === "activity") {
@@ -330,6 +332,7 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
           checkNum: tx.type !== "deposit" ? String(Number(tx.checkNum) + 1) : "",
         });
         setSearchQ("");
+        setEmpData(null);
         showToast?.("تم حفظ المستند بنجاح ✅");
       }
     } catch (err) {
@@ -344,54 +347,63 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
 
   // ─── Render ───────────────────────────────
   return (
-    <div className={clsx("flex flex-col gap-4 max-w-4xl mx-auto pb-24 animate-in slide-in-from-bottom-8 duration-500", T.text)} dir="rtl">
-
-      {/* ── رأس النموذج (ثابت تماماً) ── */}
+    <div className="w-full min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800" dir="rtl">
+      
+      {/* ── Header ثابت تماماً بنظام ERP ── */}
       <div className={clsx(
-        "p-3 px-5 rounded-2xl border shadow-md flex flex-wrap items-center justify-between gap-3",
-        "fixed top-0 left-0 right-0 z-[100] backdrop-blur-md bg-white/95 dark:bg-slate-900/95",
-        "max-w-4xl mx-auto w-full",
-        T.card
+        "fixed top-0 left-0 right-0 z-50",
+        "border-b border-slate-200 dark:border-slate-700",
+        "bg-white/98 dark:bg-slate-900/98 backdrop-blur-xl shadow-sm"
       )}>
-        <div className="flex items-center gap-3">
-          <div className={clsx("p-2.5 rounded-xl", `bg-${color}-500/10`)}>
-            <Landmark size={18} className={`text-${color}-600`}/>
+        <div className="max-w-6xl mx-auto px-4 py-3">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            {/* Left Side */}
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className={clsx("p-2.5 rounded-lg shrink-0", `bg-${color}-500/10`)}>
+                <Landmark size={20} className={`text-${color}-600`}/>
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-sm font-black text-slate-900 dark:text-white truncate">
+                  {isEdit ? "تعديل مستند مالي" : "إصدار مستند مالي جديد"}
+                </h1>
+                <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">{TYPE_LABELS[tx.type]}</p>
+              </div>
+            </div>
+
+            {/* Center - Workflow */}
+            <div className="hidden md:block">
+              <WorkflowStepper state={tx.state}/>
+            </div>
+
+            {/* Right Side - Actions */}
+            <div className="flex items-center gap-2 shrink-0">
+              {onCancel && (
+                <button type="button" onClick={onCancel}
+                  className={clsx("p-2 rounded-lg border hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-900/20 transition-all", T.btn)}>
+                  <X size={16}/>
+                </button>
+              )}
+            </div>
           </div>
-          <div>
-            <h2 className="text-base font-black tracking-tight">
-              {isEdit ? "تعديل مستند مالي" : "إصدار مستند مالي جديد"}
-            </h2>
-            <p className="text-[10px] font-bold text-slate-400">{TYPE_LABELS[tx.type]}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="hidden md:block">
-            <WorkflowStepper state={tx.state}/>
-          </div>
-          {onCancel && (
-            <button type="button" onClick={onCancel}
-              className={clsx("p-2 rounded-xl border hover:bg-rose-50 hover:text-rose-500 transition-all", T.btn)}>
-              <X size={16}/>
-            </button>
-          )}
         </div>
       </div>
 
-      {/* ── إضافة padding-top لتعويض الـ fixed header ── */}
-      <div className="pt-24">
-
-        {/* ── 1. اختيار نوع السند (تغيير نوع الحركة) ── */}
+      {/* ── Main Content ── */}
+      <div className={clsx("max-w-6xl mx-auto mt-20 pb-32 px-4 space-y-4", T.text)}>
+        
+        {/* ── 1. اختيار نوع السند ── */}
         {!isEdit && (
           <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
-            <p className="text-[10px] font-black text-slate-500 uppercase mb-3 flex items-center gap-2">
-              <Tag size={12} className="text-teal-500"/> نوع المستند المالي
-            </p>
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-1 h-6 bg-teal-500 rounded-full"></div>
+              <p className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase">نوع المستند المالي</p>
+            </div>
             <TypeSelector value={tx.type} onChange={v => setTx(prev => ({ ...getEmptyTx(), type: v, date: prev.date }))}/>
           </div>
         )}
 
-        {/* ── 2. البيانات الأساسية للسند ── */}
-        <ERPSection title="بيانات السند الأساسية" icon={FileText} colorClass="slate" zIndex="z-[90]"
+        {/* ── 2. البيانات الأساسية ── */}
+        <ERPSection title="بيانات السند الأساسية" icon={FileText} colorClass="slate" zIndex="z-40"
           badge={tx.state === "posted" ? "مرحّل" : "مسودة"}>
           <div className="space-y-1">
             <ArabicDatePicker label="تاريخ الحركة *" value={tx.date} maxVal={getTodayISO()} onChange={v => update("date", v)} />
@@ -426,7 +438,7 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
 
         {/* ── 3. بيانات الإيداع ── */}
         {tx.type === "deposit" && (
-          <ERPSection title="جهة الإيداع والمصدر" icon={Building} colorClass="emerald" zIndex="z-[85]">
+          <ERPSection title="جهة الإيداع والمصدر" icon={Building} colorClass="emerald" zIndex="z-40">
             <div className="sm:col-span-2">
               <DynamicSelect
                 label="جهة الإيداع *"
@@ -440,11 +452,11 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
           </ERPSection>
         )}
 
-        {/* ── 4. العضو المستفيد (للإعانة والسلفة والنشاط) ── */}
+        {/* ── 4. العضو المستفيد ── */}
         {["advance", "aid", "activity"].includes(tx.type) && (
           <ERPSection
             title={tx.type === "activity" ? "مسؤول الفاعلية (الرحلة/الإفطار)" : "العضو المستفيد / مسؤول العهدة"}
-            icon={User} colorClass="teal" zIndex="z-[80]"
+            icon={User} colorClass="teal" zIndex="z-40"
           >
             <div className="sm:col-span-2 space-y-1 relative">
               <label className="text-[10px] font-black text-slate-500 uppercase pr-1">
@@ -486,15 +498,15 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
           </ERPSection>
         )}
 
-        {/* ── 5. بيانات الإعانة ── */}
+        {/* ── 5. بيانات الرعاية ── */}
         {tx.type === "aid" && (
-          <ERPSection title="موجبات صرف الإعانة" icon={Heart} colorClass="rose" zIndex="z-[75]">
+          <ERPSection title="موجبات صرف الرعاية" icon={Heart} colorClass="rose" zIndex="z-40">
             <ERPSelect
-              label="نوع الإعانة" required icon={Tag}
+              label="نوع الرعاية" required icon={Tag}
               value={tx.aidCategory} error={errors.aidCategory}
               onChange={e => { update("aidCategory", e.target.value); update("aidRel", ""); }}
             >
-              <option value="">-- اختر نوع الإعانة --</option>
+              <option value="">-- اختر نوع الرعاية --</option>
               {Object.keys(AID_RELS).map(c => <option key={c} value={c}>{c}</option>)}
             </ERPSelect>
 
@@ -508,32 +520,28 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
               {(AID_RELS[tx.aidCategory] || []).map(r => <option key={r} value={r}>{r}</option>)}
             </ERPSelect>
 
-            <div className="sm:col-span-2 space-y-1 z-[60]">
-              <ArabicDatePicker label="تاريخ واقعة الإعانة" value={tx.incidentDate} maxVal={tx.date} onChange={v => update("incidentDate", v)} />
+            <div className="sm:col-span-2 space-y-1 z-30">
+              <ArabicDatePicker label="تاريخ واقعة الرعاية" value={tx.incidentDate} maxVal={tx.date} onChange={v => update("incidentDate", v)} />
             </div>
 
             {tx.aidCategory && tx.aidRel && (
               <div className="sm:col-span-2 flex items-center gap-2 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 px-3 py-2 rounded-xl">
                 <Info size={14} className="text-rose-500 shrink-0"/>
                 <p className="text-[10px] font-black text-rose-700 dark:text-rose-400">
-                  المبلغ المقترح حسب لائحة النقابة:
-                  <span className="mr-1 text-rose-600 dark:text-rose-300">
-                    {(AID_AMOUNTS[`${tx.aidCategory}:${tx.aidRel}`] || 300).toLocaleString()} ج.م
-                  </span>
+                  المبلغ المقترح: <span className="mr-1 text-rose-600 dark:text-rose-300">{(AID_AMOUNTS[`${tx.aidCategory}:${tx.aidRel}`] || 300).toLocaleString()} ج.م</span>
                 </p>
               </div>
             )}
           </ERPSection>
         )}
 
-        {/* ── 6. ✨ بيانات الفاعلية (صرف شيك نشاط) ── */}
+        {/* ── 6. بيانات الفاعلية ── */}
         {tx.type === "activity" && (
           <ERPSection
             title="تفاصيل الفاعلية — شيك دعم النشاط"
-            icon={Activity} colorClass="amber" zIndex="z-[70]"
+            icon={Activity} colorClass="amber" zIndex="z-40"
             badge="جديد"
           >
-            {/* اسم الفاعلية */}
             <ERPInput
               label="اسم الفاعلية / الحدث" required fullWidth
               value={tx.activityName || ""}
@@ -543,7 +551,6 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
               placeholder="مثال: رحلة شرم الشيخ الصيفية"
             />
 
-            {/* نوع الفاعلية */}
             <ERPSelect
               label="نوع الفاعلية" required icon={Tag}
               value={tx.activityType || ""} error={errors.activityType}
@@ -553,12 +560,10 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
               {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </ERPSelect>
 
-            {/* موعد الفاعلية */}
             <div className="space-y-1">
               <ArabicDatePicker label="موعد الفاعلية المقرر" value={tx.activityDate || ""} onChange={v => update("activityDate", v)} />
             </div>
 
-            {/* عدد المشاركين */}
             <ERPInput
               label="عدد المشاركين المتوقع"
               value={tx.participantsCount || ""}
@@ -567,7 +572,6 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
               placeholder="عدد الأشخاص"
             />
 
-            {/* موقع الفاعلية */}
             <ERPInput
               label="موقع / وجهة الفاعلية" fullWidth
               value={tx.activityLocation || ""}
@@ -576,7 +580,6 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
               placeholder="مثال: شرم الشيخ / قاعة النقابة"
             />
 
-            {/* تلميح */}
             <div className="sm:col-span-2 flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 px-3 py-2 rounded-xl">
               <Info size={14} className="text-amber-600 mt-0.5 shrink-0"/>
               <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400">
@@ -587,7 +590,7 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
         )}
 
         {/* ── 7. الملاحظات والمرفقات ── */}
-        <ERPSection title="البيان التوضيحي والمرفقات" icon={FileText} colorClass="indigo" zIndex="z-[50]">
+        <ERPSection title="البيان التوضيحي والمرفقات" icon={FileText} colorClass="indigo" zIndex="z-30">
           <div className="sm:col-span-2 space-y-1">
             <label className="text-[10px] font-black text-slate-400 uppercase pr-1">
               {tx.type === "activity" ? "تفاصيل إضافية / بند الصرف" : "ملاحظات وبيان السند"}
@@ -607,64 +610,90 @@ export default function TreasuryForm({ userRole, onSubmit, nextCheque, initialDa
 
       </div>
 
-      {/* ── شريط الأزرار السفلي ── */}
+      {/* ── Footer/Action Bar ثابت ── */}
       <div className={clsx(
-        "flex flex-wrap justify-between items-center gap-3 p-3 px-4",
-        "fixed bottom-0 left-0 right-0 z-[100] backdrop-blur-xl rounded-2xl shadow-xl border",
-        "max-w-4xl mx-auto w-full",
-        T.card
+        "fixed bottom-0 left-0 right-0 z-50",
+        "border-t border-slate-200 dark:border-slate-700",
+        "bg-white/98 dark:bg-slate-900/98 backdrop-blur-xl shadow-sm"
       )}>
-        {/* معلومات سريعة */}
-        <div className="hidden sm:flex items-center gap-3 text-[10px] font-bold text-slate-500">
-          {tx.checkNum && <span className="flex items-center gap-1"><Hash size={12}/> شيك #{tx.checkNum}</span>}
-          {tx.amount && <span className="text-emerald-600 font-black">{Number(tx.amount).toLocaleString()} ج.م</span>}
-        </div>
+        <div className="max-w-6xl mx-auto px-4 py-3">
+          <div className="flex flex-wrap justify-between items-center gap-3">
+            {/* معلومات سريعة */}
+            <div className="hidden sm:flex items-center gap-4 text-[10px] font-bold text-slate-600 dark:text-slate-400">
+              {tx.checkNum && <span className="flex items-center gap-1"><Hash size={12}/> شيك #{tx.checkNum}</span>}
+              {tx.amount && <span className="text-emerald-600 dark:text-emerald-400 font-black">{Number(tx.amount).toLocaleString()} ج.م</span>}
+            </div>
 
-        <div className="flex gap-2 w-full sm:w-auto">
-          <button
-            type="button" onClick={onCancel}
-            className={clsx("flex-1 sm:flex-initial px-5 py-2.5 rounded-xl font-bold text-xs border transition-colors", T.btn)}
-          >
-            إلغاء
-          </button>
+            {/* الأزرار */}
+            <div className="flex gap-2 w-full sm:w-auto">
+              <button
+                type="button" onClick={onCancel}
+                className={clsx("flex-1 sm:flex-initial px-4 py-2 rounded-lg font-bold text-xs border transition-colors", T.btn)}
+              >
+                إلغاء
+              </button>
 
-          {!isEdit && tx.type !== "deposit" && (
-            <button
-              type="button"
-              onClick={() => { 
-                if (validate()) {
-                  printVoucher?.({
-                    vType: TYPE_LABELS[tx.type],
-                    vNum: tx.checkNum,
-                    date: tx.date,
-                    party: tx.party,
-                    amount: tx.amount,
-                    notes: tx.notes,
-                    checkNum: tx.checkNum,
-                    extraFields: tx.type === 'activity' ? [
-                      { label: 'اسم الفاعلية', value: tx.activityName },
-                      { label: 'نوع الفاعلية', value: tx.activityType },
-                      { label: 'الموقع', value: tx.activityLocation }
-                    ] : []
-                  });
-                }
-              }}
-              className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl font-black text-[10px] flex items-center gap-1.5 border transition-all"
-            >
-              <Printer size={13}/> طباعة سند
-            </button>
-          )}
+              {!isEdit && tx.type === "aid" && (
+                <button
+                  type="button"
+                  onClick={() => { 
+                    if (validate()) {
+                      printAidRequest?.({
+                        emp: empData,
+                        aidCat: tx.aidCategory,
+                        aidRel: tx.aidRel,
+                        incDate: tx.incidentDate,
+                        amount: tx.amount,
+                        date: tx.date,
+                        notes: tx.notes
+                      });
+                    }
+                  }}
+                  className="px-3 py-2 bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 dark:hover:bg-blue-900/50 rounded-lg font-black text-[10px] flex items-center gap-1.5 border border-blue-300 dark:border-blue-700 transition-all"
+                >
+                  <Printer size={12}/> طلب
+                </button>
+              )}
 
-          <button
-            type="button" onClick={save} disabled={saving}
-            className={clsx(
-              "flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-7 py-2.5 rounded-xl font-black text-xs transition-all shadow-md active:scale-95",
-              `bg-${color}-600 hover:bg-${color}-700 text-white disabled:opacity-50`
-            )}
-          >
-            {saving ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>}
-            {isEdit ? "تحديث السند" : "حفظ السند"}
-          </button>
+              {!isEdit && tx.type !== "deposit" && (
+                <button
+                  type="button"
+                  onClick={() => { 
+                    if (validate()) {
+                      printVoucher?.({
+                        vType: TYPE_LABELS[tx.type],
+                        vNum: tx.checkNum,
+                        date: tx.date,
+                        party: tx.party,
+                        amount: tx.amount,
+                        notes: tx.notes,
+                        checkNum: tx.checkNum,
+                        extraFields: tx.type === 'activity' ? [
+                          { label: 'اسم الفاعلية', value: tx.activityName },
+                          { label: 'نوع الفاعلية', value: tx.activityType },
+                          { label: 'الموقع', value: tx.activityLocation }
+                        ] : []
+                      });
+                    }
+                  }}
+                  className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg font-black text-[10px] flex items-center gap-1.5 border transition-all"
+                >
+                  <Printer size={12}/> سند
+                </button>
+              )}
+
+              <button
+                type="button" onClick={save} disabled={saving}
+                className={clsx(
+                  "flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-5 py-2 rounded-lg font-black text-xs transition-all",
+                  `bg-${color}-600 hover:bg-${color}-700 text-white disabled:opacity-50`
+                )}
+              >
+                {saving ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>}
+                {isEdit ? "تحديث" : "حفظ"}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
