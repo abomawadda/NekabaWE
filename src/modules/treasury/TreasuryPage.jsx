@@ -81,107 +81,126 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [selectedTx, setSelectedTx] = useState(null);
-  const [filterType, setFilterType] = useState("all");
-  const [filterState, setFilterState] = useState("all");
-  const [searchQ, setSearchQ] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const [viewAttachments, setViewAttachments] = useState(null);
-  const [toast, setToast] = useState(null);
+  diff --git a/src/modules/treasury/TreasuryPage.jsx b/src/modules/treasury/TreasuryPage.jsx
+index 9712dd59d4e04bd91e4fa5c2bb258672f6035763..9c854d88b5e531da98a0b7ef58a4f37e6ac21d71 100644
+--- a/src/modules/treasury/TreasuryPage.jsx
++++ b/src/modules/treasury/TreasuryPage.jsx
+@@ -84,101 +84,112 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
+   const [selectedTx, setSelectedTx] = useState(null);
+   const [filterType, setFilterType] = useState("all");
+   const [filterState, setFilterState] = useState("all");
+   const [searchQ, setSearchQ] = useState("");
+   const [deleteTarget, setDeleteTarget] = useState(null);
+   const [viewAttachments, setViewAttachments] = useState(null);
+   const [toast, setToast] = useState(null);
+ 
+   const { deleteTransaction, saveTransaction } = useTreasuryService();
+ 
+   const showToast = useCallback((msg, type = "success") => {
+     setToast({ msg, type });
+     setTimeout(() => setToast(null), 3000);
+   }, []);
+ 
+   useEffect(() => {
+     if (location.search.includes("type=")) {
+       setShowForm(true);
+       setSelectedTx(null);
+     } else if (!selectedTx) {
+       setShowForm(false);
+     }
+   }, [location.search, selectedTx]);
+ 
+   useEffect(() => {
+-    const qRef = query(collection(db, "transactions"), orderBy("date", "desc"));
+-    orderBy("checkNum", "asc"), // sorting by check number when dates are equal
++    const qRef = query(
++      collection(db, "transactions"),
++      orderBy("date", "asc"),
++      orderBy("checkNum", "asc")
++    );
+     const unsub = onSnapshot(qRef, (snap) => {
+       setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+       setLoading(false);
+     });
+ 
+     return () => unsub();
+   }, []);
+ 
+   const posted = useMemo(
+     () => transactions.filter((t) => t.state === "posted" || t.state === "approved" || !t.state),
+     [transactions]
+   );
+ 
+   const totalIn = useMemo(
+     () => posted.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount || 0), 0),
+     [posted]
+   );
+ 
+   const totalOut = useMemo(
+     () => posted.filter((t) => t.type !== "deposit").reduce((s, t) => s + Number(t.amount || 0), 0),
+     [posted]
+   );
+ 
+   const balance = OPENING_BALANCE + totalIn - totalOut;
+ 
+   const openAdvances = useMemo(
+     () => transactions.filter((t) => ["advance", "activity"].includes(t.type) && !t.isSettled && t.state === "posted").length,
+     [transactions]
+   );
+ 
+   const nextCheque = useMemo(() => {
+     const nums = transactions
+       .map((t) => Number(t.checkNum))
+       .filter((n) => Number.isFinite(n) && n > 0);
+     return (nums.length ? Math.max(...nums) : 10250) + 1;
+   }, [transactions]);
+ 
+   const visible = useMemo(() => {
+     return transactions
+       .filter((t) => filterType === "all" || t.type === filterType)
+       .filter((t) => filterState === "all" || (t.state || "posted") === filterState)
+       .filter((t) => {
+         if (!searchQ) return true;
+         const q = searchQ.trim();
+         return (
+           t.party?.includes(q) ||
+           t.notes?.includes(q) ||
+           String(t.checkNum || "").includes(q)
+         );
++      })
++      .sort((a, b) => {
++        const byDate = String(a.date || "").localeCompare(String(b.date || ""));
++        if (byDate !== 0) return byDate;
++
++        const aCheck = Number(a.checkNum || Number.MAX_SAFE_INTEGER);
++        const bCheck = Number(b.checkNum || Number.MAX_SAFE_INTEGER);
++        return aCheck - bCheck;
+       });
+   }, [transactions, filterType, filterState, searchQ]);
+ 
+   const handleCloseForm = useCallback(() => {
+     setShowForm(false);
+     setSelectedTx(null);
+     navigate("/treasury/admin", { replace: true });
+   }, [navigate]);
+ 
+   // ✅ تعديل مهم: عدم إغلاق النموذج عند إضافة سند جديد
+   const handleSave = async (data, isEdit) => {
+     try {
+       await saveTransaction(data);
+       showToast(isEdit ? "تم تحديث بيانات السند بنجاح ✓" : "تم إصدار السند وترحيله بنجاح ✓");
+       
+       // الفرق هنا:
+       if (isEdit) {
+         // عند التعديل: إغلاق النموذج والعودة للقائمة
+         handleCloseForm();
+       } else {
+         // عند الإضافة الجديدة: عدم إغلاق النموذج
+         // TreasuryForm سيقوم بتفريغ المحتوى تلقائياً
+         setSelectedTx(null);
+         // الآن showForm سيبقى true والنموذج سيبقى مفتوح
+       }
 
-  const { deleteTransaction, saveTransaction } = useTreasuryService();
-
-  const showToast = useCallback((msg, type = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
-
-  useEffect(() => {
-    if (location.search.includes("type=")) {
-      setShowForm(true);
-      setSelectedTx(null);
-    } else if (!selectedTx) {
-      setShowForm(false);
-    }
-  }, [location.search, selectedTx]);
-
-  useEffect(() => {
-    const qRef = query(collection(db, "transactions"), orderBy("date", "desc"));
-    orderBy("checkNum", "asc"), // sorting by check number when dates are equal
-    const unsub = onSnapshot(qRef, (snap) => {
-      setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
-
-    return () => unsub();
-  }, []);
-
-  const posted = useMemo(
-    () => transactions.filter((t) => t.state === "posted" || t.state === "approved" || !t.state),
-    [transactions]
-  );
-
-  const totalIn = useMemo(
-    () => posted.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount || 0), 0),
-    [posted]
-  );
-
-  const totalOut = useMemo(
-    () => posted.filter((t) => t.type !== "deposit").reduce((s, t) => s + Number(t.amount || 0), 0),
-    [posted]
-  );
-
-  const balance = OPENING_BALANCE + totalIn - totalOut;
-
-  const openAdvances = useMemo(
-    () => transactions.filter((t) => ["advance", "activity"].includes(t.type) && !t.isSettled && t.state === "posted").length,
-    [transactions]
-  );
-
-  const nextCheque = useMemo(() => {
-    const nums = transactions
-      .map((t) => Number(t.checkNum))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    return (nums.length ? Math.max(...nums) : 10250) + 1;
-  }, [transactions]);
-
-  const visible = useMemo(() => {
-    return transactions
-      .filter((t) => filterType === "all" || t.type === filterType)
-      .filter((t) => filterState === "all" || (t.state || "posted") === filterState)
-      .filter((t) => {
-        if (!searchQ) return true;
-        const q = searchQ.trim();
-        return (
-          t.party?.includes(q) ||
-          t.notes?.includes(q) ||
-          String(t.checkNum || "").includes(q)
-        );
-      });
-  }, [transactions, filterType, filterState, searchQ]);
-
-  const handleCloseForm = useCallback(() => {
-    setShowForm(false);
-    setSelectedTx(null);
-    navigate("/treasury/admin", { replace: true });
-  }, [navigate]);
-
-  // ✅ تعديل مهم: عدم إغلاق النموذج عند إضافة سند جديد
-  const handleSave = async (data, isEdit) => {
-    try {
-      await saveTransaction(data);
-      showToast(isEdit ? "تم تحديث بيانات السند بنجاح ✓" : "تم إصدار السند وترحيله بنجاح ✓");
-      
-      // الفرق هنا:
-      if (isEdit) {
-        // عند التعديل: إغلاق النموذج والعودة للقائمة
-        handleCloseForm();
-      } else {
-        // عند الإضافة الجديدة: عدم إغلاق النموذج
-        // TreasuryForm سيقوم بتفريغ المحتوى تلقائياً
-        setSelectedTx(null);
-        // الآن showForm سيبقى true والنموذج سيبقى مفتوح
-      }
     } catch (error) {
       console.error(error);
       showToast("حدث خطأ أثناء الحفظ، يرجى المحاولة مجدداً", "error");
