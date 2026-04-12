@@ -107,6 +107,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
 
   useEffect(() => {
     const qRef = query(collection(db, "transactions"), orderBy("date", "desc"));
+    orderBy("checkNum", "asc"), // sorting by check number when dates are equal
     const unsub = onSnapshot(qRef, (snap) => {
       setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
