@@ -413,4 +413,29 @@ export default function ArabicDatePicker({
   return (
     <div className="space-y-1 w-full" dir="rtl">
       {label && (
-        <label className="text-[10px] font
+        <label className="text-[10px] font-black text-slate-500 dark:text-slate-400 mb-1 block">
+          {label} {required && <span className="text-rose-500">*</span>}
+        </label>
+      )}
+      
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen(!open)}
+        className={clsx(
+          "w-full flex items-center justify-between px-3 py-2.5 rounded-xl border text-xs font-bold transition-all text-right",
+          disabled ? "opacity-60 cursor-not-allowed bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400" : T.inp,
+          open && "ring-2 ring-teal-500/20 border-teal-500"
+        )}
+      >
+        <span className={value ? "text-slate-800 dark:text-slate-100 font-black" : "text-slate-400"}>
+          {value ? formatDisplayDate(value) : placeholder}
+        </span>
+        <CalendarDays size={14} className={value ? "text-teal-600 dark:text-teal-400" : "text-slate-400"} />
+      </button>
+
+      {popup}
+    </div>
+  );
+}
