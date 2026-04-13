@@ -444,4 +444,8 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
       )}
     </div>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> b0c71bbe4fbe59c1212fc45f3137af1efcc66927
