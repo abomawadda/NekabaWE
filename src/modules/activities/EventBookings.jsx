@@ -16,6 +16,7 @@ import {
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
+import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import {
   Ticket, Users, CheckCircle2, AlertCircle, Search,
   CreditCard, Printer, Copy, X, Banknote, Smartphone, Receipt,
@@ -77,14 +78,12 @@ const printManifest = (event, bookings) => {
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
     *{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}
     body{padding:25px;font-size:12px;color:#1e293b;}
-    .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1e293b;padding-bottom:15px;margin-bottom:15px;}
-    .hdr h1{font-size:20px;font-weight:900;}
     table{width:100%;border-collapse:collapse;}
     th{background:#1e293b;color:#fff;padding:9px 6px;text-align:center;font-size:11px;}
     td{padding:8px 6px;border:1px solid #e2e8f0;vertical-align:top;}
+    ${getPrintBrandStyles()}
   </style></head><body>
-  <div class="hdr"><div><h1>كشف حضور فعالية: ${event.title}</h1><p>${event.type} | التاريخ: ${event.date}</p></div>
-  <div style="text-align:left;font-weight:900;font-size:16px;">إجمالي الحضور: ${totalPax} فرد</div></div>
+  ${getPrintBrandHeader({ reportTitle: `كشف حضور فعالية: ${event.title}`, reportMeta: `${event.type} | التاريخ: ${event.date} | إجمالي الحضور: ${totalPax} فرد` })}
   <table><thead><tr><th style="width:5%">#</th><th style="width:38%">المشترك والمرافقين</th><th style="width:8%">الأفراد</th><th style="width:10%">التكلفة</th><th style="width:24%">تفاصيل الدفع</th><th style="width:15%">توقيع الحضور</th></tr></thead>
   <tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:30px;">لا يوجد مشتركون مؤكدون</td></tr>`}</tbody></table>
   <div style="margin-top:30px; font-weight:bold;">توقيع المشرف: ............................</div>

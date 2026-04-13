@@ -16,6 +16,8 @@ import {
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
+import BrandHeader from "../../ui/BrandHeader";
+import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import {
   CalendarDays, Plus, Users, Ticket, CheckCircle2, AlertCircle,
   Clock, X, Save, Tent, ShieldAlert, Edit, Trash2, CalendarClock,
@@ -82,8 +84,6 @@ const printFinancialReport = (events, bookingsMap) => {
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
     * { font-family:'Cairo',sans-serif; box-sizing:border-box; margin:0; padding:0; }
     body { padding:30px; font-size:12px; background:#fff; color:#1e293b; }
-    .header { background:#1e293b; color:#fff; padding:20px; border-radius:8px; margin-bottom:20px; }
-    .header h1 { font-size:20px; font-weight:900; }
     .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:20px; }
     .kpi { border:1px solid #e2e8f0; border-radius:8px; padding:15px; text-align:center; }
     .kpi .val { font-size:20px; font-weight:900; color:#4f46e5; }
@@ -91,8 +91,9 @@ const printFinancialReport = (events, bookingsMap) => {
     th { background:#f1f5f9; color:#1e293b; padding:10px; border:1px solid #cbd5e1; font-size:11px; }
     td { padding:8px; border:1px solid #cbd5e1; font-size:11px; }
     tfoot td { background:#f8fafc; font-weight:900; }
+    ${getPrintBrandStyles()}
   </style></head><body>
-  <div class="header"><h1>📊 التقرير المالي الشامل — نظام الفعاليات</h1><p>تاريخ الإصدار: ${today}</p></div>
+  ${getPrintBrandHeader({ reportTitle: 'التقرير المالي الشامل للفعاليات', reportMeta: `تاريخ الإصدار: ${today}` })}
   <div class="kpis">
     <div class="kpi"><div class="val">${events.length}</div><div>إجمالي الفعاليات</div></div>
     <div class="kpi"><div class="val">${totalBookings.toLocaleString()}</div><div>حجوزات مؤكدة</div></div>
@@ -118,7 +119,7 @@ const printEventDetail = (event, bookings) => {
 
   const rows = confirmed.map((b, i) => `<tr><td style="text-align:center">${i + 1}</td><td><strong>${b.memberName}</strong><br><small>كود: ${b.memberId} | ${b.memberPhone || "—"}</small>${b.companionsList?.length ? `<div style="font-size:10px;color:#6366f1;margin-top:3px">${b.companionsList.map(c => `· ${c.name} (${c.relation})`).join(" ")}</div>` : ""}</td><td style="text-align:center">${b.totalPax}</td><td style="text-align:center; color:#059669; font-weight:900">${Number(b.totalCost).toLocaleString()} ج</td><td style="text-align:center; font-size:10px">${b.paymentSummary || "مجاني"}</td><td style="text-align:center"></td></tr>`).join("");
 
-  win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف الفعالية: ${event.title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}body{padding:25px;font-size:12px;}.hdr{border-bottom:3px solid #1e293b;padding-bottom:15px;margin-bottom:20px;}.hdr h1{font-size:20px;font-weight:900;color:#1e293b;}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:15px 0;}.m{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;text-align:center;}.m .v{font-size:18px;font-weight:900;color:#4f46e5;}.m .l{font-size:9px;color:#64748b;font-weight:700;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:9px;text-align:center;}td{padding:8px;border:1px solid #e2e8f0;vertical-align:top;}</style></head><body><div class="hdr"><h1>كشف فعالية: ${event.title}</h1><p style="color:#64748b;font-size:11px;margin-top:4px">${event.type} | التاريخ: ${event.date} | ${event.location || ""}</p></div><div class="meta"><div class="m"><div class="v">${totalPax}</div><div class="l">إجمالي الأفراد</div></div><div class="m"><div class="v">${confirmed.length}</div><div class="l">حجوزات مؤكدة</div></div><div class="m"><div class="v">${pending.length}</div><div class="l">حجوزات معلقة</div></div><div class="m"><div class="v" style="color:#059669">${totalRev.toLocaleString()} ج</div><div class="l">إجمالي الإيراد</div></div></div><table><thead><tr><th>#</th><th>المشترك والمرافقين</th><th>الأفراد</th><th>التكلفة</th><th>الدفع</th><th>توقيع حضور</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8">لا توجد حجوزات مؤكدة</td></tr>`}</tbody></table>${cancelled.length > 0 ? `<p style="margin-top:15px;font-size:10px;color:#ef4444;font-weight:700">⚠ الملغيون (${cancelled.length}): ${cancelled.map(b=>b.memberName).join("، ")}</p>` : ""}<div style="margin-top:25px;display:flex;justify-content:space-between;font-size:11px;color:#64748b;"><span>مشرف الفعالية: ${Array.isArray(event.supervisors) ? event.supervisors.join("، ") : (event.supervisors || "—")}</span><span>توقيع المشرف: .........................</span></div><script>window.onload=()=>setTimeout(()=>window.print(),600);</script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف الفعالية: ${event.title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}body{padding:25px;font-size:12px;}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:15px 0;}.m{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;text-align:center;}.m .v{font-size:18px;font-weight:900;color:#4f46e5;}.m .l{font-size:9px;color:#64748b;font-weight:700;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:9px;text-align:center;}td{padding:8px;border:1px solid #e2e8f0;vertical-align:top;}${getPrintBrandStyles()}</style></head><body>${getPrintBrandHeader({ reportTitle: `كشف فعالية: ${event.title}`, reportMeta: `${event.type} | التاريخ: ${event.date} | ${event.location || ""}` })}<div class="meta"><div class="m"><div class="v">${totalPax}</div><div class="l">إجمالي الأفراد</div></div><div class="m"><div class="v">${confirmed.length}</div><div class="l">حجوزات مؤكدة</div></div><div class="m"><div class="v">${pending.length}</div><div class="l">حجوزات معلقة</div></div><div class="m"><div class="v" style="color:#059669">${totalRev.toLocaleString()} ج</div><div class="l">إجمالي الإيراد</div></div></div><table><thead><tr><th>#</th><th>المشترك والمرافقين</th><th>الأفراد</th><th>التكلفة</th><th>الدفع</th><th>توقيع حضور</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8">لا توجد حجوزات مؤكدة</td></tr>`}</tbody></table>${cancelled.length > 0 ? `<p style="margin-top:15px;font-size:10px;color:#ef4444;font-weight:700">⚠ الملغيون (${cancelled.length}): ${cancelled.map(b=>b.memberName).join("، ")}</p>` : ""}<div style="margin-top:25px;display:flex;justify-content:space-between;font-size:11px;color:#64748b;"><span>مشرف الفعالية: ${Array.isArray(event.supervisors) ? event.supervisors.join("، ") : (event.supervisors || "—")}</span><span>توقيع المشرف: .........................</span></div><script>window.onload=()=>setTimeout(()=>window.print(),600);</script></body></html>`);
   win.document.close();
 };
 
@@ -246,6 +247,7 @@ export default function EventsMaster() {
 
   return (
     <div className={clsx("flex flex-col gap-5 max-w-7xl mx-auto pb-12", T.text)} dir="rtl">
+      <BrandHeader sectionTitle="إدارة الفعاليات والأنشطة" sectionHint="التخطيط والحجوزات والتقارير" />
       {toast && (
         <div className={clsx("fixed top-5 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3.5 rounded-2xl shadow-2xl flex items-center gap-2.5 text-white font-bold text-xs animate-in fade-in slide-in-from-top-4", toast.type === "error" ? "bg-rose-600" : "bg-emerald-600")}>
           {toast.type === "error" ? <AlertCircle size={15}/> : <CheckCircle2 size={15}/>} {toast.msg}
@@ -272,9 +274,9 @@ export default function EventsMaster() {
               <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
                 <p className="text-[10px] font-black text-slate-500 uppercase">📅 التواريخ والجدول الزمني</p>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <FormField label="تاريخ الانطلاق" required><input type="date" value={formData.date} min={getTodayISO()} onChange={e => setField("date", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2", T.inp)} /></FormField>
-                  <FormField label="بدء الحجز"><input type="date" value={formData.bookingStart} max={formData.bookingEnd} onChange={e => setField("bookingStart", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2", T.inp)} /></FormField>
-                  <FormField label="إغلاق الحجز"><input type="date" value={formData.bookingEnd} min={formData.bookingStart} max={formData.date} onChange={e => setField("bookingEnd", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2", T.inp)} /></FormField>
+                  <FormField label="تاريخ الانطلاق" required><ArabicDatePicker label="" value={formData.date} minVal={getTodayISO()} onChange={v => setField("date", v)} /></FormField>
+                  <FormField label="بدء الحجز"><ArabicDatePicker label="" value={formData.bookingStart} maxVal={formData.bookingEnd} onChange={v => setField("bookingStart", v)} /></FormField>
+                  <FormField label="إغلاق الحجز"><ArabicDatePicker label="" value={formData.bookingEnd} minVal={formData.bookingStart} maxVal={formData.date} onChange={v => setField("bookingEnd", v)} /></FormField>
                 </div>
               </div>
 

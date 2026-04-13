@@ -1,3 +1,5 @@
+import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+
 // ── دالة طباعة كشف تسوية العهد والسلف ──
 export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBalance = 0, returnedActually }) {
   const win = window.open("", "_blank", "width=950,height=750");
@@ -27,9 +29,6 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
         * { font-family: 'Cairo', sans-serif; margin: 0; padding: 0; box-sizing: border-box; direction: rtl; }
         body { padding: 30px; color: #1e293b; background: #fff; }
-        .hdr { text-align: center; border-bottom: 2px solid #0d9488; padding-bottom: 15px; margin-bottom: 20px; }
-        .org { font-size: 14px; font-weight: 700; color: #64748b; margin-bottom: 5px; }
-        .doc-title { font-size: 24px; font-weight: 900; color: #0d9488; margin-bottom: 10px; }
         .badge { display: inline-block; padding: 5px 15px; background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 20px; font-size: 12px; font-weight: 700; color: #0f766e; }
         
         .info-row { margin-bottom: 20px; padding: 15px; background: #f8fafc; border-right: 4px solid #0d9488; border-radius: 8px; font-size: 16px; font-weight: bold; }
@@ -49,14 +48,11 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
         .sig-box { border-top: 2px dashed #cbd5e1; padding-top: 10px; font-size: 14px; font-weight: 900; color: #475569; }
         .sig-space { height: 60px; }
         @media print { @page { margin: 10mm; } body { padding: 0; } }
+        ${getPrintBrandStyles()}
       </style>
     </head>
     <body>
-      <div class="hdr">
-        <div class="org">النقابة العامة للاتصالات بالدقهلية - أمانة الصندوق</div>
-        <h1 class="doc-title">كشف تسوية عهدة / سلفة مالية</h1>
-        <div class="badge">تاريخ الاعتماد: ${advanceTxn?.settlementDate || '—'}</div>
-      </div>
+      ${getPrintBrandHeader({ reportTitle: "كشف تسوية عهدة / سلفة مالية", reportMeta: `تاريخ الاعتماد: ${advanceTxn?.settlementDate || '—'}` })}
       
       <div class="info-row">
         اسم مسؤول العهدة: <span style="font-size:20px; color:#0d9488; margin-right: 10px;">${advanceTxn?.employeeName || advanceTxn?.party || '—'}</span>

@@ -8,8 +8,9 @@
  */
 
 import { tafqeet } from "../../utils/tafqeet";
+import { ORG_REPORT_SUBTITLE, ORG_REPORT_TITLE, getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 
-const ORG_NAME = "النقابة العامة للاتصالات بالدقهلية - أمانة الصندوق";
+const ORG_NAME = `${ORG_REPORT_TITLE} - ${ORG_REPORT_SUBTITLE}`;
 const PRINT_FONT = `@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');`;
 
 const PRINT_BASE = (title) => `<!DOCTYPE html><html dir="rtl" lang="ar"><head>
@@ -18,9 +19,6 @@ const PRINT_BASE = (title) => `<!DOCTYPE html><html dir="rtl" lang="ar"><head>
 *{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box}
 body{padding:32px 42px;color:#1e293b;font-size:14px;line-height:1.6}
 .wm{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:100px;color:rgba(13,148,136,.03);font-weight:800;pointer-events:none;white-space:nowrap;z-index:0}
-.hdr{text-align:center;border-bottom:3px double #0d9488;padding-bottom:14px;margin-bottom:20px;position:relative;z-index:1}
-.org{font-size:12px;color:#64748b;letter-spacing:.5px;margin-bottom:4px;font-weight:bold}
-.doc-title{font-size:24px;font-weight:800;color:#0d9488;margin:6px 0}
 .badge{display:inline-block;padding:4px 16px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;font-size:13px;font-weight:700;color:#0f766e;margin-top:6px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:20px 0;position:relative;z-index:1}
 .box{padding:12px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa}
@@ -42,8 +40,9 @@ td{padding:12px 10px;border:1px solid #e2e8f0;text-align:right;font-weight:600}
 .check-box{width:18px;height:18px;border:2px solid #cbd5e1;border-radius:4px;display:inline-block}
 .pledge{font-size:13px;color:#475569;border:1px dashed #cbd5e1;padding:16px;border-radius:8px;margin:20px 0;background:#f8fafc;line-height:1.8;font-weight:600;}
 @media print{body{padding:20px}.wm{display:none}}
+${getPrintBrandStyles()}
 </style></head><body>
-<div class="wm">النقابة العامة للاتصالات بالدقهلية</div>`;
+<div class="wm">${ORG_REPORT_TITLE}</div>`;
 
 
 /** طباعة سند الخزينة (إيداع / صرف إعانة / سلفة) */
@@ -57,11 +56,7 @@ export function printVoucher({ vType, vNum, date, party, amount, notes, checkNum
   const isDeposit = vType.includes('إيداع');
 
   win.document.write(PRINT_BASE(vType) + `
-    <div class="hdr">
-      <div class="org">${ORG_NAME}</div>
-      <div class="doc-title">${vType}</div>
-      <div class="badge">رقم السند: ${vNum || '—'}</div>
-    </div>
+    ${getPrintBrandHeader({ reportTitle: vType, reportMeta: `رقم السند: ${vNum || '—'}` })}
     <div class="grid2">
       <div class="box"><div class="bl">التاريخ</div><div class="bv">${date || '—'}</div></div>
       <div class="box"><div class="bl">${isDeposit ? 'اسم المودع / الجهة' : 'اسم المستفيد / المستلم'}</div><div class="bv">${party || '—'}</div></div>
@@ -97,11 +92,7 @@ export function printAidRequest({ emp, aidCat, aidRel, incDate, amount, date, no
   const doc1 = aidCat === 'إعانة زواج' ? 'عقد الزواج الرسمي موثّق' : aidCat === 'إعانة وفاة' ? 'شهادة الوفاة الرسمية' : 'التقرير الطبي أو المستند الرسمي للواقعة';
   
   win.document.write(PRINT_BASE('نموذج طلب صرف إعانة') + `
-    <div class="hdr">
-      <div class="org">${ORG_NAME} - النقابة العامة بالدقهلية - أمانة الصندوق</div>
-      <div class="doc-title">نموذج طلب صرف إعانة عضو</div>
-      <div class="badge">تاريخ تقديم الطلب: ${date || '—'}</div>
-    </div>
+    ${getPrintBrandHeader({ reportTitle: 'نموذج طلب صرف إعانة عضو', reportMeta: `تاريخ تقديم الطلب: ${date || '—'}` })}
     <table>
       <tr><th>الكود الوظيفي</th><td>${emp?.jobId || '—'}</td></tr>
       <tr><th>اسم العضو كاملاً</th><td style="font-size:16px;color:#0f766e">${emp?.name || '—'}</td></tr>

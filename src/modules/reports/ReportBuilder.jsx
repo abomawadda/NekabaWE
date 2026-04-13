@@ -12,6 +12,9 @@ import React, { useState, useEffect, useMemo } from "react";
 import { collection, query, onSnapshot } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
+import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
+import BrandHeader from "../../ui/BrandHeader";
+import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import * as XLSX from "xlsx";
 import {
   FileText, Printer, Download, Filter, Columns, Calendar,
@@ -163,11 +166,7 @@ const printReport = (data, config, selectedFieldKeys) => {
       @page { size:A4 landscape; margin:12mm; }
       * { font-family:'Cairo',sans-serif; box-sizing:border-box; margin:0; padding:0; }
       body { padding:15px; font-size:11px; color:#1e293b; background:#fff; position:relative; }
-      body::before { content:"تقرير نظام الـ ERP الداخلي"; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-25deg); font-size:80px; font-weight:900; color:rgba(100,116,139,0.04); z-index:-1; white-space:nowrap; }
-      .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:3px solid #1e293b; padding-bottom:12px; margin-bottom:20px; }
-      .header-title h1 { font-size:20px; font-weight:900; color:#0f172a; }
-      .header-title p  { font-size:10px; color:#64748b; margin-top:4px; font-weight:700; }
-      .header-meta     { text-align:left; font-size:10px; color:#475569; line-height:1.8; }
+      body::before { content:"${config.title}"; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-25deg); font-size:80px; font-weight:900; color:rgba(100,116,139,0.04); z-index:-1; white-space:nowrap; }
       .info-bar { display:flex; justify-content:space-between; background:#f1f5f9; padding:6px 10px; border-radius:6px; margin-bottom:15px; font-size:10px; font-weight:700; }
       table { width:100%; border-collapse:collapse; margin-bottom:25px; }
       th { background:#1e293b; color:#fff; padding:8px 6px; text-align:right; font-size:11px; border:1px solid #334155; }
@@ -178,18 +177,10 @@ const printReport = (data, config, selectedFieldKeys) => {
       .sig-block { text-align:center; }
       .sig-line  { border-bottom:1px dashed #94a3b8; height:40px; margin-bottom:8px; width:80%; margin-inline:auto; }
       .sig-title { font-size:11px; font-weight:900; color:#334155; }
+      ${getPrintBrandStyles()}
     </style></head>
     <body>
-      <div class="header">
-        <div class="header-title">
-          <h1>${config.title}</h1>
-          <p>النقابة العامة للاتصالات بالدقهلية · نظام الـ ERP الداخلي</p>
-        </div>
-        <div class="header-meta">
-          <div>إجمالي السجلات: <strong>${data.length}</strong></div>
-          <div>تاريخ التقرير: <strong>${printDate}</strong></div>
-        </div>
-      </div>
+      ${getPrintBrandHeader({ reportTitle: config.title, reportMeta: `إجمالي السجلات: ${data.length} | تاريخ التقرير: ${printDate}` })}
       <table>
         <thead><tr><th>#</th>${headers}</tr></thead>
         <tbody>${rows}${totalsRow}</tbody>
@@ -329,6 +320,7 @@ function ReportBuilderInner() {
   // ─── Render ──────────────────────────────────
   return (
     <div className={clsx("max-w-7xl mx-auto space-y-4 pb-20 animate-in fade-in duration-500", T.text)} dir="rtl">
+      <BrandHeader sectionTitle="محرك التقارير المخصصة" sectionHint="فلترة متقدمة وتخصيص أعمدة وتصدير" />
 
       {/* ── رأس الصفحة ── */}
       <div className={clsx(
@@ -405,15 +397,15 @@ function ReportBuilderInner() {
                   <div className="space-y-2 pt-1">
                     <div>
                       <label className="text-[9px] font-bold text-slate-500 block mb-1">من تاريخ:</label>
-                      <input type="date" value={dateRange.from}
-                        onChange={e => setDateRange(p => ({ ...p, from: e.target.value }))}
-                        className={clsx("w-full px-2 py-1.5 rounded-lg border text-[10px] font-bold outline-none focus:ring-2 focus:border-teal-500", T.inp)}/>
+                      <ArabicDatePicker label="" value={dateRange.from}
+                        onChange={v => setDateRange(p => ({ ...p, from: v }))}
+                        maxVal={dateRange.to || undefined}/>
                     </div>
                     <div>
                       <label className="text-[9px] font-bold text-slate-500 block mb-1">إلى تاريخ:</label>
-                      <input type="date" value={dateRange.to}
-                        onChange={e => setDateRange(p => ({ ...p, to: e.target.value }))}
-                        className={clsx("w-full px-2 py-1.5 rounded-lg border text-[10px] font-bold outline-none focus:ring-2 focus:border-teal-500", T.inp)}/>
+                      <ArabicDatePicker label="" value={dateRange.to}
+                        onChange={v => setDateRange(p => ({ ...p, to: v }))}
+                        minVal={dateRange.from || undefined}/>
                     </div>
                     {(dateRange.from || dateRange.to) && (
                       <button onClick={() => setDateRange({ from: "", to: "" })}

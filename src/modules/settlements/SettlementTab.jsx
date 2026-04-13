@@ -6,18 +6,24 @@
  * ✅ بدون شاشة بيضاء بفضل الـ Local Print & Snapshot Modal.
  */
 
-import React, { useState, useMemo, useEffect, useRef } from "react";
-import { collection, query, onSnapshot, doc, updateDoc, where, orderBy, writeBatch } from "firebase/firestore";
+import React, { useState, useMemo, useEffect } from "react";
+import { collection, query, onSnapshot, doc, updateDoc, orderBy, writeBatch, where } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import FileUpload from "../treasury/FileUpload"; 
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
-import { ReceiptText, Plus, Trash2, Printer, CheckCircle2, FileText, Tag, DollarSign, Wallet, History, Search, AlertCircle, Info, ShieldCheck, ArrowDownRight, X, Check, Users, Save, AlertTriangle } from "lucide-react";
+import BrandHeader from "../../ui/BrandHeader";
+import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { logAuditEvent } from "../../utils/auditLog";
+import { ReceiptText, Plus, Trash2, Printer, CheckCircle2, FileText, Tag, DollarSign, Wallet, History, Search, AlertCircle, Info, ShieldCheck, ArrowDownRight, X, Check, Users, Save, AlertTriangle, Loader2, Edit3, RotateCcw } from "lucide-react";
 import clsx from "clsx";
 
 const INITIAL_CATS = ["ضيافة وبوفيه", "أدوات مكتبية", "بدل انتقال", "صيانة", "مشتريات أخرى", "بدل جلسات"];
 const BOARD_ROLES = ["رئيس المجلس", "النقيب العام", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة", "عضو مجلس"];
 const getTodayISO = () => new Date().toISOString().split("T")[0];
+const ARABIC_MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+const getMonthValue = (dateString = "") => (dateString || "").slice(5, 7);
+const getYearValue = (dateString = "") => (dateString || "").slice(0, 4);
 
 // ── دالة الطباعة المدمجة لمنع خطأ المتصفح ──
 const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBalance = 0, collectedSubs = 0, returnedActually }) => {
@@ -34,9 +40,9 @@ const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBala
   win.document.write(`
     <!DOCTYPE html><html lang="ar">
     <head><meta charset="UTF-8"><title>تسوية ${advanceTxn?.type === 'activity' ? 'فاعلية' : 'عهدة'} - ${advanceTxn?.employeeName || advanceTxn?.party}</title>
-    <style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box;direction:rtl;}body{padding:30px;color:#1e293b;background:#fff;}.hdr{text-align:center;border-bottom:2px solid #0d9488;padding-bottom:15px;margin-bottom:20px;}.org{font-size:14px;font-weight:700;color:#64748b;margin-bottom:5px;}.doc-title{font-size:24px;font-weight:900;color:#0d9488;margin-bottom:10px;}.badge{display:inline-block;padding:5px 15px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;font-size:12px;font-weight:700;color:#0f766e;}.info-row{margin-bottom:20px;padding:15px;background:#f8fafc;border-right:4px solid #0d9488;border-radius:8px;font-size:16px;font-weight:bold;}.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}.stat-box{border:1px solid #e2e8f0;padding:15px;border-radius:10px;text-align:center;}.stat-label{font-size:11px;color:#64748b;font-weight:bold;margin-bottom:5px;text-transform:uppercase;}.stat-value{font-size:20px;font-weight:900;}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}th{background:#f1f5f9;color:#0f766e;border:1px solid #cbd5e1;padding:12px;text-align:right;font-weight:900;}td{border:1px solid #cbd5e1;padding:10px;text-align:right;font-weight:700;}.footer-note{margin-top:15px;padding:10px;background:#fefce8;border:1px solid #fef08a;border-radius:8px;font-size:13px;font-weight:bold;color:#854d0e;}.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:50px;text-align:center;}.sig-box{border-top:2px dashed #cbd5e1;padding-top:10px;font-size:14px;font-weight:900;color:#475569;}.sig-space{height:60px;}@media print{@page{margin:10mm;}body{padding:0;}}</style>
+    <style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box;direction:rtl;}body{padding:30px;color:#1e293b;background:#fff;}.badge{display:inline-block;padding:5px 15px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;font-size:12px;font-weight:700;color:#0f766e;}.info-row{margin-bottom:20px;padding:15px;background:#f8fafc;border-right:4px solid #0d9488;border-radius:8px;font-size:16px;font-weight:bold;}.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}.stat-box{border:1px solid #e2e8f0;padding:15px;border-radius:10px;text-align:center;}.stat-label{font-size:11px;color:#64748b;font-weight:bold;margin-bottom:5px;text-transform:uppercase;}.stat-value{font-size:20px;font-weight:900;}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}th{background:#f1f5f9;color:#0f766e;border:1px solid #cbd5e1;padding:12px;text-align:right;font-weight:900;}td{border:1px solid #cbd5e1;padding:10px;text-align:right;font-weight:700;}.footer-note{margin-top:15px;padding:10px;background:#fefce8;border:1px solid #fef08a;border-radius:8px;font-size:13px;font-weight:bold;color:#854d0e;}.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:50px;text-align:center;}.sig-box{border-top:2px dashed #cbd5e1;padding-top:10px;font-size:14px;font-weight:900;color:#475569;}.sig-space{height:60px;}@media print{@page{margin:10mm;}body{padding:0;}}${getPrintBrandStyles()}</style>
     </head><body>
-      <div class="hdr"><div class="org">النقابة العامة للاتصالات بالدقهلية - أمانة الصندوق</div><h1 class="doc-title">كشف تسوية ${advanceTxn?.type === 'activity' ? 'فاعلية/نشاط' : 'عهدة مالية'}</h1><div class="badge">تاريخ الاعتماد: ${advanceTxn?.settlementDate || '—'}</div></div>
+      ${getPrintBrandHeader({ reportTitle: `كشف تسوية ${advanceTxn?.type === 'activity' ? 'فاعلية/نشاط' : 'عهدة مالية'}`, reportMeta: `تاريخ الاعتماد: ${advanceTxn?.settlementDate || '—'}` })}
       <div class="info-row">اسم مسؤول التسوية: <span style="font-size:20px; color:#0d9488; margin-right: 10px;">${advanceTxn?.employeeName || advanceTxn?.party || '—'}</span></div>
       <div class="stats-grid">
         <div class="stat-box"> <div class="stat-label">قيمة الشيك المُنصرف</div> <div class="stat-value" style="color:#334155">${ADV_AMT.toLocaleString()}</div> </div>
@@ -110,12 +116,16 @@ export default function SettlementTab() {
   const [returnedActually, setReturnedActually] = useState(false);
   const [saving,        setSaving]        = useState(false);
   const [archiveSearch, setArchiveSearch] = useState("");
+  const [archiveMonth,  setArchiveMonth]  = useState("all");
+  const [archiveYear,   setArchiveYear]   = useState("all");
   
   // 🎯 الميزانية الإضافية للفاعليات (الاشتراكات المحصلة)
   const [collectedSubs, setCollectedSubs] = useState("");
   
   const [confirmModalData, setConfirmModalData] = useState(null);
   const [expenseToDelete,  setExpenseToDelete]  = useState(null); 
+  const [editingSettlementId, setEditingSettlementId] = useState("");
+  const [settlementToDelete, setSettlementToDelete] = useState(null);
   
   const [expAmt,        setExpAmt]        = useState("");
   const [expCat,        setExpCat]        = useState(INITIAL_CATS[0]);
@@ -130,28 +140,74 @@ export default function SettlementTab() {
     const unsubTrans = onSnapshot(qTrans, snap => setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
 
     const qEmps = query(collection(db, "employees"));
-    const unsubEmps = onSnapshot(qEmps, snap => setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubEmps = onSnapshot(qEmps, snap => {
+      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
 
-    const qMeet = query(collection(db, "board_meetings"), where("status", "==", "held"));
-    const unsubMeet = onSnapshot(qMeet, snap => {
-      setBoardMeetings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const qMeetings = query(collection(db, "board_meetings"), where("status", "==", "held"));
+    const unsubMeetings = onSnapshot(qMeetings, snap => {
+      setBoardMeetings(
+        snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      );
       setLoading(false);
     });
 
-    return () => { unsubTrans(); unsubEmps(); unsubMeet(); };
+    return () => { unsubTrans(); unsubEmps(); unsubMeetings(); };
   }, []);
 
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
   const activeBoardMembers = useMemo(() => employees.filter(e => BOARD_ROLES.includes(e.membershipStatus) && !["وفاة", "استقالة"].includes(e.memberState)), [employees]);
 
+  const selectedMeeting = useMemo(() => boardMeetings.find(m => m.id === expMeetingId) || null, [boardMeetings, expMeetingId]);
+
   useEffect(() => {
-    if (expCat === "بدل انتقال") setSelectedMembers(activeBoardMembers.map(m => m.id));
-    else setSelectedMembers([]);
-    if (expCat !== "بدل جلسات") setExpMeetingId("");
-  }, [expCat, activeBoardMembers]);
+    if (expCat === "بدل انتقال") {
+      setSelectedMembers(activeBoardMembers.map(m => m.id));
+      setExpMeetingId("");
+      return;
+    }
+
+    if (expCat === "بدل جلسات") {
+      if (selectedMeeting?.attendees?.length) {
+        setSelectedMembers(selectedMeeting.attendees);
+      } else {
+        setSelectedMembers([]);
+      }
+      return;
+    }
+
+    setSelectedMembers([]);
+    setExpMeetingId("");
+  }, [expCat, activeBoardMembers, selectedMeeting]);
+
+  useEffect(() => {
+    if (expCat === "بدل جلسات" && selectedMeeting?.date) {
+      setExpDate(selectedMeeting.date);
+    }
+  }, [expCat, selectedMeeting]);
 
   const archivedSettlements = useMemo(() => transactions.filter(t => ["advance", "activity"].includes(t.type) && t.isSettled), [transactions]);
+  const editingSettlement = useMemo(() => archivedSettlements.find(t => t.id === editingSettlementId) || null, [archivedSettlements, editingSettlementId]);
+  const archiveYears = useMemo(
+    () => [...new Set(archivedSettlements.map(s => getYearValue(s.settlementDate || s.date)).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
+    [archivedSettlements]
+  );
+  const filteredArchivedSettlements = useMemo(() => {
+    return archivedSettlements
+      .filter((s) => {
+        const person = s.employeeName || s.party || "";
+        const checkNo = String(s.checkNo || "");
+        const refDate = s.settlementDate || s.date || "";
+        const searchOk = !archiveSearch || person.includes(archiveSearch) || checkNo.includes(archiveSearch);
+        const monthOk = archiveMonth === "all" || getMonthValue(refDate) === archiveMonth;
+        const yearOk = archiveYear === "all" || getYearValue(refDate) === archiveYear;
+        return searchOk && monthOk && yearOk;
+      })
+      .sort((a, b) => String(b.settlementDate || b.date || "").localeCompare(String(a.settlementDate || a.date || "")));
+  }, [archivedSettlements, archiveMonth, archiveSearch, archiveYear]);
   
   const getPrevBalance = (empId, currentTxnId) => {
     if (!empId) return 0;
@@ -160,8 +216,16 @@ export default function SettlementTab() {
   };
 
   const openAdvances = useMemo(() => transactions.filter(t => ["advance", "activity"].includes(t.type) && !t.isSettled && t.state === "posted").map(adv => ({ ...adv, prevBalance: getPrevBalance(adv.employeeId, adv.id) })), [transactions, archivedSettlements]);
+  const currentTxnOptions = useMemo(() => {
+    const txMap = new Map();
+    if (editingSettlement) txMap.set(editingSettlement.id, { ...editingSettlement, prevBalance: getPrevBalance(editingSettlement.employeeId, editingSettlement.id) });
+    openAdvances.forEach(adv => {
+      if (!txMap.has(adv.id)) txMap.set(adv.id, adv);
+    });
+    return Array.from(txMap.values());
+  }, [editingSettlement, openAdvances, archivedSettlements]);
 
-  const selectedTxn = useMemo(() => openAdvances.find(a => a.id === selAdvId) || null, [openAdvances, selAdvId]);
+  const selectedTxn = useMemo(() => currentTxnOptions.find(a => a.id === selAdvId) || null, [currentTxnOptions, selAdvId]);
 
   // 🎯 حسابات الفاعلية والسلفة (أصل + اشتراكات أو مرحل)
   const ADVANCE_AMT    = Number(selectedTxn?.amount || 0);
@@ -176,21 +240,35 @@ export default function SettlementTab() {
     if (selectedTxn) {
       setExpenses(selectedTxn.settlementExpenses || []);
       setCollectedSubs(selectedTxn.collectedSubscriptions || ""); // استدعاء الاشتراكات إن وجدت
-      setReturnedActually(false);
-      setExpAmt(""); setExpNotes(""); setExpFiles([]); setSelectedMembers([]);
+      setSettlementDate(selectedTxn.settlementDate || getTodayISO());
+      setReturnedActually(Boolean(selectedTxn.returnedActually));
+      setExpAmt(""); setExpNotes(""); setExpFiles([]); setSelectedMembers([]); setExpMeetingId("");
     } else {
-      setExpenses([]); setCollectedSubs("");
+      setExpenses([]); setCollectedSubs(""); setSettlementDate(getTodayISO()); setReturnedActually(false); setExpMeetingId("");
     }
   }, [selectedTxn]);
 
   const addExpense = () => {
     if (!expAmt || Number(expAmt) <= 0) return showToast("أدخل مبلغاً صحيحاً", "error");
     if (Number(expAmt) > remaining) return showToast(`تجاوزت المتاح! (${Number(remaining || 0).toLocaleString()} ج.م)`, "error");
-    if (expCat === "بدل جلسات" && !expMeetingId) return showToast("يرجى اختيار الاجتماع المرتبط", "error");
-    if (expCat === "بدل انتقال" && selectedMembers.length === 0) return showToast("اختر عضو مجلس واحد على الأقل", "error");
+    if (expCat === "بدل جلسات" && !selectedMeeting) return showToast("اختر الاجتماع أولاً", "error");
+    if (["بدل انتقال", "بدل جلسات"].includes(expCat) && selectedMembers.length === 0) return showToast("اختر عضو مجلس واحد على الأقل", "error");
 
-    setExpenses(prev => [...prev, { id: `e_${Date.now()}`, date: expDate, amount: expAmt, category: expCat, notes: expNotes, meetingId: expMeetingId, boardMembers: expCat === "بدل انتقال" ? selectedMembers : [], files: expFiles }]);
-    setExpAmt(""); setExpNotes(""); setExpFiles([]); setExpMeetingId(""); setSelectedMembers([]);
+    setExpenses(prev => [...prev, {
+      id: `e_${Date.now()}`,
+      date: expCat === "بدل جلسات" ? (selectedMeeting?.date || expDate) : expDate,
+      amount: expAmt,
+      category: expCat,
+      notes: expNotes,
+      meetingId: expCat === "بدل جلسات" ? selectedMeeting?.id || "" : "",
+      meetingTitle: expCat === "بدل جلسات" ? selectedMeeting?.title || "" : "",
+      boardMembers: ["بدل انتقال", "بدل جلسات"].includes(expCat) ? selectedMembers : [],
+      allowancePerMember: ["بدل انتقال", "بدل جلسات"].includes(expCat) && selectedMembers.length > 0
+        ? Number(expAmt) / selectedMembers.length
+        : 0,
+      files: expFiles
+    }]);
+    setExpAmt(""); setExpNotes(""); setExpFiles([]); setSelectedMembers([]); setExpMeetingId("");
     showToast("تم إدراج الفاتورة في الكشف", "success");
   };
 
@@ -199,6 +277,52 @@ export default function SettlementTab() {
     setExpenses(prev => prev.filter(e => e.id !== expenseToDelete.id));
     setExpenseToDelete(null);
     showToast("تم حذف الفاتورة", "success");
+  };
+
+  const startEditSettlement = (settlement) => {
+    setEditingSettlementId(settlement.id);
+    setSelAdvId(settlement.id);
+    setActiveTab("current");
+    showToast("تم فتح التسوية في وضع التعديل", "success");
+  };
+
+  const executeDeleteSettlement = async () => {
+    if (!settlementToDelete) return;
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "transactions", settlementToDelete.id), {
+        isSettled: false,
+        settlementDate: "",
+        settlementExpenses: [],
+        settlementSpent: 0,
+        settlementReturned: 0,
+        returnedActually: false,
+        prevBalanceUsed: 0,
+        collectedSubscriptions: 0,
+        updatedAt: new Date().toISOString(),
+      });
+      await logAuditEvent("settlement_deleted", {
+        transactionId: settlementToDelete.id,
+        party: settlementToDelete.employeeName || settlementToDelete.party || "",
+        settlementDate: settlementToDelete.settlementDate || "",
+        type: settlementToDelete.type || "",
+      });
+      if (editingSettlementId === settlementToDelete.id) {
+        setEditingSettlementId("");
+        setSelAdvId("");
+        setExpenses([]);
+        setCollectedSubs("");
+        setReturnedActually(false);
+      }
+      setSettlementToDelete(null);
+      setActiveTab("current");
+      showToast("تم حذف التسوية وإعادة العهدة إلى القائمة المفتوحة", "success");
+    } catch (e) {
+      console.error(e);
+      showToast("حدث خطأ أثناء حذف التسوية", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   // 🎯 ميزة الحفظ المؤقت للرجوع لها لاحقاً
@@ -210,6 +334,12 @@ export default function SettlementTab() {
         settlementExpenses: expenses,
         collectedSubscriptions: SUBS_AMT,
         updatedAt: new Date().toISOString()
+      });
+      await logAuditEvent("settlement_draft_saved", {
+        transactionId: selectedTxn.id,
+        party: selectedTxn.employeeName || selectedTxn.party || "",
+        expensesCount: expenses.length,
+        type: selectedTxn.type || "",
       });
       showToast("تم حفظ الفواتير في العهدة بنجاح (يمكنك إغلاقها لاحقاً) ✓", "success");
     } catch (e) {
@@ -253,37 +383,27 @@ export default function SettlementTab() {
         updatedAt: new Date().toISOString(),
       });
 
-      expenses.forEach(line => {
-        if (line.category === "بدل جلسات" && line.meetingId) {
-          const meeting = boardMeetings.find(m => m.id === line.meetingId);
-          if (meeting && meeting.attendees?.length > 0) {
-            batch.update(doc(db, "board_meetings", meeting.id), {
-              allowancePerMember: Number(line.amount) / meeting.attendees.length,
-              totalAllowancePaid: Number(line.amount),
-              allowanceTypePaid: line.category
-            });
-          }
-        } else if (line.category === "بدل انتقال" && line.boardMembers?.length > 0) {
-          const newMeetingRef = doc(collection(db, "board_meetings"));
-          batch.set(newMeetingRef, {
-             title: `بدل انتقال - تسوية (${confirmModalData.party})`,
-             date: line.date || getTodayISO(),
-             status: "held",
-             attendees: line.boardMembers,
-             allowancePerMember: Number(line.amount) / line.boardMembers.length,
-             totalAllowancePaid: Number(line.amount),
-             allowanceTypePaid: line.category,
-             isAllowanceOnly: true
-          });
-        }
+      await batch.commit();
+      await logAuditEvent(editingSettlementId ? "settlement_updated" : "settlement_finalized", {
+        transactionId: confirmModalData.txnId,
+        party: confirmModalData.party || "",
+        settlementDate,
+        spent: confirmModalData.spent,
+        returned: returnedActually ? 0 : confirmModalData.remaining,
+        returnedActually,
+        expensesCount: expenses.length,
+        type: confirmModalData.type || "",
       });
 
-      await batch.commit();
-
-      showToast("تم إغلاق العهدة وتحديث البدلات بنجاح ✓", "success");
+      showToast("تم إغلاق العهدة واعتماد البدلات داخل التسوية بنجاح ✓", "success");
       
       setConfirmModalData(null);
-      setTimeout(() => { setSelAdvId(""); setActiveTab("archive"); }, 100);
+      setEditingSettlementId("");
+      setSelAdvId("");
+      setExpenses([]);
+      setCollectedSubs("");
+      setReturnedActually(false);
+      setActiveTab("archive");
 
     } catch (e) {
       console.error(e);
@@ -295,11 +415,32 @@ export default function SettlementTab() {
 
   return (
     <div className={clsx("flex flex-col gap-4 max-w-7xl mx-auto pb-10", T.text)} dir="rtl">
+      <BrandHeader sectionTitle="تسوية العهد والأنشطة" sectionHint="اعتماد التسويات ومتابعة الأرشيف" />
       
       {toast && (
         <div className={clsx("fixed top-20 left-1/2 -translate-x-1/2 z-[5000] px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 text-white font-bold animate-in fade-in slide-in-from-top-4", toast.type === "error" ? "bg-rose-600" : "bg-teal-600")}>
           {toast.type === "error" ? <AlertCircle size={16}/> : <CheckCircle2 size={16}/>}
           <span className="text-xs">{toast.msg}</span>
+        </div>
+      )}
+
+      {settlementToDelete && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className={clsx("w-full max-w-md p-6 rounded-3xl shadow-2xl border space-y-5 animate-in zoom-in-95", T.card)}>
+            <div className="flex items-center gap-3 text-rose-600 border-b border-rose-100 pb-3">
+              <div className="p-2.5 bg-rose-100 rounded-xl"><AlertTriangle size={20}/></div>
+              <div><h2 className="font-black text-sm">حذف تسوية معتمدة</h2><p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">سيتم إعادة العهدة إلى القائمة المفتوحة</p></div>
+            </div>
+            <p className="text-xs font-bold leading-relaxed">
+              سيتم حذف التسوية الخاصة بـ <span className="font-black text-teal-600">{settlementToDelete.employeeName || settlementToDelete.party}</span> وإعادة السلفة/الفاعلية للتسوية من جديد.
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setSettlementToDelete(null)} className={clsx("flex-1 py-2.5 rounded-xl font-bold text-xs border shadow-sm", T.btn)}>إلغاء</button>
+              <button onClick={executeDeleteSettlement} disabled={saving} className="flex-1 py-2.5 rounded-xl font-black text-xs bg-rose-600 text-white hover:bg-rose-700 shadow-md active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50">
+                {saving ? <Loader2 size={14} className="animate-spin"/> : <Trash2 size={14}/>} حذف التسوية
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -328,7 +469,7 @@ export default function SettlementTab() {
           <div className={clsx("w-full max-w-md p-5 rounded-2xl shadow-2xl border space-y-5 animate-in zoom-in-95", T.card)}>
             <div className="flex items-center gap-3 text-teal-600 border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="p-2.5 bg-teal-100 dark:bg-teal-900/30 rounded-xl"><ShieldCheck size={20}/></div>
-              <div><h2 className="font-black text-sm">تأكيد إغلاق العهدة نهائياً</h2><p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">التاريخ: {settlementDate}</p></div>
+              <div><h2 className="font-black text-sm">{editingSettlementId ? "تأكيد حفظ تعديلات التسوية" : "تأكيد إغلاق العهدة نهائياً"}</h2><p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">التاريخ: {settlementDate}</p></div>
             </div>
             
             <div className="grid grid-cols-3 gap-2 text-center">
@@ -350,7 +491,7 @@ export default function SettlementTab() {
             <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button onClick={() => setConfirmModalData(null)} className={clsx("flex-1 py-2.5 rounded-xl font-bold text-xs border shadow-sm", T.btn)}>رجوع</button>
               <button onClick={handleFinalSettle} disabled={saving} className="flex-[2] py-2.5 rounded-xl font-black text-xs bg-teal-600 text-white hover:bg-teal-700 flex items-center justify-center gap-2 shadow-md active:scale-95 disabled:opacity-50">
-                {saving ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>} اعتماد نهائي وإغلاق
+                {saving ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>} {editingSettlementId ? "حفظ التعديلات" : "اعتماد نهائي وإغلاق"}
               </button>
             </div>
           </div>
@@ -378,8 +519,21 @@ export default function SettlementTab() {
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">اختر السلفة أو الفاعلية</label>
                 <select value={selAdvId} onChange={e => setSelAdvId(e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-teal-500 h-[42px]", T.sel)}>
                   <option value="">— السلف والأنشطة المفتوحة —</option>
-                  {openAdvances.map(a => <option key={a.id} value={a.id}>{a.party} {a.type === 'activity' ? '(دعم نشاط)' : ''} — {Number(a.amount).toLocaleString()} ج</option>)}
+                  {currentTxnOptions.map(a => (
+                    <option key={a.id} value={a.id}>
+                      {a.party} {a.type === "activity" ? "(دعم نشاط)" : ""} — {a.date || "—"} — شيك: {a.checkNum || "—"} — {Number(a.amount).toLocaleString()} ج {a.isSettled ? "— [تعديل تسوية]" : ""}
+                    </option>
+                  ))}
                 </select>
+
+                {editingSettlementId && (
+                  <div className="mt-2 flex items-center justify-between gap-2 p-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40">
+                    <p className="text-[10px] font-black text-amber-700 dark:text-amber-400">أنت الآن في وضع تعديل تسوية معتمدة</p>
+                    <button onClick={() => { setEditingSettlementId(""); setSelAdvId(""); }} className="text-[10px] font-black text-amber-700 hover:text-rose-600 transition-colors">
+                      إلغاء التعديل
+                    </button>
+                  </div>
+                )}
 
                 {/* 🎯 إذا كان دعم نشاط، يمكنه إدخال الاشتراكات المحصلة */}
                 {selectedTxn?.type === "activity" && (
@@ -421,25 +575,38 @@ export default function SettlementTab() {
               <InlineDynamicSelect label="تصنيف المصروف (+ جديد)" defaultOptions={INITIAL_CATS} value={expCat} onChange={setExpCat} icon={Tag} />
               
               {expCat === "بدل جلسات" && (
-                <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-xl space-y-1.5 animate-in fade-in">
-                  <label className="text-[10px] font-black text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5"><ShieldCheck size={14}/> ربط باجتماع المجلس</label>
+                <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-xl space-y-2 animate-in fade-in">
+                  <label className="text-[10px] font-black text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5">
+                    <FileText size={14}/> اختر الاجتماع المنعقد
+                  </label>
                   <select value={expMeetingId} onChange={e => setExpMeetingId(e.target.value)} className={clsx("w-full px-2 py-2 rounded-lg border text-[10px] font-bold outline-none", T.sel)}>
-                    <option value="">-- اختر الاجتماع المُعتمد --</option>
-                    {boardMeetings.map(m => <option key={m.id} value={m.id}>{m.title} ({m.date}) - الحضور: {m.attendees?.length || 0}</option>)}
+                    <option value="">-- اختر الاجتماع --</option>
+                    {boardMeetings.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.title} — {m.date || "—"} — الحضور: {m.attendees?.length || 0}
+                      </option>
+                    ))}
                   </select>
-                  {expMeetingId && expAmt && <p className="text-[8px] font-black text-indigo-600 mt-1 flex gap-1"><Info size={10} className="shrink-0"/> سيُقسَم ({expAmt} ج) ويُدرج بملف بدلات الحاضرين.</p>}
+                  {selectedMeeting && (
+                    <p className="text-[9px] font-black text-indigo-600 mt-1 flex gap-1 bg-indigo-100/50 dark:bg-indigo-900/50 p-1.5 rounded">
+                      <Info size={10} className="shrink-0"/> سيتم توزيع {Number(expAmt || 0).toLocaleString()} ج على {selectedMeeting.attendees?.length || 0} من الحاضرين
+                    </p>
+                  )}
                 </div>
               )}
 
-              {expCat === "بدل انتقال" && (
+              {["بدل انتقال", "بدل جلسات"].includes(expCat) && (
                 <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-xl space-y-2 animate-in fade-in">
-                  <label className="text-[10px] font-black text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5"><Users size={14}/> تحديد أعضاء المجلس المستحقين</label>
+                  <label className="text-[10px] font-black text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5">
+                    <Users size={14}/> {expCat === "بدل جلسات" ? "أعضاء الاجتماع المستحقون" : `تحديد أعضاء المجلس المستحقين لـ ${expCat}`}
+                  </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto p-2 bg-white dark:bg-slate-800 rounded-lg border border-indigo-100 dark:border-indigo-800">
                     {activeBoardMembers.map(m => (
                       <label key={m.id} className="flex items-center gap-2 text-[10px] font-bold cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-1 rounded transition-colors">
                         <input 
                           type="checkbox" 
                           checked={selectedMembers.includes(m.id)}
+                          disabled={expCat === "بدل جلسات"}
                           onChange={(e) => {
                             if (e.target.checked) setSelectedMembers(p => [...p, m.id]);
                             else setSelectedMembers(p => p.filter(id => id !== m.id));
@@ -453,7 +620,7 @@ export default function SettlementTab() {
                   </div>
                   {expAmt && selectedMembers.length > 0 && (
                     <p className="text-[9px] font-black text-indigo-600 mt-1 flex gap-1 bg-indigo-100/50 dark:bg-indigo-900/50 p-1.5 rounded">
-                      <Info size={10} className="shrink-0"/> نصيب العضو: {(Number(expAmt) / selectedMembers.length).toFixed(2)} ج.م
+                      <Info size={10} className="shrink-0"/> {expCat}: نصيب العضو {(Number(expAmt) / selectedMembers.length).toFixed(2)} ج.م
                     </p>
                   )}
                 </div>
@@ -465,7 +632,7 @@ export default function SettlementTab() {
                   <input type="number" value={expAmt} onChange={e => setExpAmt(e.target.value)} placeholder={`المتاح: ${remaining}`} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 focus:border-amber-500 h-[38px]", T.inp, Number(expAmt) > remaining && "!border-rose-500 bg-rose-50/10")} />
                 </div>
                 <div className="space-y-1 relative z-[90]">
-                  <ArabicDatePicker label="تاريخ الفاتورة" value={expDate} onChange={setExpDate} maxVal={getTodayISO()} />
+                  <ArabicDatePicker label="تاريخ الفاتورة" value={expDate} onChange={setExpDate} maxVal={getTodayISO()} disabled={expCat === "بدل جلسات"} />
                 </div>
               </div>
 
@@ -507,8 +674,10 @@ export default function SettlementTab() {
                     <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
                       <td className="p-2.5 font-black text-teal-600">
                         {e.category}
-                        {e.meetingId && <span className="block text-[8px] text-indigo-500 mt-0.5 font-bold">ارتباط بمجلس</span>}
-                        {e.boardMembers?.length > 0 && <span className="block text-[8px] text-indigo-500 mt-0.5 font-bold">بمشاركة {e.boardMembers.length} أعضاء</span>}
+                        {["بدل انتقال", "بدل جلسات"].includes(e.category) && <span className="block text-[8px] text-indigo-500 mt-0.5 font-bold">بدل مستقل داخل كشف التسوية</span>}
+                        {e.meetingTitle && <span className="block text-[8px] text-sky-600 mt-0.5 font-bold">الاجتماع: {e.meetingTitle}</span>}
+                        {e.boardMembers?.length > 0 && <span className="block text-[8px] text-indigo-500 mt-0.5 font-bold">لعدد {e.boardMembers.length} أعضاء</span>}
+                        {Number(e.allowancePerMember || 0) > 0 && <span className="block text-[8px] text-amber-600 mt-0.5 font-bold">نصيب العضو: {Number(e.allowancePerMember).toFixed(2)} ج.م</span>}
                       </td>
                       <td className="p-2.5">
                         <p className="font-bold text-slate-700 dark:text-slate-200 truncate max-w-[200px]">{e.notes || "—"}</p>
@@ -534,7 +703,7 @@ export default function SettlementTab() {
                   <Save size={14}/> حفظ مؤقت
                 </button>
                 <button onClick={openConfirmModal} disabled={expenses.length === 0} className="px-6 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-black text-xs shadow-md active:scale-95 transition-all disabled:opacity-50 flex items-center gap-1.5">
-                  <CheckCircle2 size={16}/> اعتماد نهائي
+                  <CheckCircle2 size={16}/> {editingSettlementId ? "حفظ التعديلات" : "اعتماد نهائي"}
                 </button>
               </div>
             </div>
@@ -547,9 +716,24 @@ export default function SettlementTab() {
         <div className={clsx("rounded-2xl border shadow-sm overflow-hidden animate-in fade-in duration-500", T.card)}>
           <div className="p-4 border-b flex flex-wrap justify-between items-center gap-3 bg-slate-50/50 dark:bg-slate-900/20">
             <h3 className="font-black text-[11px] uppercase tracking-widest flex items-center gap-2"><History size={14} className="text-teal-600"/> أرشيف وتسويات العهد والأنشطة</h3>
-            <div className="relative">
-              <Search size={14} className="absolute right-3 top-2.5 text-slate-400"/>
-              <input type="text" value={archiveSearch} onChange={e => setArchiveSearch(e.target.value)} placeholder="بحث بالمسؤول..." className={clsx("pr-9 pl-4 py-2 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 w-56", T.inp)} />
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="relative">
+                <Search size={14} className="absolute right-3 top-2.5 text-slate-400"/>
+                <input type="text" value={archiveSearch} onChange={e => setArchiveSearch(e.target.value)} placeholder="بحث بالمسؤول أو الشيك..." className={clsx("pr-9 pl-4 py-2 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 w-56", T.inp)} />
+              </div>
+              <select value={archiveMonth} onChange={e => setArchiveMonth(e.target.value)} className={clsx("px-3 py-2 rounded-xl border text-[11px] font-bold outline-none", T.sel)}>
+                <option value="all">كل الشهور</option>
+                {ARABIC_MONTHS.map((month, idx) => (
+                  <option key={month} value={String(idx + 1).padStart(2, "0")}>{month}</option>
+                ))}
+              </select>
+              <select value={archiveYear} onChange={e => setArchiveYear(e.target.value)} className={clsx("px-3 py-2 rounded-xl border text-[11px] font-bold outline-none", T.sel)}>
+                <option value="all">كل السنوات</option>
+                {archiveYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+              <div className="px-3 py-2 rounded-xl bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 text-[10px] font-black border border-teal-100 dark:border-teal-800/40">
+                النتائج: {filteredArchivedSettlements.length}
+              </div>
             </div>
           </div>
           
@@ -559,7 +743,7 @@ export default function SettlementTab() {
                 <tr>{["الاعتماد","المسؤول (النوع)","التمويل","متاح","منصرف","الرصيد المرحل",""].map((h, i) => <th key={i} className="p-3 font-black text-slate-500 uppercase">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                {archivedSettlements.filter(s => !archiveSearch || s.employeeName?.includes(archiveSearch) || s.party?.includes(archiveSearch)).map(s => {
+                {filteredArchivedSettlements.map(s => {
                   const sAdvance = Number(s.advanceAmountBase || s.amount || 0);
                   const sPrevBal = Number(s.prevBalanceUsed || 0);
                   const sSubs    = Number(s.collectedSubscriptions || 0);
@@ -583,7 +767,11 @@ export default function SettlementTab() {
                         <span className="block text-[8px] mt-0.5 text-slate-400 font-bold">{s.returnedActually ? "تم الرد نقدًا" : "مرحّل للقادم"}</span>
                       </td>
                       <td className="p-3 text-left">
-                        <button onClick={() => printSettlementLocal({ advanceTxn: s, expenses: s.settlementExpenses, spent: s.settlementSpent, remaining: s.settlementReturned, prevBalance: sPrevBal, collectedSubs: sSubs, returnedActually: s.returnedActually })} className="p-2 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50 transition-colors" title="طباعة"><Printer size={16}/></button>
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => startEditSettlement(s)} className="p-2 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50 transition-colors" title="تعديل"><Edit3 size={16}/></button>
+                          <button onClick={() => setSettlementToDelete(s)} className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors" title="حذف"><RotateCcw size={16}/></button>
+                          <button onClick={() => printSettlementLocal({ advanceTxn: s, expenses: s.settlementExpenses, spent: s.settlementSpent, remaining: s.settlementReturned, prevBalance: sPrevBal, collectedSubs: sSubs, returnedActually: s.returnedActually })} className="p-2 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50 transition-colors" title="طباعة"><Printer size={16}/></button>
+                        </div>
                       </td>
                     </tr>
                   )

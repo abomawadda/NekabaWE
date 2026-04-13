@@ -3,6 +3,7 @@ import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { Link } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
+import BrandHeader from "../../ui/BrandHeader";
 // 🎯 استدعاء أداة البطاقة السريعة لتعمل في الشاشة الرئيسية أيضاً
 import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
 import clsx from "clsx";
@@ -152,6 +153,8 @@ export default function DashboardPage() {
 
   const [transactions, setTransactions] = useState([]);
   const [employees, setEmployees] = useState([]); 
+  const [meetings, setMeetings] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
   const [empCount,     setEmpCount]     = useState(0);
   const [loadingTx,    setLoadingTx]    = useState(true);
 
@@ -175,7 +178,22 @@ export default function DashboardPage() {
       setEmpCount(snap.size);
     });
 
-    return () => { unsubTx(); unsubEmp(); };
+    const qMeet = query(collection(db, "board_meetings"), orderBy("date", "desc"));
+    const unsubMeet = onSnapshot(qMeet, snap => {
+      setMeetings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    const qAudit = query(collection(db, "audit_logs"));
+    const unsubAudit = onSnapshot(qAudit, snap => {
+      setAuditLogs(
+        snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => String(b.createdAtIso || "").localeCompare(String(a.createdAtIso || "")))
+          .slice(0, 6)
+      );
+    });
+
+    return () => { unsubTx(); unsubEmp(); unsubMeet(); unsubAudit(); };
   }, []);
 
   // ── الحسابات والإحصاءات ──
@@ -186,6 +204,65 @@ export default function DashboardPage() {
   const openAdvances = useMemo(() => transactions.filter(t => t.type === "advance" && !t.isSettled && t.state === "posted"), [transactions]);
   const drafts       = useMemo(() => transactions.filter(t => t.state === "draft").length, [transactions]);
   const recentTx     = useMemo(() => transactions.slice(0, 6), [transactions]);
+  const operationalAlerts = useMemo(() => {
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const getAgeDays = (dateValue) => {
+      const parsed = new Date(dateValue || "");
+      if (Number.isNaN(parsed.getTime())) return 0;
+      return Math.floor((Date.now() - parsed.getTime()) / msPerDay);
+    };
+
+    const staleAdvances = openAdvances.filter((tx) => getAgeDays(tx.date) >= 30);
+    const unsettledActivities = transactions.filter((tx) => tx.type === "activity" && !tx.isSettled && tx.state === "posted");
+    const sessionWithoutMeeting = transactions
+      .filter((tx) => ["advance", "activity"].includes(tx.type) && tx.isSettled)
+      .flatMap((tx) =>
+        (tx.settlementExpenses || [])
+          .filter((expense) => expense.category === "بدل جلسات" && !expense.meetingId)
+          .map((expense) => ({ tx, expense }))
+      );
+    const invalidVotesMeetings = meetings.filter((meeting) =>
+      (meeting.decisions || []).some((decision) => {
+        const presentCount = meeting.attendees?.length || 0;
+        const voteTotal =
+          Number(decision?.votes?.for || 0) +
+          Number(decision?.votes?.against || 0) +
+          Number(decision?.votes?.abstain || 0);
+        return voteTotal > presentCount;
+      })
+    );
+
+    return [
+      staleAdvances.length > 0 ? {
+        key: "stale-advances",
+        tone: "amber",
+        title: "عهد مفتوحة متأخرة",
+        body: `${staleAdvances.length} عهدة مر عليها 30 يومًا أو أكثر بدون تسوية.`,
+        to: "/treasury/settlements",
+      } : null,
+      unsettledActivities.length > 0 ? {
+        key: "open-activities",
+        tone: "sky",
+        title: "فعاليات لم تُسوَّ بعد",
+        body: `${unsettledActivities.length} فعالية ما زالت في انتظار الإقفال المالي.`,
+        to: "/treasury/settlements",
+      } : null,
+      sessionWithoutMeeting.length > 0 ? {
+        key: "session-without-meeting",
+        tone: "rose",
+        title: "بدل جلسات بلا اجتماع",
+        body: `${sessionWithoutMeeting.length} بند جلسات معتمد غير مربوط باجتماع محدد.`,
+        to: "/board",
+      } : null,
+      invalidVotesMeetings.length > 0 ? {
+        key: "invalid-votes",
+        tone: "violet",
+        title: "محاضر تحتاج مراجعة",
+        body: `${invalidVotesMeetings.length} اجتماع به أصوات تتجاوز عدد الحاضرين.`,
+        to: "/board",
+      } : null,
+    ].filter(Boolean);
+  }, [meetings, openAdvances, transactions]);
 
   // 🎯 1. فلترة أعضاء المجلس النشطين فقط
   // 🎯 2. ترتيبهم بحسب المنصب (الرئيس أولاً)
@@ -212,6 +289,7 @@ export default function DashboardPage() {
 
   return (
     <div className={clsx("max-w-[1600px] mx-auto space-y-5 pb-20 animate-in fade-in duration-700", T.text)} dir="rtl">
+      <BrandHeader sectionTitle="لوحة المتابعة والتشغيل" sectionHint="مؤشرات فورية وتنبيهات تشغيلية وسجل آخر الإجراءات" />
       
       {/* ── 1. شريط الترحيب والإنذارات ── */}
       <div className={clsx("p-5 px-6 rounded-2xl border shadow-sm relative overflow-hidden bg-white/50 dark:bg-slate-900/50 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-4", T.card)}>
@@ -255,6 +333,28 @@ export default function DashboardPage() {
       )}
 
       {/* ── 4. القسم الأوسط ── */}
+      {operationalAlerts.length > 0 && (
+        <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h2 className="text-sm font-black flex items-center gap-2"><AlertTriangle size={16} className="text-rose-500"/> التنبيهات التشغيلية</h2>
+            <span className="text-[10px] font-black text-slate-400">{operationalAlerts.length} تنبيه</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {operationalAlerts.map((alert) => (
+              <Link key={alert.key} to={alert.to} className={clsx(
+                "p-4 rounded-2xl border transition-all hover:-translate-y-0.5 hover:shadow-md",
+                alert.tone === "amber" && "bg-amber-50 border-amber-200 text-amber-800",
+                alert.tone === "sky" && "bg-sky-50 border-sky-200 text-sky-800",
+                alert.tone === "rose" && "bg-rose-50 border-rose-200 text-rose-800",
+                alert.tone === "violet" && "bg-violet-50 border-violet-200 text-violet-800"
+              )}>
+                <p className="text-sm font-black">{alert.title}</p>
+                <p className="text-[11px] font-bold mt-1 opacity-80">{alert.body}</p>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         
         <div className="lg:col-span-2 space-y-5">
@@ -346,6 +446,26 @@ export default function DashboardPage() {
             <Link to="/board" className="w-full mt-3 py-2.5 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-[10px] font-black text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-amber-600 transition-all flex items-center justify-center gap-1.5">
               إدارة المجلس وتشكيله <ChevronLeft size={12}/>
             </Link>
+          </div>
+
+          <div className={clsx("p-5 rounded-2xl border shadow-sm", T.card)}>
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-3">
+              <h2 className="text-sm font-black flex items-center gap-2"><FileText size={16} className="text-teal-500"/> آخر الإجراءات</h2>
+              <span className="text-[10px] font-black text-slate-400">{auditLogs.length} سجل</span>
+            </div>
+            <div className="space-y-2">
+              {auditLogs.map((log) => (
+                <div key={log.id} className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40">
+                  <p className="text-[11px] font-black text-slate-700 dark:text-slate-200">{log.action || "إجراء"}</p>
+                  <p className="text-[10px] font-bold text-slate-400 mt-1 truncate">
+                    {log.details?.party || log.details?.title || log.details?.type || "بدون وصف إضافي"}
+                  </p>
+                </div>
+              ))}
+              {auditLogs.length === 0 && (
+                <div className="text-center py-6 text-[11px] font-bold text-slate-400">لا توجد سجلات تدقيق بعد</div>
+              )}
+            </div>
           </div>
 
         </div>

@@ -6,7 +6,10 @@ import {
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
+import { logAuditEvent } from "../../utils/auditLog";
 import ResponsiveTable from "../../ui/ResponsiveTable";
+import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
+import BrandHeader from "../../ui/BrandHeader";
 import clsx from "clsx";
 import {
   ShieldCheck, Users, CalendarDays, Coins, PieChart, Activity,
@@ -30,13 +33,14 @@ const ROLE_META = {
 };
 
 const MONTHLY_ALLOWANCES = {
-  "رئيس المجلس":    { travel: 0, phone: 0, representation: 0, responsibility: 0 },
-  "الأمين العام":   { travel: 0, phone: 0, representation: 0,  responsibility: 0  },
-  "أمين الصندوق":   { travel: 0, phone: 0, representation: 0,  responsibility: 0  },
-  "عضو مجلس إدارة": { travel: 0, phone: 0, representation: 0,  responsibility: 0  },
+  "رئيس المجلس":    { travel: 0, sessions: 0, phone: 0, representation: 0, responsibility: 0 },
+  "الأمين العام":   { travel: 0, sessions: 0, phone: 0, representation: 0, responsibility: 0 },
+  "أمين الصندوق":   { travel: 0, sessions: 0, phone: 0, representation: 0, responsibility: 0 },
+  "عضو مجلس إدارة": { travel: 0, sessions: 0, phone: 0, representation: 0, responsibility: 0 },
 };
 
 const ALLOWANCE_LABELS = {
+  sessions: "بدل جلسات",
   travel: "بدل انتقال", phone: "بدل تليفون",
   representation: "بدل تمثيل", responsibility: "بدل مسؤولية",
 };
@@ -62,6 +66,7 @@ const MEMBER_STATE_COLORS = {
   موقوف:    "bg-amber-100 text-amber-700 border-amber-200",
   نشط:      "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300",
 };
+const ARABIC_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 
 const formatDate = (ds) => {
   if (!ds) return "—";
@@ -184,15 +189,23 @@ function ConfirmDelete({ open, onClose, onConfirm, label }) {
 // §3  تبويب النظرة العامة (Dashboard)
 // ═══════════════════════════════════════════════════════════════
 
-function DashboardTab({ members, meetings, customAllowances, T, setActiveTab, openEmployeeModal }) {
+function DashboardTab({ members, meetings, customAllowances, settlementTransactions, T, setActiveTab, openEmployeeModal }) {
   const activeMembers = members.filter(m => !["وفاة","استقالة"].includes(m.memberState)).length;
   const heldMeetings  = meetings.filter(m => m.status === "held").length;
   const decisionsCount = meetings.reduce((acc, m) => acc + (m.decisions?.length || 0), 0);
+  const settlementAllowanceTotal = settlementTransactions
+    .filter(t => ["advance", "activity"].includes(t.type) && t.isSettled)
+    .reduce((sum, tx) => {
+      const txTotal = (tx.settlementExpenses || []).reduce((expenseSum, expense) => {
+        if (!["بدل انتقال", "بدل جلسات"].includes(expense.category)) return expenseSum;
+        return expenseSum + Number(expense.amount || 0);
+      }, 0);
+      return sum + txTotal;
+    }, 0);
   const totalAllowances = members.reduce((sum, m) => {
     const monthly = Object.values(MONTHLY_ALLOWANCES[m.membershipStatus] || {}).reduce((a,b)=>a+b,0) * 12;
-    const meetingAll = meetings.filter(mt => mt.status === "held" && mt.attendees?.includes(m.id)).length * (ROLE_META[m.membershipStatus]?.meeting_rate || 300);
-    return sum + monthly + meetingAll;
-  }, 0) + customAllowances.reduce((s,a)=>s+(a.amount||0),0);
+    return sum + monthly;
+  }, 0) + customAllowances.reduce((s,a)=>s+(a.amount||0),0) + settlementAllowanceTotal;
 
   return (
     <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
@@ -322,7 +335,7 @@ function DashboardTab({ members, meetings, customAllowances, T, setActiveTab, op
                     <div key={i} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
                       <p className="text-[11px] font-black text-slate-700 dark:text-slate-200 mb-1.5">{d.text}</p>
                       <div className="flex gap-3 text-[9px] font-bold">
-                        <span className="text-emerald-600">✓ موافق: {d.votes?.for ?? (meeting.attendees?.length||0)}</span>
+                        <span className="text-emerald-600">✓ موافق: {d.votes?.for ?? 0}</span>
                         <span className="text-rose-600">✗ معارض: {d.votes?.against ?? 0}</span>
                         <span className="text-slate-400">○ ممتنع: {d.votes?.abstain ?? 0}</span>
                       </div>
@@ -466,7 +479,7 @@ function MeetingForm({ initial, onSave, onCancel, saving }) {
           </select>
         </FormField>
         <FormField label="التاريخ" required>
-          <input className={inputCls} type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+          <ArabicDatePicker label="" value={form.date} onChange={v=>set("date",v)} />
         </FormField>
         <FormField label="الوقت">
           <input className={inputCls} type="time" value={form.time} onChange={e=>set("time",e.target.value)}/>
@@ -523,6 +536,7 @@ function MeetingDetail({ meeting, members, onClose, onUpdate, onDelete }) {
   const [attendees, setAttendees] = useState(meeting.attendees||[]);
   const [saving, setSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const presentCount = attendees.length;
 
   // Toggle attendance
   const toggleAttendee = async (memberId) => {
@@ -536,7 +550,18 @@ function MeetingDetail({ meeting, members, onClose, onUpdate, onDelete }) {
   // Add decision
   const addDecision = async () => {
     if (!newDecision.trim()) return;
-    const d = { text: newDecision.trim(), votes:{for:parseInt(newDecisionVotes.for)||0,against:parseInt(newDecisionVotes.against)||0,abstain:parseInt(newDecisionVotes.abstain)||0}};
+    const againstVotes = parseInt(newDecisionVotes.against) || 0;
+    const abstainVotes = parseInt(newDecisionVotes.abstain) || 0;
+    const explicitForVotes = newDecisionVotes.for === "" ? null : (parseInt(newDecisionVotes.for) || 0);
+    const inferredForVotes = explicitForVotes ?? Math.max(presentCount - againstVotes - abstainVotes, 0);
+    const totalVotes = inferredForVotes + againstVotes + abstainVotes;
+
+    if (totalVotes > presentCount) {
+      alert(`إجمالي الأصوات (${totalVotes}) أكبر من عدد الحاضرين (${presentCount}).`);
+      return;
+    }
+
+    const d = { text: newDecision.trim(), votes:{for:inferredForVotes,against:againstVotes,abstain:abstainVotes}};
     const updated = [...decisions, d];
     setDecisions(updated);
     setNewDecision(""); setNewDecisionVotes({for:"",against:"",abstain:""});
@@ -553,16 +578,21 @@ function MeetingDetail({ meeting, members, onClose, onUpdate, onDelete }) {
   // Mark meeting as held
   const markHeld = async () => {
     setSaving(true);
-    try { await updateDoc(doc(db,"board_meetings",meeting.id),{status:"held"}); onUpdate(); } catch(e){console.error(e);} finally{setSaving(false);}
+    try {
+      await updateDoc(doc(db,"board_meetings",meeting.id),{status:"held"});
+      await logAuditEvent("board_meeting_marked_held", {
+        meetingId: meeting.id,
+        title: meeting.title || "",
+        date: meeting.date || "",
+      });
+      onUpdate();
+    } catch(e){console.error(e);} finally{setSaving(false);}
   };
-
-  const absentees = members.filter(m=>!attendees.includes(m.id));
-  const presentMembers = members.filter(m=>attendees.includes(m.id));
 
   return (
     <>
       <ConfirmDelete open={deleteOpen} onClose={()=>setDeleteOpen(false)} label={meeting.title}
-        onConfirm={async()=>{try{await deleteDoc(doc(db,"board_meetings",meeting.id));onDelete();}catch(e){console.error(e);}}}/>
+        onConfirm={async()=>{try{await deleteDoc(doc(db,"board_meetings",meeting.id)); await logAuditEvent("board_meeting_deleted", { meetingId: meeting.id, title: meeting.title || "", date: meeting.date || "" }); onDelete();}catch(e){console.error(e);}}}/>
       <div className="space-y-5 animate-in slide-in-from-right-4 duration-300">
         {/* Info header */}
         <div className="flex flex-col sm:flex-row gap-4 p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-transparent border border-amber-200/30 dark:border-amber-800/20">
@@ -660,6 +690,7 @@ function MeetingDetail({ meeting, members, onClose, onUpdate, onDelete }) {
           {/* Add decision */}
           <div className="p-3 rounded-xl border border-dashed border-amber-300 dark:border-amber-800/50 bg-amber-50/30 dark:bg-amber-900/10 space-y-2">
             <textarea className={clsx(inputCls,"resize-none text-[11px]")} rows={2} placeholder="نص القرار الجديد..." value={newDecision} onChange={e=>setNewDecision(e.target.value)}/>
+            <p className="text-[9px] font-black text-slate-500">عدد الحاضرين الحالي: {presentCount}. إذا تُركت خانة "موافق" فارغة فسيتم احتسابها تلقائيًا من الباقي.</p>
             <div className="grid grid-cols-3 gap-2">
               {["for","against","abstain"].map(k=>(
                 <div key={k} className="flex flex-col gap-1">
@@ -711,8 +742,19 @@ function MeetingsTab({ members, meetings, T }) {
       const payload = { ...form, agenda: (form.agenda||[]).filter(Boolean), updatedAt: serverTimestamp() };
       if (editMeeting) {
         await updateDoc(doc(db,"board_meetings",editMeeting.id), payload);
+        await logAuditEvent("board_meeting_updated", {
+          meetingId: editMeeting.id,
+          title: form.title || "",
+          date: form.date || "",
+          status: form.status || "",
+        });
       } else {
         await addDoc(collection(db,"board_meetings"), { ...payload, decisions:[], attendees:[], createdAt: serverTimestamp() });
+        await logAuditEvent("board_meeting_created", {
+          title: form.title || "",
+          date: form.date || "",
+          status: form.status || "",
+        });
       }
       setShowForm(false); setEditMeeting(null);
     } catch(e){console.error(e);} finally{setSaving(false);}
@@ -840,7 +882,7 @@ function MeetingsTab({ members, meetings, T }) {
                   <button onClick={()=>openEdit(m)} className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-900/30 text-amber-600 hover:bg-amber-200 transition-all flex items-center justify-center">
                     <Edit3 size={13}/>
                   </button>
-                  <button onClick={async()=>{try{await deleteDoc(doc(db,"board_meetings",m.id));}catch(e){console.error(e);}}}
+                  <button onClick={async()=>{try{await deleteDoc(doc(db,"board_meetings",m.id)); await logAuditEvent("board_meeting_deleted", { meetingId: m.id, title: m.title || "", date: m.date || "" });}catch(e){console.error(e);}}}
                     className="w-7 h-7 rounded-lg bg-rose-100 dark:bg-rose-900/30 text-rose-500 hover:bg-rose-200 transition-all flex items-center justify-center">
                     <Trash2 size={13}/>
                   </button>
@@ -875,64 +917,173 @@ function MeetingsTab({ members, meetings, T }) {
 
 const EMPTY_CUSTOM_ALLOWANCE = { memberId:"", type:"مكافأة أداء", amount:"", date:"", notes:"" };
 
-function AllowancesTab({ members, meetings, customAllowances, T }) {
+function AllowancesTab({ members, meetings, customAllowances, settlementTransactions, T }) {
   const [subTab, setSubTab]     = useState("meetings");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState(EMPTY_CUSTOM_ALLOWANCE);
   const [saving, setSaving]     = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [filterMember, setFilterMember] = useState("all");
+  const [filterMonth, setFilterMonth] = useState("all");
+  const [filterYear, setFilterYear] = useState("all");
 
-  const heldMeetings = meetings.filter(m=>m.status==="held");
+  const matchesPeriod = useCallback((dateValue = "") => {
+    const monthValue = String(dateValue || "").slice(5, 7);
+    const yearValue = String(dateValue || "").slice(0, 4);
+    const monthOk = filterMonth === "all" || monthValue === filterMonth;
+    const yearOk = filterYear === "all" || yearValue === filterYear;
+    return monthOk && yearOk;
+  }, [filterMonth, filterYear]);
+  const periodYears = useMemo(() => {
+    const dates = [
+      ...customAllowances.map((item) => item.date || ""),
+      ...settlementTransactions.flatMap((tx) => [
+        tx.date || "",
+        tx.settlementDate || "",
+        ...(tx.settlementExpenses || []).map((expense) => expense.date || ""),
+      ]),
+    ];
+    return [...new Set(dates.map((value) => String(value || "").slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+  }, [customAllowances, settlementTransactions]);
 
-  // Meeting allowances per member
+  const settlementAllowanceMap = useMemo(() => {
+    const result = {};
+    settlementTransactions
+      .filter(t => ["advance", "activity"].includes(t.type) && t.isSettled)
+      .forEach((tx) => {
+        (tx.settlementExpenses || []).forEach((expense) => {
+          if (!matchesPeriod(expense.date || tx.settlementDate || tx.date || "")) return;
+          const allowanceKey =
+            expense.category === "بدل انتقال"
+              ? "travel"
+              : expense.category === "بدل جلسات"
+                ? "sessions"
+                : null;
+
+          if (!allowanceKey || !Array.isArray(expense.boardMembers) || expense.boardMembers.length === 0) return;
+
+          const perMember = Number(expense.allowancePerMember || 0) || (Number(expense.amount || 0) / expense.boardMembers.length);
+          expense.boardMembers.forEach((memberId) => {
+            if (!result[memberId]) result[memberId] = { travel: 0, sessions: 0 };
+            result[memberId][allowanceKey] += perMember;
+          });
+        });
+      });
+    return result;
+  }, [matchesPeriod, settlementTransactions]);
+
+  // Session allowances per member from approved settlements only
   const meetingRows = members.map(m=>{
-    const rate = ROLE_META[m.membershipStatus]?.meeting_rate || 300;
-    const attended = heldMeetings.filter(mt=>mt.attendees?.includes(m.id));
-    return { member:m, attendedCount:attended.length, rate, total:attended.length*rate, attended };
+    const sessionExpenses = settlementTransactions
+      .filter(t => ["advance", "activity"].includes(t.type) && t.isSettled)
+        .flatMap(tx => (tx.settlementExpenses || []).filter(exp => exp.category === "بدل جلسات" && exp.boardMembers?.includes(m.id))
+        .map(exp => ({
+          meetingTitle: exp.meetingTitle || "جلسة مسواة",
+          meetingId: exp.meetingId || "",
+          perMember: Number(exp.allowancePerMember || 0),
+          date: exp.date || tx.settlementDate || tx.date || "",
+        }))
+        .filter(item => matchesPeriod(item.date)));
+
+    const uniqueRates = [...new Set(sessionExpenses.map(item => Number(item.perMember || 0)).filter(Boolean))];
+
+    return {
+      member: m,
+      attendedCount: sessionExpenses.length,
+      rate: uniqueRates.length === 1 ? uniqueRates[0] : null,
+      total: sessionExpenses.reduce((sum, item) => sum + Number(item.perMember || 0), 0),
+      attended: sessionExpenses,
+    };
   }).sort((a,b)=>b.total-a.total);
 
   // Monthly allowances per member
   const monthlyRows = members.map(m=>{
-    const a = MONTHLY_ALLOWANCES[m.membershipStatus]||{};
-    const total = Object.values(a).reduce((s,v)=>s+v,0);
-    return {member:m, allowances:a, total};
+    const baseAllowances = MONTHLY_ALLOWANCES[m.membershipStatus]||{};
+    const settlementAllowances = settlementAllowanceMap[m.id] || { travel: 0, sessions: 0 };
+    const allowances = Object.keys(ALLOWANCE_LABELS).reduce((acc, key) => {
+      acc[key] = Number(baseAllowances[key] || 0) + Number(settlementAllowances[key] || 0);
+      return acc;
+    }, {});
+    const recurringMonthlyTotal = Object.values(baseAllowances).reduce((s,v)=>s+Number(v||0),0);
+    const sessionsTotal = Number(settlementAllowances.sessions || 0);
+    const travelTotal = Number(settlementAllowances.travel || 0);
+    const settlementTotal = travelTotal + sessionsTotal;
+    const total = Object.values(allowances).reduce((s,v)=>s+Number(v||0),0);
+    return {member:m, allowances, total, recurringMonthlyTotal, settlementTotal, sessionsTotal, travelTotal};
   }).sort((a,b)=>b.total-a.total);
 
   const grandMeetingTotal  = meetingRows.reduce((s,r)=>s+r.total,0);
   const grandMonthlyTotal  = monthlyRows.reduce((s,r)=>s+r.total,0);
-  const grandCustomTotal   = customAllowances.reduce((s,a)=>s+(a.amount||0),0);
+  const grandRecurringMonthlyTotal = monthlyRows.reduce((s,r)=>s+r.recurringMonthlyTotal,0);
+  const grandTravelAllowanceTotal = monthlyRows.reduce((s,r)=>s+r.travelTotal,0);
+  const grandCustomTotal   = (filterMember==="all" ? customAllowances : customAllowances.filter(a=>a.memberId===filterMember))
+    .filter((a) => matchesPeriod(a.date || ""))
+    .reduce((s,a)=>s+(a.amount||0),0);
 
   const saveCustom = async() => {
     if (!form.memberId||!form.amount||!form.date) return;
     setSaving(true);
     try {
       await addDoc(collection(db,"board_allowances"),{...form,amount:parseFloat(form.amount),createdAt:serverTimestamp()});
+      await logAuditEvent("board_allowance_created", {
+        memberId: form.memberId,
+        type: form.type,
+        amount: Number(form.amount || 0),
+        date: form.date,
+      });
       setForm(EMPTY_CUSTOM_ALLOWANCE); setShowForm(false);
     } catch(e){console.error(e);} finally{setSaving(false);}
   };
 
   const deleteCustom = async(id) => {
-    try { await deleteDoc(doc(db,"board_allowances",id)); setDeleteTarget(null); } catch(e){console.error(e);}
+    try {
+      await deleteDoc(doc(db,"board_allowances",id));
+      await logAuditEvent("board_allowance_deleted", {
+        allowanceId: id,
+        type: deleteTarget?.type || "",
+        memberId: deleteTarget?.memberId || "",
+        amount: Number(deleteTarget?.amount || 0),
+      });
+      setDeleteTarget(null);
+    } catch(e){console.error(e);}
   };
 
   const memberName = (id) => members.find(m=>m.id===id)?.name||"—";
   const memberIdx  = (id) => members.findIndex(m=>m.id===id);
 
-  const filteredCustom = filterMember==="all" ? customAllowances : customAllowances.filter(a=>a.memberId===filterMember);
+  const filteredCustom = (filterMember==="all" ? customAllowances : customAllowances.filter(a=>a.memberId===filterMember))
+    .filter((a) => matchesPeriod(a.date || ""));
 
   return (
     <div className="animate-in fade-in duration-500 space-y-5">
       <ConfirmDelete open={!!deleteTarget} onClose={()=>setDeleteTarget(null)} label={deleteTarget?.type||"البدل"}
         onConfirm={()=>deleteCustom(deleteTarget?.id)}/>
 
+      <div className={clsx("p-3 rounded-2xl border flex flex-wrap items-center gap-2", T.card)}>
+        <span className="text-[11px] font-black text-slate-400 flex items-center gap-1"><Filter size={12}/> الفترة:</span>
+        <select value={filterMonth} onChange={e=>setFilterMonth(e.target.value)} className={clsx(inputCls,"w-auto py-1.5 text-xs min-w-[110px]")}>
+          <option value="all">كل الشهور</option>
+          {ARABIC_MONTHS.map((month, idx) => (
+            <option key={month} value={String(idx + 1).padStart(2, "0")}>{month}</option>
+          ))}
+        </select>
+        <select value={filterYear} onChange={e=>setFilterYear(e.target.value)} className={clsx(inputCls,"w-auto py-1.5 text-xs min-w-[95px]")}>
+          <option value="all">كل السنوات</option>
+          {periodYears.map((year) => <option key={year} value={year}>{year}</option>)}
+        </select>
+        <span className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-900/10 text-amber-700 dark:text-amber-300 text-[10px] font-black border border-amber-100 dark:border-amber-800/40">
+          البدلات حسب الفترة المحددة
+        </span>
+      </div>
+
       {/* Totals */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
-          {label:"بدلات الاجتماعات",value:grandMeetingTotal,color:"text-sky-600"},
-          {label:"البدلات الشهرية",value:grandMonthlyTotal,color:"text-emerald-600"},
+          {label:"بدل الجلسات",value:grandMeetingTotal,color:"text-sky-600"},
+          {label:"بدل الانتقال",value:grandTravelAllowanceTotal,color:"text-indigo-600"},
+          {label:"البدلات الشهرية",value:grandRecurringMonthlyTotal,color:"text-emerald-600"},
           {label:"بدلات إضافية",value:grandCustomTotal,color:"text-violet-600"},
-          {label:"الإجمالي التقديري",value:grandMeetingTotal+grandMonthlyTotal*12+grandCustomTotal,color:"text-amber-600"},
+          {label:"الإجمالي التقديري",value:grandMeetingTotal+grandTravelAllowanceTotal+grandRecurringMonthlyTotal*12+grandCustomTotal,color:"text-amber-600"},
         ].map((s,i)=>(
           <div key={i} className={clsx("p-4 rounded-2xl border text-center",T.card)}>
             <div className={clsx("text-xl font-black",s.color)}>{s.value.toLocaleString()} ج</div>
@@ -945,7 +1096,7 @@ function AllowancesTab({ members, meetings, customAllowances, T }) {
       <div className="flex gap-2 flex-wrap items-center justify-between">
         <div className="flex gap-2 flex-wrap">
           {[
-            {k:"meetings",l:"🏛️ بدلات الاجتماعات"},
+            {k:"meetings",l:"🏛️ بدل الجلسات"},
             {k:"monthly",l:"📅 البدلات الشهرية"},
             {k:"custom",l:"➕ بدلات إضافية"},
             {k:"summary",l:"📊 ملخص"},
@@ -976,8 +1127,8 @@ function AllowancesTab({ members, meetings, customAllowances, T }) {
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
                   <th className="p-3.5 text-right text-[10px] font-black text-slate-500 uppercase tracking-wide">العضو</th>
-                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">اجتماعات حضرها</th>
-                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">سعر الجلسة</th>
+                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">جلسات مسواة</th>
+                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">نصيب الجلسة</th>
                   <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">الإجمالي</th>
                 </tr>
               </thead>
@@ -995,17 +1146,17 @@ function AllowancesTab({ members, meetings, customAllowances, T }) {
                     </td>
                     <td className="p-3.5 text-center">
                       <span className="px-3 py-1 rounded-lg bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400 text-xs font-black">
-                        {r.attendedCount} / {heldMeetings.length}
+                        {r.attendedCount}
                       </span>
                     </td>
-                    <td className="p-3.5 text-center text-xs font-bold text-slate-500">{r.rate.toLocaleString()} ج</td>
+                    <td className="p-3.5 text-center text-xs font-bold text-slate-500">{typeof r.rate === "number" ? `${r.rate.toLocaleString()} ج` : (r.attendedCount > 0 ? "متغير" : "—")}</td>
                     <td className="p-3.5 text-center font-black text-base text-amber-600">{r.total.toLocaleString()} ج</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="bg-amber-50 dark:bg-amber-900/10 border-t-2 border-amber-200 dark:border-amber-800/30">
-                  <td className="p-3.5 font-black text-xs text-slate-700 dark:text-slate-200" colSpan={3}>الإجمالي الكلي لبدلات الاجتماعات</td>
+                  <td className="p-3.5 font-black text-xs text-slate-700 dark:text-slate-200" colSpan={3}>الإجمالي الفعلي لبدل الجلسات من التسويات</td>
                   <td className="p-3.5 text-center font-black text-lg text-amber-600">{grandMeetingTotal.toLocaleString()} ج</td>
                 </tr>
               </tfoot>
@@ -1086,7 +1237,7 @@ function AllowancesTab({ members, meetings, customAllowances, T }) {
                   <input type="number" min="0" className={inputCls} placeholder="0" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))}/>
                 </FormField>
                 <FormField label="التاريخ" required>
-                  <input type="date" className={inputCls} value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/>
+                  <ArabicDatePicker label="" value={form.date} onChange={v=>setForm(f=>({...f,date:v}))} />
                 </FormField>
                 <FormField label="ملاحظات" hint="">
                   <input className={inputCls} placeholder="سبب البدل أو الملاحظات..." value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))}/>
@@ -1173,12 +1324,12 @@ function AllowancesTab({ members, meetings, customAllowances, T }) {
       {subTab==="summary" && (
         <div className="space-y-3">
           {members.map((m,i)=>{
-            const rate = ROLE_META[m.membershipStatus]?.meeting_rate||300;
-            const attended = heldMeetings.filter(mt=>mt.attendees?.includes(m.id)).length;
-            const meetTotal = attended * rate;
-            const monthTotal = Object.values(MONTHLY_ALLOWANCES[m.membershipStatus]||{}).reduce((s,v)=>s+v,0);
+            const monthlyRow = monthlyRows.find(r => r.member.id === m.id);
+            const meetTotal = monthlyRow?.sessionsTotal || 0;
+            const travelTotal = monthlyRow?.travelTotal || 0;
+            const monthTotal = monthlyRow?.recurringMonthlyTotal || 0;
             const customTotal = customAllowances.filter(a=>a.memberId===m.id).reduce((s,a)=>s+(a.amount||0),0);
-            const grandTotal = meetTotal + monthTotal*12 + customTotal;
+            const grandTotal = meetTotal + travelTotal + monthTotal*12 + customTotal;
             return (
               <div key={m.id} className={clsx("p-4 rounded-2xl border shadow-sm",T.card)}>
                 <div className="flex items-center gap-3 mb-3">
@@ -1192,9 +1343,10 @@ function AllowancesTab({ members, meetings, customAllowances, T }) {
                     <div className="text-[9px] font-bold text-slate-400 text-left">إجمالي سنوي</div>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   {[
-                    {l:"بدل الاجتماعات",v:meetTotal,c:"text-sky-600"},
+                    {l:"بدل الجلسات",v:meetTotal,c:"text-sky-600"},
+                    {l:"بدل الانتقال",v:travelTotal,c:"text-indigo-600"},
                     {l:"البدل الشهري",v:monthTotal,c:"text-emerald-600"},
                     {l:"بدلات إضافية",v:customTotal,c:"text-violet-600"},
                   ].map((s,j)=>(
@@ -1307,11 +1459,12 @@ export default function BoardDashboard() {
   const [allEmployees,    setAllEmployees]    = useState([]);
   const [meetings,        setMeetings]        = useState([]);
   const [customAllowances,setCustomAllowances]= useState([]);
+  const [transactions,    setTransactions]    = useState([]);
   const [loading,         setLoading]         = useState(true);
 
   useEffect(() => {
-    let empOk=false, meetOk=false, allowOk=false;
-    const check = () => { if (empOk && meetOk && allowOk) setLoading(false); };
+    let empOk=false, meetOk=false, allowOk=false, txOk=false;
+    const check = () => { if (empOk && meetOk && allowOk && txOk) setLoading(false); };
 
     const unsubEmp = onSnapshot(
       query(collection(db,"employees")),
@@ -1331,7 +1484,13 @@ export default function BoardDashboard() {
       err  => { console.error("board_allowances:",err); allowOk=true; check(); }
     );
 
-    return () => { unsubEmp(); unsubMeet(); unsubAllow(); };
+    const unsubTx = onSnapshot(
+      query(collection(db,"transactions"), orderBy("date","desc")),
+      snap => { setTransactions(snap.docs.map(d=>({id:d.id,...d.data()}))); txOk=true; check(); },
+      err  => { console.error("transactions:",err); txOk=true; check(); }
+    );
+
+    return () => { unsubEmp(); unsubMeet(); unsubAllow(); unsubTx(); };
   }, []);
 
   const boardMembers = useMemo(()=>allEmployees.filter(emp=>BOARD_ROLES.includes(emp.membershipStatus)),[allEmployees]);
@@ -1353,6 +1512,7 @@ export default function BoardDashboard() {
 
   return (
     <div className={clsx("max-w-[1600px] mx-auto pb-20 animate-in fade-in duration-500",T.text)} dir="rtl">
+      <BrandHeader sectionTitle="منظومة مجلس الإدارة والبدلات" sectionHint="المتابعة الإدارية والمالية والقرارات" className="mb-5" />
 
       {/* ── شريط الهيدر والتبويبات ── */}
       <div className={clsx(
@@ -1392,10 +1552,10 @@ export default function BoardDashboard() {
 
       {/* ── محتوى التبويبات ── */}
       <div className="mt-2">
-        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} customAllowances={customAllowances} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
+        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} customAllowances={customAllowances} settlementTransactions={transactions} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="members"    && <MembersTab    members={boardMembers} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="meetings"   && <MeetingsTab   members={boardMembers} meetings={meetings} T={T}/>}
-        {activeTab==="allowances" && <AllowancesTab members={boardMembers} meetings={meetings} customAllowances={customAllowances} T={T}/>}
+        {activeTab==="allowances" && <AllowancesTab members={boardMembers} meetings={meetings} customAllowances={customAllowances} settlementTransactions={transactions} T={T}/>}
         {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} customAllowances={customAllowances} T={T}/>}
       </div>
     </div>

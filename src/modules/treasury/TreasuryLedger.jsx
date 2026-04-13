@@ -12,6 +12,8 @@ import { collection, query, onSnapshot } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
+import BrandHeader from "../../ui/BrandHeader";
+import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import * as XLSX from "xlsx";
 import {
   Printer, Wallet, TrendingUp, TrendingDown, FileText,
@@ -22,13 +24,21 @@ import clsx from "clsx";
 // ─────────────────────────────────────────────
 const OPENING_BALANCE = 42685.79;
 const getTodayISO = () => new Date().toISOString().split("T")[0];
+const normalizeArabicDigits = (value = "") =>
+  String(value).replace(/[٠-٩]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
+
+const getCheckSortValue = (checkNum) => {
+  const normalized = normalizeArabicDigits(checkNum).trim();
+  const numericValue = Number(normalized);
+  return Number.isFinite(numericValue) && normalized !== "" ? numericValue : Number.MAX_SAFE_INTEGER;
+};
 
 const getTypeLabel = (type, subType) => {
   switch (type) {
     case "deposit":  return "إيداع نقدي";
     case "refund":   return "رد سلفة";
     case "subs":     return "اشتراكات نشاط";
-    case "aid":      return subType ? `إعانة (${subType.split(":")[0]})` : "إعانة";
+    case "aid":      return subType ? subType.split(":")[0] : "مصروف";
     case "advance":  return "سلفة / عهدة";
     case "activity": return "شيك نشاط";
     default:         return "حركة مالية";
@@ -149,17 +159,6 @@ function TreasuryLedgerInner() {
         debit:    !isCredit(tx.type) ? amt : 0,
       });
 
-      // رد السلفة / المتبقي
-      if (["advance", "activity"].includes(tx.type) && tx.isSettled && Number(tx.settlementReturned || 0) > 0) {
-        allEvents.push({
-          id: `${tx.id}_refund`, date: tx.settlementDate || tx.date, type: "refund", subType: "",
-          party: tx.employeeName || tx.party,
-          notes: `توريد متبقي تسوية (${tx.date})`,
-          checkNum: "إيصال",
-          credit: Number(tx.settlementReturned), debit: 0,
-        });
-      }
-
       // اشتراكات النشاط
       if (tx.type === "activity" && tx.isSettled && Number(tx.collectedSubscriptions || 0) > 0) {
         allEvents.push({
@@ -172,7 +171,15 @@ function TreasuryLedgerInner() {
       }
     });
 
-    allEvents.sort((a, b) => a.date.localeCompare(b.date));
+    allEvents.sort((a, b) => {
+      const dateComparison = a.date.localeCompare(b.date);
+      if (dateComparison !== 0) return dateComparison;
+
+      const checkComparison = getCheckSortValue(a.checkNum) - getCheckSortValue(b.checkNum);
+      if (checkComparison !== 0) return checkComparison;
+
+      return String(a.checkNum || "").localeCompare(String(b.checkNum || ""), "ar");
+    });
 
     let running = OPENING_BALANCE;
     let periodOpening = OPENING_BALANCE;
@@ -230,7 +237,7 @@ function TreasuryLedgerInner() {
         <td style="text-align:center;">${e.date}</td>
         <td style="text-align:center;">${getTypeLabel(e.type, e.subType)}</td>
         <td style="text-align:center;">${e.checkNum}</td>
-        <td style="text-align:right; padding-right:8px;">${e.party}<br/><small style="color:#64748b;">${e.notes || ""}</small></td>
+        <td style="text-align:right; padding-right:8px;">${e.party}</td>
         <td style="text-align:left; color:#059669;">${e.credit > 0 ? e.credit.toLocaleString() : "—"}</td>
         <td style="text-align:left; color:#e11d48;">${e.debit > 0 ? e.debit.toLocaleString() : "—"}</td>
         <td style="text-align:left; font-weight:900;">${(e.balance || 0).toLocaleString()}</td>
@@ -244,9 +251,6 @@ function TreasuryLedgerInner() {
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
         * { font-family: 'Cairo', sans-serif; margin:0; padding:0; box-sizing:border-box; }
         body { padding:15px; font-size:11px; color:#1e293b; }
-        .header { display:flex; justify-content:space-between; align-items:center; border-bottom:3px solid #1e293b; padding-bottom:12px; margin-bottom:20px; }
-        .header h1 { font-size:18px; font-weight:900; }
-        .header p  { font-size:10px; color:#64748b; font-weight:700; }
         .info-bar  { display:flex; justify-content:space-between; background:#f1f5f9; padding:6px 10px; border-radius:6px; margin-bottom:15px; font-size:10px; font-weight:700; }
         table { width:100%; border-collapse:collapse; margin-bottom:15px; }
         th { background:#1e293b; color:#fff; padding:7px 5px; text-align:center; font-weight:900; border:1px solid #334155; font-size:11px; }
@@ -257,14 +261,13 @@ function TreasuryLedgerInner() {
         .sig-box { font-size:10px; font-weight:700; color:#334155; }
         .sig-line { margin-top:35px; border-top:1px dashed #94a3b8; width:80%; margin-inline:auto; }
         @media print { @page { margin:8mm; size:A4 landscape; } body { padding:0; } }
+        ${getPrintBrandStyles()}
       </style></head>
       <body>
-        <div class="header">
-          <div><h1>كشف حساب الخزينة العام (دفتر الأستاذ)</h1><p>النقابة العامة للاتصالات بالدقهلية</p></div>
-          <div style="text-align:left; font-size:10px; font-weight:700; border:1px solid #1e293b; padding:8px 12px; border-radius:6px;">
-            <div>الرصيد الختامي: <strong>${ledgerData.finalBalance.toLocaleString()} ج.م</strong></div>
-          </div>
-        </div>
+        ${getPrintBrandHeader({
+          reportTitle: "كشف حساب الخزينة العام (دفتر الأستاذ)",
+          reportMeta: `الرصيد الختامي: ${ledgerData.finalBalance.toLocaleString()} ج.م`
+        })}
         <div class="info-bar">
           <div>الفترة: ${filterFrom || "الافتتاح"} — ${filterTo || getTodayISO()}</div>
           <div>تاريخ التقرير: ${getTodayISO()}</div>
@@ -340,6 +343,7 @@ function TreasuryLedgerInner() {
   // ─── Main Render ──────────────────────────────
   return (
     <div className={clsx("flex flex-col gap-3 max-w-7xl mx-auto pb-10", T.text)} dir="rtl">
+      <BrandHeader sectionTitle="كشف حساب الخزينة" sectionHint="دفتر الأستاذ التفصيلي" />
 
       {/* ── 1. ملخص الخزينة ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
@@ -400,7 +404,7 @@ function TreasuryLedgerInner() {
           {[
             { id: "all",      label: "الكل"       },
             { id: "deposit",  label: "الوارد"     },
-            { id: "expense",  label: "الإعانات"   },
+            { id: "expense",  label: "المصروفات"  },
             { id: "activity", label: "الأنشطة"    },
             { id: "advance",  label: "السلف"      },
           ].map(f => (
@@ -471,7 +475,6 @@ function TreasuryLedgerInner() {
 
                   <td className="p-2">
                     <p className="font-black text-slate-800 dark:text-slate-100 truncate max-w-[180px] md:max-w-[260px]">{row.party}</p>
-                    {row.notes && <p className="text-[9px] text-slate-500 truncate max-w-[180px] md:max-w-[260px] mt-0.5">{row.notes}</p>}
                   </td>
 
                   <td className="p-2 text-center font-black text-emerald-600 whitespace-nowrap">
