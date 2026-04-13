@@ -1,5 +1,6 @@
 // 02) TreasuryPage.jsx
 // نسخة مصححة ومثبتة لمنع أخطاء الاستيراد والتشغيل
+// ✅ تعديل: عدم الانتقال للشاشة الرئيسية عند إضافة سند جديد
 
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
@@ -63,7 +64,9 @@ function StatCard({ label, value, icon: Icon, color, sub }) {
       </div>
       <div className="min-w-0">
         <p className={clsx("text-[10px] font-black uppercase tracking-widest", T.muted)}>{label}</p>
-        <p className={clsx("text-lg font-black leading-tight", color === "emerald" ? "text-emerald-600" : color === "rose" ? "text-rose-600" : color === "amber" ? "text-amber-600" : "text-teal-600")}>{value}</p>
+        <p className={clsx("text-lg font-black leading-tight", color === "emerald" ? "text-emerald-600" : color === "rose" ? "text-rose-600" : color === "amber" ? "text-amber-600" : "text-teal-600")}>
+          {value}
+        </p>
         {sub && <p className={clsx("text-[10px] font-bold mt-0.5", T.muted)}>{sub}</p>}
       </div>
     </div>
@@ -103,7 +106,11 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   }, [location.search, selectedTx]);
 
   useEffect(() => {
-    const qRef = query(collection(db, "transactions"), orderBy("date", "desc"));
+    const qRef = query(
+      collection(db, "transactions"),
+      orderBy("date", "asc"),
+      orderBy("checkNum", "asc")
+    );
     const unsub = onSnapshot(qRef, (snap) => {
       setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
@@ -153,6 +160,14 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
           t.notes?.includes(q) ||
           String(t.checkNum || "").includes(q)
         );
+      })
+      .sort((a, b) => {
+        const byDate = String(a.date || "").localeCompare(String(b.date || ""));
+        if (byDate !== 0) return byDate;
+
+        const aCheck = Number(a.checkNum || Number.MAX_SAFE_INTEGER);
+        const bCheck = Number(b.checkNum || Number.MAX_SAFE_INTEGER);
+        return aCheck - bCheck;
       });
   }, [transactions, filterType, filterState, searchQ]);
 
@@ -162,11 +177,23 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
     navigate("/treasury/admin", { replace: true });
   }, [navigate]);
 
+  // ✅ تعديل مهم: عدم إغلاق النموذج عند إضافة سند جديد
   const handleSave = async (data, isEdit) => {
     try {
       await saveTransaction(data);
       showToast(isEdit ? "تم تحديث بيانات السند بنجاح ✓" : "تم إصدار السند وترحيله بنجاح ✓");
-      handleCloseForm();
+      
+      // الفرق هنا:
+      if (isEdit) {
+        // عند التعديل: إغلاق النموذج والعودة للقائمة
+        handleCloseForm();
+      } else {
+        // عند الإضافة الجديدة: عدم إغلاق النموذج
+        // TreasuryForm سيقوم بتفريغ المحتوى تلقائياً
+        setSelectedTx(null);
+        // الآن showForm سيبقى true والنموذج سيبقى مفتوح
+      }
+
     } catch (error) {
       console.error(error);
       showToast("حدث خطأ أثناء الحفظ، يرجى المحاولة مجدداً", "error");
@@ -227,7 +254,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                     </span>
                     <span className="text-xs font-bold truncate">{file.name}</span>
                   </div>
-                  <a href={file.url} download={file.name} className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white text-[10px] font-bold rounded-lg hover:bg-teal-700 transition-all whitespace-nowrap">
+                  <a href={file.url} download={file.name} className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white text-[10px] font-bold rounded-lg hover:bg-teal-700 transition-all">
                     <Download size={12} /> تحميل
                   </a>
                 </div>
@@ -367,13 +394,13 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                       </td>
                       <td className="py-3 px-4 text-center text-[10px] font-bold text-slate-400">{tx.checkNum || "—"}</td>
                       <td className="py-3 px-4 text-center">
-                        <span className={clsx("text-[9px] px-2 py-0.5 rounded-full font-black border inline-block", tx.state === "posted" ? "bg-teal-500/10 text-teal-600 border-teal-500/20" : tx.state === "draft" ? "bg-slate-500/10 text-slate-500 border-slate-500/20" : "bg-amber-500/10 text-amber-600 border-amber-500/20")}>
+                        <span className={clsx("text-[9px] px-2 py-0.5 rounded-full font-black border inline-block", tx.state === "posted" ? "bg-teal-500/10 text-teal-600 border-teal-500/20" : tx.state === "draft" ? "bg-amber-500/10 text-amber-600 border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20")}>
                           {WORKFLOW_LABELS[tx.state] || tx.state || "مرحل"}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-center">
                         {tx.attachments?.length > 0 ? (
-                          <button onClick={() => setViewAttachments(tx.attachments)} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-teal-50 hover:text-teal-600 text-slate-500 font-bold rounded-lg border dark:border-slate-700 text-[9px]">
+                          <button onClick={() => setViewAttachments(tx.attachments)} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-teal-50 hover:text-teal-600 rounded-lg transition-all text-[10px] font-bold">
                             <FileText size={11} /> {tx.attachments.length}
                           </button>
                         ) : (
@@ -418,13 +445,3 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
     </div>
   );
 }
-
-/*
-أهم ما تم إصلاحه هنا:
-1) تثبيت التعامل مع useTreasuryService و WORKFLOW_LABELS بدل ترك الملف مع imports مكسورة.
-2) إصلاح nextCheque حتى لا يعتمد على قيم NaN.
-3) جعل handleSave يغلق الفورم بعد الإضافة والتعديل.
-4) إزالة الاعتماد الخطير على Tailwind dynamic classes داخل StatCard.
-5) تثبيت فلاتر الحالات والبحث بحيث لا تنكسر لو state غير موجودة.
-6) إبقاء نفس منطق الشاشة الأصلية دون تغيير كبير في تجربة الاستخدام.
-*/
