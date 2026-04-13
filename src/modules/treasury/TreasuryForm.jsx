@@ -1,4 +1,4 @@
-/**
+﻿/**
  * TreasuryForm — نموذج إصدار المستندات المالية
  * - إصلاح مشكلة ظهور التقويم خلف التابات/الهيدر عبر ArabicDatePicker باستخدام Portal
  * - السماح بتعديل المبلغ بعد اقتراحه في الرعاية
@@ -30,6 +30,8 @@ import clsx from "clsx";
 // ثوابت
 // ─────────────────────────────────────────────
 const DEP_OPTS = ["النقابة العامة بالدقهلية", "أمين الصندوق", "اشتراكات أعضاء", "جهة خارجية"];
+const BANK_OPTS = ["البنك الأهلي المصري", "بنك مصر", "البنك التجاري الدولي", "البنك العربي الأفريقي", "بنك آخر"];
+const BANK_CHARGE_CATEGORIES = ["رسوم كشف حساب", "رسوم بريدية", "دفتر شيكات", "عمولات بنكية", "مصاريف بنكية أخرى"];
 
 const AID_RELS = {
   "رعاية زواج": ["العضو نفسه", "ابن", "ابنة"],
@@ -43,6 +45,7 @@ const TYPE_LABELS = {
   aid: "سند صرف رعاية (مدين)",
   advance: "سند سلفة / عهدة (مدين)",
   activity: "شيك دعم فاعلية (مدين)",
+  bank_charge: "خصم بنكي مباشر (مدين)",
 };
 
 const TYPE_COLORS = {
@@ -50,6 +53,7 @@ const TYPE_COLORS = {
   aid: "rose",
   advance: "purple",
   activity: "amber",
+  bank_charge: "slate",
 };
 
 const AID_AMOUNTS = {
@@ -234,12 +238,14 @@ function ERPSelect({ label, icon: Icon, error, required, fullWidth, children, ..
 
 // بطاقة اختيار نوع السند
 function TypeSelector({ value, onChange }) {
+  const bankChargeType = { id: "bank_charge", label: "خصم بنكي", sub: "بدون شيك", icon: Landmark, color: "slate" };
   const types = [
     { id: "deposit", label: "إيداع", sub: "سند دائن", icon: DollarSign, color: "emerald" },
     { id: "aid", label: "رعاية", sub: "سند مدين", icon: Heart, color: "rose" },
     { id: "advance", label: "سلفة", sub: "عهدة مدين", icon: User, color: "purple" },
     { id: "activity", label: "نشاط", sub: "شيك فاعلية", icon: Activity, color: "amber" },
   ];
+  types.push(bankChargeType);
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -296,7 +302,7 @@ export default function TreasuryForm({
       party: "",
       employeeId: "",
       notes: "",
-      checkNum: defaultType !== "deposit" ? (nextCheque || "") : "",
+      checkNum: !["deposit", "bank_charge"].includes(defaultType) ? (nextCheque || "") : "",
       aidCategory: "",
       aidRel: "",
       incidentDate: "",
@@ -305,6 +311,8 @@ export default function TreasuryForm({
       activityDate: "",
       participantsCount: "",
       activityLocation: "",
+      bankChargeCategory: "",
+      bankReference: "",
       attachments: [],
       state: isTreasurer ? "posted" : "draft",
     }),
@@ -387,7 +395,7 @@ export default function TreasuryForm({
   // إعادة رقم الشيك عند تغيير النوع
   useEffect(() => {
     if (!isEdit) {
-      update("checkNum", tx.type !== "deposit" ? (nextCheque || "") : "");
+      update("checkNum", !["deposit", "bank_charge"].includes(tx.type) ? (nextCheque || "") : "");
     }
   }, [tx.type, nextCheque, isEdit, update]);
 
@@ -412,7 +420,7 @@ export default function TreasuryForm({
 
     if (!tx.party?.trim()) e.party = "الجهة أو العضو مطلوب";
 
-    if (tx.type !== "deposit") {
+    if (!["deposit", "bank_charge"].includes(tx.type)) {
       if (!tx.checkNum) {
         e.checkNum = "رقم الشيك مطلوب";
       } else if (!/^\d+$/.test(String(tx.checkNum))) {
@@ -436,6 +444,11 @@ export default function TreasuryForm({
       }
     }
 
+    if (tx.type === "bank_charge") {
+      if (!tx.bankChargeCategory) e.bankChargeCategory = "حدد نوع الخصم البنكي";
+      if (!tx.party?.trim()) e.party = "اسم البنك أو الحساب مطلوب";
+    }
+
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -452,7 +465,7 @@ export default function TreasuryForm({
         {
           ...tx,
           amount: String(tx.amount).trim(),
-          checkNum: tx.type !== "deposit" ? String(tx.checkNum).trim() : "",
+          checkNum: !["deposit", "bank_charge"].includes(tx.type) ? String(tx.checkNum).trim() : "",
           participantsCount: tx.participantsCount ? String(tx.participantsCount).trim() : "",
         },
         isEdit
@@ -463,7 +476,7 @@ export default function TreasuryForm({
 
         setTx({
           ...getEmptyTx(),
-          checkNum: tx.type !== "deposit" ? String(currentCheck + 1) : "",
+          checkNum: !["deposit", "bank_charge"].includes(tx.type) ? String(currentCheck + 1) : "",
         });
         setSearchQ("");
         setEmpData(null);
@@ -597,7 +610,7 @@ export default function TreasuryForm({
             }
           />
 
-          {tx.type !== "deposit" && (
+          {!["deposit", "bank_charge"].includes(tx.type) && (
             <div className="sm:col-span-2 space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase pr-1 flex justify-between">
                 رقم الشيك البنكي
@@ -655,6 +668,57 @@ export default function TreasuryForm({
                   {errors.party}
                 </p>
               )}
+            </div>
+          </ERPSection>
+        )}
+
+        {tx.type === "bank_charge" && (
+          <ERPSection title="بيانات الخصم البنكي المباشر" icon={Landmark} colorClass="slate">
+            <div className="sm:col-span-2">
+              <DynamicSelect
+                label="البنك / الحساب *"
+                value={tx.party}
+                onChange={(v) => update("party", v)}
+                icon={Landmark}
+                defaultOptions={BANK_OPTS}
+              />
+              {errors.party && (
+                <p className="text-[9px] text-rose-500 font-black mt-1 flex items-center gap-1">
+                  <AlertCircle size={10} />
+                  {errors.party}
+                </p>
+              )}
+            </div>
+
+            <ERPSelect
+              label="نوع الخصم البنكي"
+              required
+              icon={Tag}
+              value={tx.bankChargeCategory || ""}
+              error={errors.bankChargeCategory}
+              onChange={(e) => update("bankChargeCategory", e.target.value)}
+            >
+              <option value="">-- اختر نوع الخصم --</option>
+              {BANK_CHARGE_CATEGORIES.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </ERPSelect>
+
+            <ERPInput
+              label="المرجع البنكي"
+              value={tx.bankReference || ""}
+              onChange={(e) => update("bankReference", e.target.value)}
+              icon={Hash}
+              placeholder="رقم مرجع الخصم من كشف الحساب"
+            />
+
+            <div className="sm:col-span-2 flex items-start gap-2 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-3 py-2 rounded-xl">
+              <Info size={14} className="text-slate-600 mt-0.5 shrink-0" />
+              <p className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                يُستخدم هذا النوع للحركات التي يخصمها البنك مباشرة مثل رسوم كشف الحساب أو العمولات البنكية، لذلك لا يحتاج إلى رقم شيك أو سند صرف نقدي.
+              </p>
             </div>
           </ERPSection>
         )}
@@ -968,7 +1032,7 @@ export default function TreasuryForm({
         <div className="max-w-6xl mx-auto px-4 py-3">
           <div className="flex flex-wrap justify-between items-center gap-3">
             <div className="hidden sm:flex items-center gap-4 text-[10px] font-bold text-slate-600 dark:text-slate-400">
-              {tx.checkNum && (
+              {tx.checkNum && !["deposit", "bank_charge"].includes(tx.type) && (
                 <span className="flex items-center gap-1">
                   <Hash size={12} />
                   شيك #{tx.checkNum}
@@ -1016,7 +1080,7 @@ export default function TreasuryForm({
                 </button>
               )}
 
-              {!isEdit && tx.type !== "deposit" && (
+              {!isEdit && !["deposit", "bank_charge"].includes(tx.type) && (
                 <button
                   type="button"
                   onClick={() => {

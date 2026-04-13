@@ -41,6 +41,7 @@ const getTypeLabel = (type, subType) => {
     case "aid":      return subType ? subType.split(":")[0] : "مصروف";
     case "advance":  return "سلفة / عهدة";
     case "activity": return "شيك نشاط";
+    case "bank_charge": return subType ? `خصم بنكي: ${subType}` : "خصم بنكي مباشر";
     default:         return "حركة مالية";
   }
 };
@@ -53,6 +54,7 @@ const getBadgeColor = (type) => {
     case "aid":     return "bg-rose-100   text-rose-700   border-rose-200   dark:bg-rose-900/30   dark:text-rose-400";
     case "advance": return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400";
     case "activity":return "bg-amber-100  text-amber-700  border-amber-200  dark:bg-amber-900/30  dark:text-amber-400";
+    case "bank_charge": return "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900/30 dark:text-slate-300";
     default:        return "bg-slate-100  text-slate-700  border-slate-200";
   }
 };
@@ -151,10 +153,12 @@ function TreasuryLedgerInner() {
         id:       tx.id,
         date:     tx.date || getTodayISO(),
         type:     tx.type,
-        subType:  tx.aidCategory || tx.activityType || "",
+        subType:  tx.aidCategory || tx.activityType || tx.bankChargeCategory || "",
         party:    tx.party || tx.employeeName || "—",
-        notes:    tx.notes || tx.activityName || (tx.type === "advance" ? "صرف عهدة" : tx.type === "activity" ? "شيك نشاط" : ""),
-        checkNum: tx.checkNum || "—",
+        notes:    tx.type === "bank_charge"
+          ? [tx.notes, tx.bankReference ? `مرجع: ${tx.bankReference}` : ""].filter(Boolean).join(" - ") || tx.bankChargeCategory || "خصم بنكي مباشر"
+          : tx.notes || tx.activityName || (tx.type === "advance" ? "صرف عهدة" : tx.type === "activity" ? "شيك نشاط" : ""),
+        checkNum: tx.checkNum || tx.bankReference || (tx.type === "bank_charge" ? "خصم مباشر" : "—"),
         credit:   isCredit(tx.type) ? amt : 0,
         debit:    !isCredit(tx.type) ? amt : 0,
       });
@@ -199,7 +203,7 @@ function TreasuryLedgerInner() {
         const matchType =
           filterType === "all" ||
           (filterType === "deposit"  && ["deposit", "refund", "subs"].includes(e.type)) ||
-          (filterType === "expense"  && e.type === "aid") ||
+          (filterType === "expense"  && ["aid", "bank_charge"].includes(e.type)) ||
           (filterType === "activity" && e.type === "activity") ||
           (filterType === "advance"  && e.type === "advance");
 

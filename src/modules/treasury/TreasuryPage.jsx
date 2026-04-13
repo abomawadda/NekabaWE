@@ -1,8 +1,4 @@
-// 02) TreasuryPage.jsx
-// نسخة مصححة ومثبتة لمنع أخطاء الاستيراد والتشغيل
-// ✅ تعديل: عدم الانتقال للشاشة الرئيسية عند إضافة سند جديد
-
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+﻿import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useTreasuryService } from "./services/treasuryService";
@@ -27,6 +23,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Star,
+  Landmark,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
@@ -34,9 +31,10 @@ import clsx from "clsx";
 
 const TYPE_LABELS = {
   deposit: "إيداع",
-  aid: "إعانة",
-  advance: "سلفة",
-  activity: "دعم فاعلية",
+  aid: "مصروف",
+  advance: "سلفة / عهدة",
+  activity: "نشاط",
+  bank_charge: "خصم بنكي مباشر",
 };
 
 const TYPE_ICONS = {
@@ -44,6 +42,7 @@ const TYPE_ICONS = {
   aid: <ArrowUpRight size={14} className="text-sky-500" />,
   advance: <ArrowUpRight size={14} className="text-purple-500" />,
   activity: <Star size={14} className="text-amber-500" />,
+  bank_charge: <Landmark size={14} className="text-slate-500" />,
 };
 
 const OPENING_BALANCE = 42685.79;
@@ -54,6 +53,19 @@ const COLOR_STYLES = {
   teal: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
   amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
 };
+
+const getCheckSortValue = (value) => {
+  const normalized = String(value || "").replace(/[\u0660-\u0669]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && normalized !== "" ? parsed : Number.MAX_SAFE_INTEGER;
+};
+
+const getTxDetails = (tx) => {
+  const parts = [tx.notes, tx.bankChargeCategory, tx.bankReference ? `مرجع: ${tx.bankReference}` : ""].filter(Boolean);
+  return parts.join(" - ") || "—";
+};
+
+const getTxCheckRef = (tx) => tx.checkNum || tx.bankReference || (tx.type === "bank_charge" ? "خصم مباشر" : "—");
 
 function StatCard({ label, value, icon: Icon, color, sub }) {
   const T = useT();
@@ -106,11 +118,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   }, [location.search, selectedTx]);
 
   useEffect(() => {
-    const qRef = query(
-      collection(db, "transactions"),
-      orderBy("date", "asc"),
-      orderBy("checkNum", "asc")
-    );
+    const qRef = query(collection(db, "transactions"), orderBy("date", "asc"), orderBy("checkNum", "asc"));
     const unsub = onSnapshot(qRef, (snap) => {
       setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
@@ -149,25 +157,32 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   }, [transactions]);
 
   const visible = useMemo(() => {
+    const queryText = searchQ.trim().toLowerCase();
+
     return transactions
       .filter((t) => filterType === "all" || t.type === filterType)
       .filter((t) => filterState === "all" || (t.state || "posted") === filterState)
       .filter((t) => {
-        if (!searchQ) return true;
-        const q = searchQ.trim();
-        return (
-          t.party?.includes(q) ||
-          t.notes?.includes(q) ||
-          String(t.checkNum || "").includes(q)
-        );
+        if (!queryText) return true;
+        return [
+          t.party,
+          t.notes,
+          t.checkNum,
+          t.bankReference,
+          t.bankChargeCategory,
+          getTxDetails(t),
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(queryText));
       })
       .sort((a, b) => {
         const byDate = String(a.date || "").localeCompare(String(b.date || ""));
         if (byDate !== 0) return byDate;
 
-        const aCheck = Number(a.checkNum || Number.MAX_SAFE_INTEGER);
-        const bCheck = Number(b.checkNum || Number.MAX_SAFE_INTEGER);
-        return aCheck - bCheck;
+        const byCheck = getCheckSortValue(getTxCheckRef(a)) - getCheckSortValue(getTxCheckRef(b));
+        if (byCheck !== 0) return byCheck;
+
+        return String(getTxCheckRef(a)).localeCompare(String(getTxCheckRef(b)), "ar");
       });
   }, [transactions, filterType, filterState, searchQ]);
 
@@ -177,26 +192,19 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
     navigate("/treasury/admin", { replace: true });
   }, [navigate]);
 
-  // ✅ تعديل مهم: عدم إغلاق النموذج عند إضافة سند جديد
   const handleSave = async (data, isEdit) => {
     try {
       await saveTransaction(data);
-      showToast(isEdit ? "تم تحديث بيانات السند بنجاح ✓" : "تم إصدار السند وترحيله بنجاح ✓");
-      
-      // الفرق هنا:
+      showToast(isEdit ? "تم تحديث السند بنجاح" : "تم حفظ السند بنجاح");
+
       if (isEdit) {
-        // عند التعديل: إغلاق النموذج والعودة للقائمة
         handleCloseForm();
       } else {
-        // عند الإضافة الجديدة: عدم إغلاق النموذج
-        // TreasuryForm سيقوم بتفريغ المحتوى تلقائياً
         setSelectedTx(null);
-        // الآن showForm سيبقى true والنموذج سيبقى مفتوح
       }
-
     } catch (error) {
       console.error(error);
-      showToast("حدث خطأ أثناء الحفظ، يرجى المحاولة مجدداً", "error");
+      showToast("حدث خطأ أثناء الحفظ، يرجى المحاولة مرة أخرى", "error");
       throw error;
     }
   };
@@ -219,7 +227,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   };
 
   if (loading) {
-    return <div className="text-center p-20 text-slate-400 font-bold animate-pulse">⏳ جاري تحميل السجلات المالية...</div>;
+    return <div className="text-center p-20 text-slate-400 font-bold animate-pulse">جارٍ تحميل السجلات المالية...</div>;
   }
 
   return (
@@ -243,7 +251,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
               <X size={16} />
             </button>
             <h2 className="text-sm font-black flex items-center gap-2 mb-4">
-              <FileText size={16} className="text-teal-600" /> مرفقات السند ({viewAttachments.length})
+              <FileText size={16} className="text-teal-600" /> المرفقات ({viewAttachments.length})
             </h2>
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
               {viewAttachments.map((file, i) => (
@@ -271,7 +279,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
               <div className="p-2 bg-rose-100 rounded-xl"><AlertTriangle size={20} /></div>
               <div>
                 <h2 className="text-base font-black">تأكيد الحذف</h2>
-                <p className="text-[11px] font-bold text-slate-400 mt-1">لا يمكن التراجع عن هذا الإجراء</p>
+                <p className="text-[11px] font-bold text-slate-400 mt-1">لن يمكن التراجع عن هذا الإجراء بعد التنفيذ</p>
               </div>
             </div>
             <p className="text-sm font-bold text-slate-600">
@@ -302,21 +310,24 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
         <>
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl font-black">إدارة الخزينة والسندات</h1>
-              <p className={clsx("text-xs font-bold mt-1", T.muted)}>متابعة الإيداعات والمصروفات والسلف ودعم الفعاليات</p>
+              <h1 className="text-xl font-black">إدارة خزينة السندات</h1>
+              <p className={clsx("text-xs font-bold mt-1", T.muted)}>إضافة وتعديل ومتابعة الإيداعات والمصروفات والسلف والخصومات البنكية المباشرة</p>
             </div>
             <div className="flex gap-2 flex-wrap">
               <button onClick={() => navigate("/treasury/admin?type=deposit")} className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-2 hover:bg-emerald-700">
                 <Plus size={14} /> إضافة إيداع
               </button>
               <button onClick={() => navigate("/treasury/admin?type=aid")} className="px-4 py-2.5 rounded-xl bg-sky-600 text-white text-xs font-black flex items-center gap-2 hover:bg-sky-700">
-                <Plus size={14} /> صرف إعانة
+                <Plus size={14} /> صرف مصروف
               </button>
               <button onClick={() => navigate("/treasury/admin?type=advance")} className="px-4 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-black flex items-center gap-2 hover:bg-purple-700">
                 <Plus size={14} /> سلفة / عهدة
               </button>
               <button onClick={() => navigate("/treasury/admin?type=activity")} className="px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black flex items-center gap-2 hover:bg-amber-700">
-                <Star size={14} /> دعم فاعلية
+                <Star size={14} /> دعم نشاط
+              </button>
+              <button onClick={() => navigate("/treasury/admin?type=bank_charge")} className="px-4 py-2.5 rounded-xl bg-slate-700 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-800">
+                <Landmark size={14} /> خصم بنكي مباشر
               </button>
             </div>
           </div>
@@ -325,7 +336,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
             <StatCard label="إجمالي الوارد" value={`${totalIn.toLocaleString()} ج.م`} icon={TrendingUp} color="emerald" />
             <StatCard label="إجمالي المنصرف" value={`${totalOut.toLocaleString()} ج.م`} icon={TrendingDown} color="rose" />
             <StatCard label="رصيد الخزينة" value={`${balance.toLocaleString()} ج.م`} icon={Wallet} color="teal" sub={`رصيد افتتاحي ${OPENING_BALANCE.toLocaleString()} ج.م`} />
-            <StatCard label="بانتظار التسوية" value={`${openAdvances}`} icon={RefreshCw} color="amber" sub="سلف وأنشطة مفتوحة" />
+            <StatCard label="العهد المفتوحة" value={`${openAdvances}`} icon={RefreshCw} color="amber" sub="سلف وأنشطة لم تتم تسويتها بعد" />
           </div>
 
           <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
@@ -335,7 +346,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                 <input
                   value={searchQ}
                   onChange={(e) => setSearchQ(e.target.value)}
-                  placeholder="بحث بالجهة أو البيان أو رقم الشيك"
+                  placeholder="بحث بالجهة أو البيان أو رقم الشيك أو المرجع البنكي"
                   className={clsx("w-full pr-9 pl-3 py-2.5 rounded-xl border text-xs font-bold", T.inp)}
                 />
               </div>
@@ -343,9 +354,10 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
               <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={clsx("px-3 py-2.5 rounded-xl border text-xs font-bold", T.sel)}>
                 <option value="all">كل الأنواع</option>
                 <option value="deposit">إيداع</option>
-                <option value="aid">إعانة</option>
+                <option value="aid">مصروف</option>
                 <option value="advance">سلفة</option>
-                <option value="activity">دعم فاعلية</option>
+                <option value="activity">نشاط</option>
+                <option value="bank_charge">خصم بنكي مباشر</option>
               </select>
 
               <select value={filterState} onChange={(e) => setFilterState(e.target.value)} className={clsx("px-3 py-2.5 rounded-xl border text-xs font-bold", T.sel)}>
@@ -366,7 +378,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                     <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">النوع</th>
                     <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">الجهة / البيان</th>
                     <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">القيمة</th>
-                    <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">رقم الشيك</th>
+                    <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">رقم الشيك / المرجع</th>
                     <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">الحالة</th>
                     <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">المرفقات</th>
                     <th className="py-3 px-4 text-left text-[10px] font-black text-slate-500">إجراءات</th>
@@ -384,15 +396,15 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                       </td>
                       <td className="py-3 px-4">
                         <div className="text-xs font-black">{tx.party || "—"}</div>
-                        <div className="text-[10px] font-bold text-slate-400 mt-0.5">{tx.notes || "—"}</div>
+                        <div className="text-[10px] font-bold text-slate-400 mt-0.5">{getTxDetails(tx)}</div>
                       </td>
                       <td className="py-3 px-4 text-center font-black text-sm">
                         <span className={clsx(tx.type === "deposit" ? "text-emerald-600" : "text-rose-600")}>
-                          {tx.type === "deposit" ? "+" : "−"}
+                          {tx.type === "deposit" ? "+" : "-"}
                           {Number(tx.amount || 0).toLocaleString()}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-center text-[10px] font-bold text-slate-400">{tx.checkNum || "—"}</td>
+                      <td className="py-3 px-4 text-center text-[10px] font-bold text-slate-400">{getTxCheckRef(tx)}</td>
                       <td className="py-3 px-4 text-center">
                         <span className={clsx("text-[9px] px-2 py-0.5 rounded-full font-black border inline-block", tx.state === "posted" ? "bg-teal-500/10 text-teal-600 border-teal-500/20" : tx.state === "draft" ? "bg-amber-500/10 text-amber-600 border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20")}>
                           {WORKFLOW_LABELS[tx.state] || tx.state || "مرحل"}
@@ -427,7 +439,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                       <td className="py-2 px-4 text-center font-black text-sm">
                         <span className="text-emerald-600">+{visible.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount || 0), 0).toLocaleString()}</span>
                         {" / "}
-                        <span className="text-rose-600">−{visible.filter((t) => t.type !== "deposit").reduce((s, t) => s + Number(t.amount || 0), 0).toLocaleString()}</span>
+                        <span className="text-rose-600">-{visible.filter((t) => t.type !== "deposit").reduce((s, t) => s + Number(t.amount || 0), 0).toLocaleString()}</span>
                       </td>
                       <td colSpan={4} />
                     </tr>

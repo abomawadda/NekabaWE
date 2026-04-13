@@ -18,6 +18,7 @@ import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { BOARD_MEMBERSHIP_ROLES } from "../../utils/memberBenefits";
 import {
   CalendarDays, Plus, Users, Ticket, CheckCircle2, AlertCircle,
   Clock, X, Save, Tent, ShieldAlert, Edit, Trash2, CalendarClock,
@@ -27,14 +28,13 @@ import {
 import clsx from "clsx";
 
 const EVENT_TYPES = ["رحلة ترفيهية", "رحلة تثقيفية", "حفل إفطار", "مسابقة ثقافية", "مؤتمر/ندوة", "نشاط رياضي", "احتفالية", "أخرى"];
-const BOARD_ROLES = ["رئيس المجلس", "النقيب العام", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة", "عضو مجلس", "نائب الرئيس"];
 const getTodayISO = () => new Date().toISOString().split("T")[0];
 
 const INITIAL_FORM = {
   title: "", type: EVENT_TYPES[0], date: getTodayISO(),
   bookingStart: getTodayISO(), bookingEnd: getTodayISO(),
   location: "", description: "", capacity: "", isFree: false,
-  memberPrice: "", companionPrice: "", supervisors: [], notes: ""
+  memberPrice: "", companionPrice: "", memberSupportValue: "", supervisors: [], notes: ""
 };
 
 // ── أدوات مساعدة ──
@@ -75,7 +75,7 @@ const printFinancialReport = (events, bookingsMap) => {
         <td style="text-align:center">${pax}</td><td style="text-align:center">${bks.length}</td>
         <td style="text-align:center">${occ}%</td>
         <td style="text-align:center; font-weight:900; color:${rev > 0 ? '#059669' : '#64748b'}">${rev.toLocaleString()} ج</td>
-        <td style="text-align:center">${ev.isFree ? "مجاني" : `${Number(ev.memberPrice || 0)} / ${Number(ev.companionPrice || 0)}`}</td>
+        <td style="text-align:center">${ev.isFree ? "مجاني" : `${Number(ev.memberPrice || 0)} / ${Number(ev.companionPrice || 0)} / دعم ${Number(ev.memberSupportValue || 0)}`}</td>
       </tr>`;
   }).join("");
 
@@ -100,7 +100,7 @@ const printFinancialReport = (events, bookingsMap) => {
     <div class="kpi"><div class="val">${totalPax.toLocaleString()}</div><div>إجمالي الأفراد</div></div>
     <div class="kpi"><div class="val" style="color:#059669">${totalRevenue.toLocaleString()} ج</div><div>إجمالي الإيرادات</div></div>
   </div>
-  <table><thead><tr><th>الفعالية</th><th>النوع</th><th>التاريخ</th><th>السعة</th><th>الأفراد</th><th>الحجوزات</th><th>الإشغال</th><th>الإيراد</th><th>سعر العضو/المرافق</th></tr></thead>
+  <table><thead><tr><th>الفعالية</th><th>النوع</th><th>التاريخ</th><th>السعة</th><th>الأفراد</th><th>الحجوزات</th><th>الإشغال</th><th>الإيراد</th><th>سعر العضو/المرافق/الدعم</th></tr></thead>
   <tbody>${rows}</tbody><tfoot><tr><td colspan="4" style="text-align:center">الإجماليات</td><td style="text-align:center">${totalPax.toLocaleString()}</td><td style="text-align:center">${totalBookings.toLocaleString()}</td><td style="text-align:center">—</td><td style="text-align:center; color:#059669">${totalRevenue.toLocaleString()} ج.م</td><td>—</td></tr></tfoot></table>
   <div style="display:flex; justify-content:space-between; font-weight:bold;"><span>تقرير آلي</span><span>توقيع المسؤول: ................................</span></div>
   <script>window.onload=()=>setTimeout(()=>window.print(),500);</script></body></html>`);
@@ -180,18 +180,19 @@ export default function EventsMaster() {
     return () => unsubs.forEach(u => u());
   }, [events]);
 
-  const boardMembers = useMemo(() => employees.filter(e => BOARD_ROLES.includes(e.membershipStatus)), [employees]);
+  const boardMembers = useMemo(() => employees.filter(e => BOARD_MEMBERSHIP_ROLES.includes(e.membershipStatus)), [employees]);
 
   const stats = useMemo(() => {
     const today = getTodayISO();
-    let upcoming = 0, completed = 0, totalPax = 0, totalRevenue = 0;
+    let upcoming = 0, completed = 0, openCount = 0, totalPax = 0, totalRevenue = 0;
     events.forEach(ev => {
       const bks = (bookingsMap[ev.id] || []).filter(b => b.status === "confirmed");
       totalRevenue += bks.reduce((s, b) => s + Number(b.totalCost || 0), 0);
       totalPax += bks.reduce((s, b) => s + Number(b.totalPax || 1), 0);
       if (ev.date >= today) upcoming++; else completed++;
+      if (today >= ev.bookingStart && today <= ev.bookingEnd && Number(ev.bookedCount || 0) < Number(ev.capacity || 1)) openCount++;
     });
-    return { total: events.length, upcoming, completed, totalPax, totalRevenue };
+    return { total: events.length, upcoming, completed, openCount, totalPax, totalRevenue };
   }, [events, bookingsMap]);
 
   const displayedEvents = useMemo(() => {
@@ -214,6 +215,7 @@ export default function EventsMaster() {
         capacity: Number(formData.capacity), isFree: formData.isFree,
         memberPrice: formData.isFree ? 0 : Number(formData.memberPrice),
         companionPrice: formData.isFree ? 0 : Number(formData.companionPrice),
+        memberSupportValue: formData.isFree ? 0 : Number(formData.memberSupportValue || 0),
         supervisors: formData.supervisors || [], updatedAt: serverTimestamp()
       };
 
@@ -293,6 +295,24 @@ export default function EventsMaster() {
                     <><FormField label="سعر العضو (ج.م)" required><input type="number" min="0" value={formData.memberPrice} onChange={e => setField("memberPrice", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 bg-white dark:bg-slate-900", T.inp)} /></FormField><FormField label="سعر المرافق (ج.م)" required><input type="number" min="0" value={formData.companionPrice} onChange={e => setField("companionPrice", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 bg-white dark:bg-slate-900", T.inp)} /></FormField></>
                   )}
                 </div>
+                {!formData.isFree && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <FormField label="قيمة الدعم الخاص بالعضو">
+                      <input
+                        type="number"
+                        min="0"
+                        value={formData.memberSupportValue}
+                        onChange={e => setField("memberSupportValue", e.target.value)}
+                        className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 bg-white dark:bg-slate-900", T.inp)}
+                      />
+                    </FormField>
+                    <div className="rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-white/80 dark:bg-slate-900/50 px-4 py-3">
+                      <p className="text-[10px] font-black text-slate-400">قيمة الدعم الخاص بالعضو</p>
+                      <p className="text-lg font-black text-emerald-600">{Number(formData.memberSupportValue || 0).toLocaleString()} ج.م</p>
+                      <p className="text-[10px] font-bold text-slate-500 mt-1">تُسجل كمزية عضوية مستقلة عن بدلات المجلس.</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {boardMembers.length > 0 && (
@@ -406,8 +426,9 @@ export default function EventsMaster() {
                   </div>
 
                   {!event.isFree ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className={clsx("p-2 rounded-xl text-center border", "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700")}><p className="text-[8px] font-black text-slate-400 uppercase">سعر العضو</p><p className="text-xs font-black text-indigo-600">{Number(event.memberPrice || 0).toLocaleString()} ج</p></div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className={clsx("p-2 rounded-xl text-center border", "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700")}><p className="text-[8px] font-black text-slate-400 uppercase">قيمة الاشتراك على العضو</p><p className="text-xs font-black text-indigo-600">{Number(event.memberPrice || 0).toLocaleString()} ج</p></div>
+                      <div className={clsx("p-2 rounded-xl text-center border", "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-900")}><p className="text-[8px] font-black text-emerald-600 uppercase">قيمة الدعم الخاص بالعضو</p><p className="text-xs font-black text-emerald-700 dark:text-emerald-300">{Number(event.memberSupportValue || 0).toLocaleString()} ج</p></div>
                       <div className={clsx("p-2 rounded-xl text-center border", "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700")}><p className="text-[8px] font-black text-slate-400 uppercase">سعر المرافق</p><p className="text-xs font-black text-slate-700 dark:text-slate-300">{Number(event.companionPrice || 0).toLocaleString()} ج</p></div>
                     </div>
                   ) : <div className="bg-emerald-50 dark:bg-emerald-900/20 p-2 rounded-xl text-center text-emerald-600 border border-emerald-100 dark:border-emerald-900"><p className="text-xs font-black">✓ فعالية مجانية</p></div>}

@@ -11,12 +11,20 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   collection, query, onSnapshot, doc, writeBatch,
-  serverTimestamp, where, updateDoc
+  serverTimestamp, where, updateDoc, getDocs
 } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import {
+  BOARD_MEMBERSHIP_ROLES,
+  createBenefitLabel,
+  isBoardMember,
+  isEligibleForBenefit,
+  isIndependentMember,
+  sortMembersByAgeThenJobId,
+} from "../../utils/memberBenefits";
 import {
   Ticket, Users, CheckCircle2, AlertCircle, Search,
   CreditCard, Printer, Copy, X, Banknote, Smartphone, Receipt,
@@ -26,8 +34,8 @@ import {
 import clsx from "clsx";
 
 const getTodayISO = () => new Date().toISOString().split("T")[0];
-const BOARD_ROLES = ["رئيس المجلس", "النقيب العام", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة", "عضو مجلس", "نائب الرئيس"];
 const PENDING_TIMEOUT_DAYS = 3;
+const MANUAL_BENEFIT_TYPES = ["جائزة مسابقة", "خدمة عينية", "ميزة تنظيمية", "إعفاء", "دعم إضافي"];
 
 // ── تحليل الرقم القومي ──
 const parseNationalID = (nid) => {
@@ -115,6 +123,8 @@ export default function EventBookings() {
   const [paymentDate, setPaymentDate] = useState(getTodayISO());
   const [payments, setPayments] = useState({ cash: "", wallet: "", instapay: "", installment: "" });
   const [cancelModal, setCancelModal] = useState(null);
+  const [benefitModal, setBenefitModal] = useState(null);
+  const [benefitForm, setBenefitForm] = useState({ type: "جائزة مسابقة", amount: "", notes: "" });
 
   // فلاتر
   const [statusFilter, setStatusFilter] = useState("all");
@@ -151,7 +161,8 @@ export default function EventBookings() {
   }, [selectedEventId]);
 
   const activeEvent = useMemo(() => events.find(e => e.id === selectedEventId) || null, [events, selectedEventId]);
-  const isBoardMember = useMemo(() => selectedMember && BOARD_ROLES.includes(selectedMember.membershipStatus), [selectedMember]);
+  const memberIsBoard = useMemo(() => isBoardMember(selectedMember), [selectedMember]);
+  const isIndependentSelected = useMemo(() => isIndependentMember(selectedMember), [selectedMember]);
 
   useEffect(() => { setBoardDiscount("0"); setCompanionsList([]); setPayments({ cash: "", wallet: "", instapay: "", installment: "" }); }, [selectedMember]);
 
@@ -171,17 +182,21 @@ export default function EventBookings() {
 
   const memberBasePrice = activeEvent?.isFree ? 0 : Number(activeEvent?.memberPrice || 0);
   const companionBasePrice = activeEvent?.isFree ? 0 : Number(activeEvent?.companionPrice || 0);
+  const memberSupportValue = useMemo(() => {
+    if (!selectedMember || !activeEvent || activeEvent.isFree || !isEligibleForBenefit(selectedMember)) return 0;
+    return Number(activeEvent.memberSupportValue || 0);
+  }, [selectedMember, activeEvent]);
 
   const { memberCost, companionsCost, totalCost } = useMemo(() => {
     if (!activeEvent || !selectedMember) return { memberCost: 0, companionsCost: 0, totalCost: 0 };
     let mCost = memberBasePrice;
-    if (isBoardMember && !activeEvent.isFree) {
+    if (memberIsBoard && !activeEvent.isFree) {
       if (boardDiscount === "50") mCost = memberBasePrice * 0.5;
       if (boardDiscount === "100") mCost = 0;
     }
     const cCost = companionBasePrice * companionsList.length;
     return { memberCost: mCost, companionsCost: cCost, totalCost: mCost + cCost };
-  }, [activeEvent, selectedMember, companionsList, isBoardMember, boardDiscount, memberBasePrice, companionBasePrice]);
+  }, [activeEvent, selectedMember, companionsList, memberIsBoard, boardDiscount, memberBasePrice, companionBasePrice]);
 
   const totalPaidInput = Number(payments.cash || 0) + Number(payments.wallet || 0) + Number(payments.instapay || 0) + Number(payments.installment || 0);
   const remainingToPay = totalCost - totalPaidInput;
@@ -198,8 +213,67 @@ export default function EventBookings() {
     if (!searchQ || searchQ.length < 2) return [];
     const q = searchQ.toLowerCase();
     const bookedMemberIds = new Set(bookings.filter(b => b.status !== "cancelled").map(b => b.memberId?.toString()));
-    return members.filter(m => !bookedMemberIds.has(m.jobId?.toString()) && (m.name?.toLowerCase().includes(q) || m.jobId?.toString().includes(q))).slice(0, 5);
+    return sortMembersByAgeThenJobId(
+      members.filter(m => !bookedMemberIds.has(m.jobId?.toString()) && (m.name?.toLowerCase().includes(q) || m.jobId?.toString().includes(q)))
+    ).slice(0, 5);
   }, [searchQ, members, bookings]);
+
+  const buildBenefitPayload = useCallback((booking, benefitType, amount, notes = "") => ({
+    memberId: booking.memberId,
+    memberName: booking.memberName,
+    membershipStatus: selectedMember?.membershipStatus || booking.membershipStatus || "",
+    date: getTodayISO(),
+    benefitType,
+    amount: Number(amount || 0),
+    notes,
+    eventId: activeEvent?.id || booking.eventId,
+    eventTitle: activeEvent?.title || booking.eventTitle,
+    bookingId: booking.id,
+    source: "activity_booking",
+    status: "active",
+    displayLabel: createBenefitLabel({ benefitType, eventTitle: activeEvent?.title || booking.eventTitle, notes }),
+    createdAt: serverTimestamp(),
+  }), [activeEvent, selectedMember]);
+
+  const closeBenefitModal = () => {
+    setBenefitModal(null);
+    setBenefitForm({ type: "جائزة مسابقة", amount: "", notes: "" });
+  };
+
+  const saveManualBenefit = async () => {
+    if (!benefitModal) return;
+    if (isIndependentMember({ membershipStatus: benefitModal.membershipStatus })) {
+      showToast("عضو النقابة المستقلة لا يستحق دعماً أو ميزة.", "error");
+      return;
+    }
+
+    try {
+      const benefitRef = doc(collection(db, "member_benefits"));
+      const batch = writeBatch(db);
+      batch.set(benefitRef, {
+        memberId: benefitModal.memberId,
+        memberName: benefitModal.memberName,
+        membershipStatus: benefitModal.membershipStatus || "",
+        date: getTodayISO(),
+        benefitType: benefitForm.type,
+        amount: Number(benefitForm.amount || 0),
+        notes: benefitForm.notes || "",
+        eventId: benefitModal.eventId,
+        eventTitle: benefitModal.eventTitle,
+        bookingId: benefitModal.id,
+        source: "manual_activity_benefit",
+        status: "active",
+        displayLabel: createBenefitLabel({ benefitType: benefitForm.type, eventTitle: benefitModal.eventTitle, notes: benefitForm.notes }),
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+      showToast("تم تسجيل الميزة/الجائزة للعضو بنجاح");
+      closeBenefitModal();
+    } catch (error) {
+      console.error(error);
+      showToast("تعذر حفظ الميزة أو الجائزة", "error");
+    }
+  };
 
   // ── تسجيل الحجز ──
   const handleConfirmBooking = async (isPending = false) => {
@@ -232,9 +306,11 @@ export default function EventBookings() {
       batch.set(bookingRef, {
         eventId: activeEvent.id, eventTitle: activeEvent.title,
         memberId: selectedMember.jobId, memberName: selectedMember.name, memberPhone: selectedMember.phone || "",
+        membershipStatus: selectedMember.membershipStatus || "",
         companionsList: companionsList.map(({ id, parsedInfo, ...rest }) => rest),
         totalPax: requestedPax, totalCost: totalCost,
         isFree: activeEvent.isFree, boardDiscountType: boardDiscount,
+        memberSupportValue: memberSupportValue,
         status: isPending ? "pending" : "confirmed",
         payments: isPending ? {} : payments,
         paymentDate: isPending ? null : paymentDate,
@@ -242,12 +318,43 @@ export default function EventBookings() {
         createdAt: serverTimestamp()
       });
 
-      if (isBoardMember && boardDiscount !== "0" && !activeEvent.isFree && !isPending) {
+      if (!isPending && memberSupportValue > 0 && isEligibleForBenefit(selectedMember)) {
+        batch.set(doc(collection(db, "member_benefits")), {
+          memberId: selectedMember.jobId,
+          memberName: selectedMember.name,
+          membershipStatus: selectedMember.membershipStatus || "",
+          date: getTodayISO(),
+          benefitType: "دعم فعالية",
+          amount: Number(memberSupportValue || 0),
+          notes: "دعم معتمد على مستوى العضو داخل الفعالية",
+          eventId: activeEvent.id,
+          eventTitle: activeEvent.title,
+          bookingId: bookingRef.id,
+          source: "activity_support",
+          status: "active",
+          displayLabel: createBenefitLabel({ benefitType: "دعم فعالية", eventTitle: activeEvent.title }),
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      if (memberIsBoard && boardDiscount !== "0" && !activeEvent.isFree && !isPending) {
         const rewardAmount = memberBasePrice - memberCost;
         if (rewardAmount > 0) {
-          batch.set(doc(collection(db, "board_rewards")), {
-            memberId: selectedMember.jobId, memberName: selectedMember.name, eventId: activeEvent.id,
-            date: getTodayISO(), type: "مكافأة عينية - خصم فعالية", rewardValue: rewardAmount, createdAt: serverTimestamp()
+          batch.set(doc(collection(db, "member_benefits")), {
+            memberId: selectedMember.jobId,
+            memberName: selectedMember.name,
+            membershipStatus: selectedMember.membershipStatus || "",
+            eventId: activeEvent.id,
+            eventTitle: activeEvent.title,
+            bookingId: bookingRef.id,
+            date: getTodayISO(),
+            benefitType: boardDiscount === "100" ? "إعفاء إشراف فعالية" : "خصم إشراف فعالية",
+            amount: rewardAmount,
+            notes: boardDiscount === "100" ? "إعفاء كامل للعضو القائم بالإشراف" : "خصم إشراف جزئي للعضو القائم بالإشراف",
+            source: "board_supervision_discount",
+            status: "active",
+            displayLabel: createBenefitLabel({ benefitType: boardDiscount === "100" ? "إعفاء إشراف فعالية" : "خصم إشراف فعالية", eventTitle: activeEvent.title }),
+            createdAt: serverTimestamp()
           });
         }
       }
@@ -270,6 +377,16 @@ export default function EventBookings() {
       if (booking.status === "confirmed") {
         batch.update(doc(db, "events", activeEvent.id), { bookedCount: Math.max(0, confirmedPax - Number(booking.totalPax || 1)), updatedAt: serverTimestamp() });
       }
+
+      const benefitsSnap = await getDocs(query(collection(db, "member_benefits"), where("bookingId", "==", booking.id)));
+      benefitsSnap.forEach((benefitDoc) => {
+        batch.update(doc(db, "member_benefits", benefitDoc.id), {
+          status: "cancelled",
+          cancelledAt: serverTimestamp(),
+          cancelReason: isTimeout ? "انتهاء المهلة الآلية" : "إلغاء الحجز",
+        });
+      });
+
       await batch.commit();
       showToast(isTimeout ? "تم الاستبعاد وإرجاع المقاعد" : "تم الإلغاء واعتذار العضو", "success");
       setCancelModal(null);
@@ -279,8 +396,52 @@ export default function EventBookings() {
   const handleConfirmPending = async (booking) => {
     if (!window.confirm(`تأكيد حجز "${booking.memberName}"؟`)) return;
     try {
-      await updateDoc(doc(db, "event_bookings", booking.id), { status: "confirmed", confirmedAt: serverTimestamp(), paymentSummary: "مؤكد يدوياً" });
-      await updateDoc(doc(db, "events", activeEvent.id), { bookedCount: confirmedPax + Number(booking.totalPax || 1) });
+      const batch = writeBatch(db);
+      batch.update(doc(db, "event_bookings", booking.id), { status: "confirmed", confirmedAt: serverTimestamp(), paymentSummary: "مؤكد يدوياً" });
+      batch.update(doc(db, "events", activeEvent.id), { bookedCount: confirmedPax + Number(booking.totalPax || 1) });
+
+      if (Number(booking.memberSupportValue || 0) > 0 && !isIndependentMember({ membershipStatus: booking.membershipStatus })) {
+        batch.set(doc(collection(db, "member_benefits")), {
+          memberId: booking.memberId,
+          memberName: booking.memberName,
+          membershipStatus: booking.membershipStatus || "",
+          date: getTodayISO(),
+          benefitType: "دعم فعالية",
+          amount: Number(booking.memberSupportValue || 0),
+          notes: "دعم معتمد على مستوى العضو داخل الفعالية",
+          eventId: booking.eventId,
+          eventTitle: booking.eventTitle,
+          bookingId: booking.id,
+          source: "activity_support",
+          status: "active",
+          displayLabel: createBenefitLabel({ benefitType: "دعم فعالية", eventTitle: booking.eventTitle }),
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      if (BOARD_MEMBERSHIP_ROLES.includes(String(booking.membershipStatus || "").trim()) && !activeEvent.isFree && booking.boardDiscountType && booking.boardDiscountType !== "0") {
+        const rewardAmount = memberBasePrice - Number(booking.totalCost || 0) + (companionBasePrice * Number((booking.companionsList || []).length || 0));
+        if (rewardAmount > 0) {
+          batch.set(doc(collection(db, "member_benefits")), {
+            memberId: booking.memberId,
+            memberName: booking.memberName,
+            membershipStatus: booking.membershipStatus || "",
+            date: getTodayISO(),
+            benefitType: booking.boardDiscountType === "100" ? "إعفاء إشراف فعالية" : "خصم إشراف فعالية",
+            amount: rewardAmount,
+            notes: booking.boardDiscountType === "100" ? "إعفاء كامل للعضو القائم بالإشراف" : "خصم إشراف جزئي للعضو القائم بالإشراف",
+            eventId: booking.eventId,
+            eventTitle: booking.eventTitle,
+            bookingId: booking.id,
+            source: "board_supervision_discount",
+            status: "active",
+            displayLabel: createBenefitLabel({ benefitType: booking.boardDiscountType === "100" ? "إعفاء إشراف فعالية" : "خصم إشراف فعالية", eventTitle: booking.eventTitle }),
+            createdAt: serverTimestamp(),
+          });
+        }
+      }
+
+      await batch.commit();
       showToast("تم تأكيد الحجز");
     } catch (err) { showToast("خطأ في التأكيد", "error"); }
   };

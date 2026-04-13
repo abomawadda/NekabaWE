@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { collection, query, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
+import { sortMembersByAgeThenJobId } from "../../utils/memberBenefits";
 
 import { 
   UserPlus, Search, Eye, Edit3, Trash2, 
@@ -151,13 +152,15 @@ export default function EmployeeDashboard() {
   }, [employees]);
 
   const searchResults = useMemo(() => {
-    if (!searchQ.trim()) return employees;
+    if (!searchQ.trim()) return sortMembersByAgeThenJobId(employees);
     const lowerQ = searchQ.toLowerCase().trim();
-    return employees.filter(e => 
-      e.name?.toLowerCase().includes(lowerQ) || 
-      e.jobId?.toString().includes(lowerQ) || 
-      e.nationalId?.includes(lowerQ) ||
-      e.phone?.includes(lowerQ)
+    return sortMembersByAgeThenJobId(
+      employees.filter(e => 
+        e.name?.toLowerCase().includes(lowerQ) || 
+        e.jobId?.toString().includes(lowerQ) || 
+        e.nationalId?.includes(lowerQ) ||
+        e.phone?.includes(lowerQ)
+      )
     );
   }, [searchQ, employees]);
 
