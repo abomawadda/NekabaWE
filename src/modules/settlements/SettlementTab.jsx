@@ -15,6 +15,8 @@ import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { logAuditEvent } from "../../utils/auditLog";
+import { formatMoney } from "../../utils/numberFormat";
+import { openPrintWindow } from "../../utils/print";
 import { ReceiptText, Plus, Trash2, Printer, CheckCircle2, FileText, Tag, DollarSign, Wallet, History, Search, AlertCircle, Info, ShieldCheck, ArrowDownRight, X, Check, Users, Save, AlertTriangle, Loader2, Edit3, RotateCcw } from "lucide-react";
 import clsx from "clsx";
 
@@ -27,14 +29,15 @@ const getYearValue = (dateString = "") => (dateString || "").slice(0, 4);
 
 // ── دالة الطباعة المدمجة لمنع خطأ المتصفح ──
 const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBalance = 0, collectedSubs = 0, returnedActually }) => {
-  const win = window.open("", "_blank", "width=950,height=750");
+  const win = openPrintWindow("settlement-local", "width=950,height=750");
   if (!win) return;
 
   const ADV_AMT = Number(advanceTxn?.advanceAmountBase || advanceTxn?.amount || 0);
+  const SUBS_AMT = Number(collectedSubs || 0);
   const TOTAL_AVAILABLE = ADV_AMT + Number(prevBalance) + Number(collectedSubs);
 
   const rowsHtml = expenses?.length > 0 
-    ? expenses.map((e, i) => `<tr><td style="text-align:center">${i + 1}</td><td style="text-align:center">${e.date}</td><td style="color:#0f766e">${e.category}</td><td>${e.notes || "—"}</td><td style="text-align:left; font-weight:900">${Number(e.amount).toLocaleString()} ج.م</td></tr>`).join("")
+    ? expenses.map((e, i) => `<tr><td style="text-align:center">${i + 1}</td><td style="text-align:center">${e.date}</td><td style="color:#0f766e">${e.category}</td><td>${e.notes || "—"}</td><td style="text-align:left; font-weight:900">${formatMoney(e.amount)}</td></tr>`).join("")
     : `<tr><td colspan="5" style="text-align:center; padding:30px; color:#94a3b8;">لم يتم إدراج فواتير</td></tr>`;
 
   win.document.write(`
@@ -45,14 +48,14 @@ const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBala
       ${getPrintBrandHeader({ reportTitle: `كشف تسوية ${advanceTxn?.type === 'activity' ? 'فاعلية/نشاط' : 'عهدة مالية'}`, reportMeta: `تاريخ الاعتماد: ${advanceTxn?.settlementDate || '—'}` })}
       <div class="info-row">اسم مسؤول التسوية: <span style="font-size:20px; color:#0d9488; margin-right: 10px;">${advanceTxn?.employeeName || advanceTxn?.party || '—'}</span></div>
       <div class="stats-grid">
-        <div class="stat-box"> <div class="stat-label">قيمة الشيك المُنصرف</div> <div class="stat-value" style="color:#334155">${ADV_AMT.toLocaleString()}</div> </div>
-        <div class="stat-box"> <div class="stat-label">${advanceTxn?.type === 'activity' ? 'اشتراكات محصلة نقداً' : 'رصيد مرحل من قبل'}</div> <div class="stat-value" style="color:#d97706">${advanceTxn?.type === 'activity' ? SUBS_AMT.toLocaleString() : Number(prevBalance).toLocaleString()}</div> </div>
-        <div class="stat-box" style="background:#f0fdf4; border-color:#86efac"> <div class="stat-label" style="color:#15803d">إجمالي ميزانية التسوية</div> <div class="stat-value" style="color:#166534">${TOTAL_AVAILABLE.toLocaleString()}</div> </div>
-        <div class="stat-box" style="background:#fff1f2; border-color:#fda4af"> <div class="stat-label" style="color:#e11d48">المنصرف الفعلي بالفواتير</div> <div class="stat-value" style="color:#be123c">${spent.toLocaleString()}</div> </div>
+        <div class="stat-box"> <div class="stat-label">قيمة الشيك المُنصرف</div> <div class="stat-value" style="color:#334155">${formatMoney(ADV_AMT)}</div> </div>
+        <div class="stat-box"> <div class="stat-label">${advanceTxn?.type === 'activity' ? 'اشتراكات محصلة نقداً' : 'رصيد مرحل من قبل'}</div> <div class="stat-value" style="color:#d97706">${advanceTxn?.type === 'activity' ? formatMoney(SUBS_AMT) : formatMoney(prevBalance)}</div> </div>
+        <div class="stat-box" style="background:#f0fdf4; border-color:#86efac"> <div class="stat-label" style="color:#15803d">إجمالي ميزانية التسوية</div> <div class="stat-value" style="color:#166534">${formatMoney(TOTAL_AVAILABLE)}</div> </div>
+        <div class="stat-box" style="background:#fff1f2; border-color:#fda4af"> <div class="stat-label" style="color:#e11d48">المنصرف الفعلي بالفواتير</div> <div class="stat-value" style="color:#be123c">${formatMoney(spent)}</div> </div>
       </div>
       <h3 style="margin-bottom:10px; color:#334155; font-size: 14px;">بيان الفواتير والمصروفات المدرجة:</h3>
       <table><thead><tr><th style="width:40px; text-align:center;">م</th><th style="width:100px; text-align:center;">التاريخ</th><th style="width:150px;">التصنيف المحاسبي</th><th>البيان والملاحظات</th><th style="width:120px;">المبلغ</th></tr></thead><tbody>${rowsHtml}</tbody></table>
-      <div class="footer-note">الحالة النهائية للتسوية: ${remaining > 0 ? `يوجد مبلغ متبقٍ قدره (${remaining.toLocaleString()} ج.م) — ` + (returnedActually ? "تم توريده نقداً لخزينة النقابة بموجب إيصال." : "تم ترحيله كـ 'رصيد دائن' ليُخصم من السلفة القادمة.") : remaining < 0 ? `يوجد تجاوز في الصرف قدره (${Math.abs(remaining).toLocaleString()} ج.م) — يُصرف للموظف.` : `تم تسوية العهدة بالكامل (صفر).`}</div>
+      <div class="footer-note">الحالة النهائية للتسوية: ${remaining > 0 ? `يوجد مبلغ متبقٍ قدره (${formatMoney(remaining)}) — ` + (returnedActually ? "تم توريده نقداً لخزينة النقابة بموجب إيصال." : "تم ترحيله كـ 'رصيد دائن' ليُخصم من السلفة القادمة.") : remaining < 0 ? `يوجد تجاوز في الصرف قدره (${formatMoney(Math.abs(remaining))}) — يُصرف للموظف.` : `تم تسوية العهدة بالكامل (صفر).`}</div>
       <div class="sigs"><div class="sig-box">توقيع المسؤول<div class="sig-space"></div></div><div class="sig-box">المراجعة والرقابة<div class="sig-space"></div></div><div class="sig-box">يعتمد، أمين الصندوق<div class="sig-space"></div></div></div>
       <script>window.onload=()=>{setTimeout(()=>window.print(), 500);}</script>
     </body></html>
@@ -61,11 +64,11 @@ const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBala
 };
 
 function FinanceCard({ label, value, color, icon: Icon, isTotal }) {
-  const safeValue = Number(value || 0).toLocaleString();
+  const safeValue = formatMoney(value || 0);
   return (
     <div className={clsx("p-3 rounded-xl border flex flex-col justify-center transition-all", isTotal ? `bg-${color}-600 text-white border-${color}-700 shadow-md` : `bg-${color}-50 dark:bg-${color}-900/10 border-${color}-100 dark:border-${color}-800`)}>
       <div className="flex items-center gap-1.5 mb-1 opacity-90">{Icon && <Icon size={12} />}<p className="text-[9px] font-black uppercase tracking-widest">{label}</p></div>
-      <p className={clsx("text-lg font-black", !isTotal && `text-${color}-700 dark:text-${color}-400`)}>{safeValue} <span className="text-[9px] font-bold">ج.م</span></p>
+      <p className={clsx("text-lg font-black", !isTotal && `text-${color}-700 dark:text-${color}-400`)}>{safeValue}</p>
     </div>
   );
 }
@@ -250,7 +253,7 @@ export default function SettlementTab() {
 
   const addExpense = () => {
     if (!expAmt || Number(expAmt) <= 0) return showToast("أدخل مبلغاً صحيحاً", "error");
-    if (Number(expAmt) > remaining) return showToast(`تجاوزت المتاح! (${Number(remaining || 0).toLocaleString()} ج.م)`, "error");
+    if (Number(expAmt) > remaining) return showToast(`تجاوزت المتاح! (${formatMoney(remaining || 0)})`, "error");
     if (expCat === "بدل جلسات" && !selectedMeeting) return showToast("اختر الاجتماع أولاً", "error");
     if (["بدل انتقال", "بدل جلسات"].includes(expCat) && selectedMembers.length === 0) return showToast("اختر عضو مجلس واحد على الأقل", "error");
 
@@ -452,7 +455,7 @@ export default function SettlementTab() {
               <div><h2 className="font-black text-sm">حذف بند مصروف</h2><p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">إجراء غير قابل للتراجع</p></div>
             </div>
             <p className="text-xs font-bold leading-relaxed">
-              هل أنت متأكد من حذف فاتورة <span className="font-black text-teal-600">({expenseToDelete.category})</span> بقيمة <span className="font-black text-rose-600">{Number(expenseToDelete.amount || 0).toLocaleString()} ج.م</span> من كشف التسوية؟
+              هل أنت متأكد من حذف فاتورة <span className="font-black text-teal-600">({expenseToDelete.category})</span> بقيمة <span className="font-black text-rose-600">{formatMoney(expenseToDelete.amount || 0)}</span> من كشف التسوية؟
             </p>
             <div className="flex gap-2 pt-2">
               <button onClick={() => setExpenseToDelete(null)} className={clsx("flex-1 py-2.5 rounded-xl font-bold text-xs border shadow-sm", T.btn)}>إلغاء</button>
@@ -473,16 +476,16 @@ export default function SettlementTab() {
             </div>
             
             <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700"><p className="text-[9px] font-black text-slate-400 mb-1">المتاح الكلي</p><p className="text-xs font-black text-slate-700 dark:text-slate-300">{Number(confirmModalData.totalAvailable || 0).toLocaleString()}</p></div>
-              <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-800"><p className="text-[9px] font-black text-rose-400 mb-1">المصروف الفعلي</p><p className="text-xs font-black text-rose-600">{Number(confirmModalData.spent || 0).toLocaleString()}</p></div>
-              <div className="p-2 rounded-xl bg-teal-50 dark:bg-teal-900/20 border border-teal-100 dark:border-teal-800"><p className="text-[9px] font-black text-teal-500 mb-1">المتبقي النهائي</p><p className="text-xs font-black text-teal-600">{Number(confirmModalData.remaining || 0).toLocaleString()}</p></div>
+              <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700"><p className="text-[9px] font-black text-slate-400 mb-1">المتاح الكلي</p><p className="text-xs font-black text-slate-700 dark:text-slate-300">{formatMoney(confirmModalData.totalAvailable || 0)}</p></div>
+              <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-800"><p className="text-[9px] font-black text-rose-400 mb-1">المصروف الفعلي</p><p className="text-xs font-black text-rose-600">{formatMoney(confirmModalData.spent || 0)}</p></div>
+              <div className="p-2 rounded-xl bg-teal-50 dark:bg-teal-900/20 border border-teal-100 dark:border-teal-800"><p className="text-[9px] font-black text-teal-500 mb-1">المتبقي النهائي</p><p className="text-xs font-black text-teal-600">{formatMoney(confirmModalData.remaining || 0)}</p></div>
             </div>
 
             {confirmModalData.remaining > 0 && (
               <label className="flex items-start gap-2 p-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/20 cursor-pointer hover:bg-amber-100 transition-colors">
                 <input type="checkbox" checked={returnedActually} onChange={e => setReturnedActually(e.target.checked)} className="w-4 h-4 mt-0.5 accent-amber-600"/>
                 <div>
-                  <span className="text-amber-900 dark:text-amber-400 text-xs font-black block">تم توريد المتبقي ({Number(confirmModalData.remaining || 0).toLocaleString()} ج) نقدًا</span>
+                  <span className="text-amber-900 dark:text-amber-400 text-xs font-black block">تم توريد المتبقي ({formatMoney(confirmModalData.remaining || 0)}) نقدًا</span>
                   <span className="block text-[9px] font-bold text-amber-600 mt-1 leading-relaxed">عدم التفعيل يعني ترحيل المبلغ "كرصيد دائن" للسلفة القادمة.</span>
                 </div>
               </label>
@@ -521,7 +524,7 @@ export default function SettlementTab() {
                   <option value="">— السلف والأنشطة المفتوحة —</option>
                   {currentTxnOptions.map(a => (
                     <option key={a.id} value={a.id}>
-                      {a.party} {a.type === "activity" ? "(دعم نشاط)" : ""} — {a.date || "—"} — شيك: {a.checkNum || "—"} — {Number(a.amount).toLocaleString()} ج {a.isSettled ? "— [تعديل تسوية]" : ""}
+                      {a.party} {a.type === "activity" ? "(دعم نشاط)" : ""} — {a.date || "—"} — شيك: {a.checkNum ? formatMoney(a.checkNum) : "—"} — {formatMoney(a.amount)} {a.isSettled ? "— [تعديل تسوية]" : ""}
                     </option>
                   ))}
                 </select>
@@ -589,7 +592,7 @@ export default function SettlementTab() {
                   </select>
                   {selectedMeeting && (
                     <p className="text-[9px] font-black text-indigo-600 mt-1 flex gap-1 bg-indigo-100/50 dark:bg-indigo-900/50 p-1.5 rounded">
-                      <Info size={10} className="shrink-0"/> سيتم توزيع {Number(expAmt || 0).toLocaleString()} ج على {selectedMeeting.attendees?.length || 0} من الحاضرين
+                      <Info size={10} className="shrink-0"/> سيتم توزيع {formatMoney(expAmt || 0)} على {selectedMeeting.attendees?.length || 0} من الحاضرين
                     </p>
                   )}
                 </div>
@@ -620,7 +623,7 @@ export default function SettlementTab() {
                   </div>
                   {expAmt && selectedMembers.length > 0 && (
                     <p className="text-[9px] font-black text-indigo-600 mt-1 flex gap-1 bg-indigo-100/50 dark:bg-indigo-900/50 p-1.5 rounded">
-                      <Info size={10} className="shrink-0"/> {expCat}: نصيب العضو {(Number(expAmt) / selectedMembers.length).toFixed(2)} ج.م
+                      <Info size={10} className="shrink-0"/> {expCat}: نصيب العضو {formatMoney(Number(expAmt) / selectedMembers.length)}
                     </p>
                   )}
                 </div>
@@ -628,7 +631,7 @@ export default function SettlementTab() {
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-slate-400 uppercase pr-1">المبلغ (ج.م)</label>
+                  <label className="text-[9px] font-black text-slate-400 uppercase pr-1">المبلغ</label>
                   <input type="number" value={expAmt} onChange={e => setExpAmt(e.target.value)} placeholder={`المتاح: ${remaining}`} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 focus:border-amber-500 h-[38px]", T.inp, Number(expAmt) > remaining && "!border-rose-500 bg-rose-50/10")} />
                 </div>
                 <div className="space-y-1 relative z-[90]">
@@ -657,7 +660,7 @@ export default function SettlementTab() {
                 <div className="z-[100] w-32"><ArabicDatePicker value={settlementDate} onChange={setSettlementDate} maxVal={getTodayISO()} /></div>
                 <div className="text-left bg-rose-50 dark:bg-rose-900/20 px-3 py-1.5 rounded-xl border border-rose-100 dark:border-rose-800 text-rose-600">
                   <p className="text-[8px] font-black uppercase tracking-widest">إجمالي المنصرف</p>
-                  <p className="text-lg font-black leading-none mt-0.5">{Number(spent || 0).toLocaleString()} <span className="text-[9px]">ج.م</span></p>
+                  <p className="text-lg font-black leading-none mt-0.5">{formatMoney(spent || 0)}</p>
                 </div>
               </div>
             </div>
@@ -677,13 +680,13 @@ export default function SettlementTab() {
                         {["بدل انتقال", "بدل جلسات"].includes(e.category) && <span className="block text-[8px] text-indigo-500 mt-0.5 font-bold">بدل مستقل داخل كشف التسوية</span>}
                         {e.meetingTitle && <span className="block text-[8px] text-sky-600 mt-0.5 font-bold">الاجتماع: {e.meetingTitle}</span>}
                         {e.boardMembers?.length > 0 && <span className="block text-[8px] text-indigo-500 mt-0.5 font-bold">لعدد {e.boardMembers.length} أعضاء</span>}
-                        {Number(e.allowancePerMember || 0) > 0 && <span className="block text-[8px] text-amber-600 mt-0.5 font-bold">نصيب العضو: {Number(e.allowancePerMember).toFixed(2)} ج.م</span>}
+                        {Number(e.allowancePerMember || 0) > 0 && <span className="block text-[8px] text-amber-600 mt-0.5 font-bold">نصيب العضو: {formatMoney(e.allowancePerMember)}</span>}
                       </td>
                       <td className="p-2.5">
                         <p className="font-bold text-slate-700 dark:text-slate-200 truncate max-w-[200px]">{e.notes || "—"}</p>
                         <p className="text-[9px] font-black text-slate-400 mt-0.5">{e.date}</p>
                       </td>
-                      <td className="p-2.5 font-black text-rose-600 text-sm">{Number(e.amount || 0).toLocaleString()}</td>
+                      <td className="p-2.5 font-black text-rose-600 text-sm">{formatMoney(e.amount || 0)}</td>
                       <td className="p-2.5 text-left"><button onClick={() => setExpenseToDelete(e)} className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="حذف الفاتورة"><Trash2 size={14}/></button></td>
                     </tr>
                   ))}
@@ -695,7 +698,7 @@ export default function SettlementTab() {
               <div className="space-y-0.5">
                 <p className="text-[9px] font-black text-slate-400 uppercase">موقف الميزانية:</p>
                 <p className={clsx("text-base font-black", remaining >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                  {remaining >= 0 ? `متبقي للرد: ${remaining.toLocaleString()} ج` : `تجاوز للصرف: ${Math.abs(remaining).toLocaleString()} ج`}
+                  {remaining >= 0 ? `متبقي للرد: ${formatMoney(remaining)}` : `تجاوز للصرف: ${formatMoney(Math.abs(remaining))}`}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -756,14 +759,14 @@ export default function SettlementTab() {
                         <span className="block text-[8px] text-slate-400 mt-0.5">{s.type === "activity" ? "نشاط / فاعلية" : "سلفة عادية"}</span>
                       </td>
                       <td className="p-3">
-                        <p className="font-bold text-slate-600">شيك: {sAdvance.toLocaleString()}</p>
-                        {s.type === "activity" && sSubs > 0 && <p className="font-bold text-indigo-500 text-[9px]">اشتراكات: {sSubs.toLocaleString()}</p>}
-                        {s.type !== "activity" && sPrevBal > 0 && <p className="font-bold text-amber-600 text-[9px]">مرحل: {sPrevBal.toLocaleString()}</p>}
+                        <p className="font-bold text-slate-600">شيك: {formatMoney(sAdvance)}</p>
+                        {s.type === "activity" && sSubs > 0 && <p className="font-bold text-indigo-500 text-[9px]">اشتراكات: {formatMoney(sSubs)}</p>}
+                        {s.type !== "activity" && sPrevBal > 0 && <p className="font-bold text-amber-600 text-[9px]">مرحل: {formatMoney(sPrevBal)}</p>}
                       </td>
-                      <td className="p-3 font-black text-teal-600 bg-teal-50/50 dark:bg-transparent rounded-lg">{sAvailable.toLocaleString()}</td>
-                      <td className="p-3 font-black text-rose-600">{Number(s.settlementSpent || 0).toLocaleString()}</td>
+                      <td className="p-3 font-black text-teal-600 bg-teal-50/50 dark:bg-transparent rounded-lg">{formatMoney(sAvailable)}</td>
+                      <td className="p-3 font-black text-rose-600">{formatMoney(s.settlementSpent || 0)}</td>
                       <td className="p-3 font-black">
-                        <span className={clsx(s.returnedActually ? "text-slate-400 line-through opacity-70" : "text-emerald-600")}>{Number(s.settlementReturned || 0).toLocaleString()}</span>
+                        <span className={clsx(s.returnedActually ? "text-slate-400 line-through opacity-70" : "text-emerald-600")}>{formatMoney(s.settlementReturned || 0)}</span>
                         <span className="block text-[8px] mt-0.5 text-slate-400 font-bold">{s.returnedActually ? "تم الرد نقدًا" : "مرحّل للقادم"}</span>
                       </td>
                       <td className="p-3 text-left">

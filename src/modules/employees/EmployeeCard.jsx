@@ -3,9 +3,10 @@ import { useT } from "../../app/providers/ThemeProvider";
 import { 
   ArrowRight, Printer, Edit, User, CreditCard, Calendar, Award, 
   MapPin, Phone, Mail, Building, Hash, ShieldCheck, Stethoscope, 
-  DollarSign, Star, Heart, FileText, Briefcase
+  DollarSign, Star, Heart, FileText, Briefcase, AlertTriangle
 } from "lucide-react";
 import clsx from "clsx";
+import { formatEmployeeDate, getDeathDate, getEmployeeBirthDate, getLegalRetirementAge, getRetirementDate, isDeceasedMember, isRetiredMember } from "../../utils/memberBenefits";
 
 // ============================================================
 // دوال مساعدة
@@ -49,6 +50,12 @@ const InfoBlock = ({ label, value, icon: Icon, highlight }) => (
 export default function EmployeeCard({ employee, onBack, onEdit }) {
   const T = useT();
   const emp = employee || {}; // تفادي الأخطاء إذا لم يتم تمرير موظف
+  const retired = isRetiredMember(emp);
+  const deceased = isDeceasedMember(emp);
+  const birthDate = formatEmployeeDate(getEmployeeBirthDate(emp)) || emp.birthDate || emp.dateOfBirth || "—";
+  const retirementDate = formatEmployeeDate(getRetirementDate(emp)) || emp.retirementDate || "—";
+  const deathDate = formatEmployeeDate(getDeathDate(emp)) || emp.deathDate || emp.dateOfDeath || "—";
+  const retirementAge = getLegalRetirementAge(emp);
 
   const handlePrint = () => {
     window.print();
@@ -93,9 +100,11 @@ export default function EmployeeCard({ employee, onBack, onEdit }) {
                 : <User size={60} className="text-slate-300 m-auto mt-6" />
               }
             </div>
-            <div className="flex-1 min-w-0 pb-2">
-              <h1 className="text-3xl font-black text-slate-800 dark:text-slate-100 truncate">{emp.name || "لا يوجد اسم"}</h1>
+          <div className="flex-1 min-w-0 pb-2">
+              <h1 className={clsx("text-3xl font-black text-slate-800 dark:text-slate-100 truncate", (retired || deceased) && "line-through text-rose-700 dark:text-rose-300")}>{emp.name || "لا يوجد اسم"}</h1>
               <p className="text-lg font-bold text-teal-600 dark:text-teal-500 mt-1">{emp.jobTitle || "لم يحدد مسمى وظيفي"}</p>
+              {retired && <p className="text-[11px] font-black text-rose-600 mt-2">محال للمعاش: {retirementDate}</p>}
+              {deceased && <p className="text-[11px] font-black text-slate-700 mt-2">وفاة: {deathDate}</p>}
             </div>
             <div className="pb-2 hidden md:block text-left">
               <p className="text-3xl font-black text-slate-200 dark:text-slate-800">{emp.jobId || "—"}</p>
@@ -112,8 +121,8 @@ export default function EmployeeCard({ employee, onBack, onEdit }) {
               <InfoBlock label="الرقم القومي" value={emp.nationalId} icon={CreditCard} highlight />
               <InfoBlock label="الجنس" value={emp.gender} icon={User} />
               <div className="grid grid-cols-2 gap-2">
-                <InfoBlock label="العمر" value={calcAge(emp.birthDate) ? `${calcAge(emp.birthDate)} سنة` : "—"} icon={Calendar} />
-                <InfoBlock label="تاريخ الميلاد" value={emp.birthDate} icon={Calendar} />
+                <InfoBlock label="العمر" value={calcAge(birthDate) ? `${calcAge(birthDate)} سنة` : "—"} icon={Calendar} />
+                <InfoBlock label="تاريخ الميلاد" value={birthDate} icon={Calendar} />
               </div>
               <InfoBlock label="الحالة الاجتماعية" value={emp.maritalStatus} icon={Heart} />
               <InfoBlock label="المؤهل الدراسي" value={emp.qualification} icon={Award} />
@@ -125,7 +134,7 @@ export default function EmployeeCard({ employee, onBack, onEdit }) {
               <InfoBlock label="مكان العمل (السنترال)" value={emp.workplace} icon={Building} highlight />
               <InfoBlock label="الدرجة الوظيفية" value={emp.jobGrade} icon={Award} />
               <InfoBlock label="تاريخ التعيين" value={emp.hireDate} icon={Calendar} />
-              <InfoBlock label="تاريخ الخروج للمعاش" value={emp.retirementDate} icon={Calendar} />
+              <InfoBlock label="تاريخ الخروج للمعاش" value={retirementDate} icon={Calendar} />
             </div>
 
             {/* قسم 3: التواصل */}
@@ -145,6 +154,18 @@ export default function EmployeeCard({ employee, onBack, onEdit }) {
             {/* قسم 4: النقابة */}
             <div className="space-y-4 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 print:border-slate-300 lg:col-span-2">
                <h3 className="font-black text-sm text-slate-800 dark:text-slate-200 flex items-center gap-2 border-b pb-2"><Star size={16} className="text-amber-500"/> العضوية النقابية</h3>
+               {retired && (
+                 <div className="p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-black flex items-center gap-2">
+                   <AlertTriangle size={16} />
+                   لا يستحق العضو أي مزايا جديدة بعد تاريخ المعاش{retirementAge ? ` (السن القانوني ${retirementAge} سنة)` : ""}.
+                 </div>
+               )}
+               {deceased && (
+                 <div className="p-3 rounded-xl border border-slate-300 bg-slate-50 text-slate-700 text-xs font-black flex items-center gap-2">
+                   <AlertTriangle size={16} />
+                   لا يستحق العضو أي مزايا جديدة بعد تاريخ الوفاة{deathDate !== "—" ? ` (${deathDate})` : ""}.
+                 </div>
+               )}
                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                  <InfoBlock label="رقم العضوية" value={emp.membershipId} icon={Hash} highlight />
                  <InfoBlock label="الفرع النقابي" value={emp.unionBranch} icon={Building} />

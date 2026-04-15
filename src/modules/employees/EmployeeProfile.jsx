@@ -3,10 +3,11 @@ import {
   CreditCard, Briefcase, Phone, Calendar, MapPin, Mail, Award,
   User, Building2, FileText, Landmark, Shield, Hash, Star,
   Download, Image as ImageIcon, File as FileIcon, Stethoscope, Heart,
-  DollarSign, PhoneCall, Users
+  DollarSign, PhoneCall, Users, AlertTriangle
 } from "lucide-react";
 import clsx from "clsx";
 import { useT } from "../../app/providers/ThemeProvider";
+import { formatEmployeeDate, getDeathDate, getEmployeeBirthDate, getLegalRetirementAge, getRetirementDate, isDeceasedMember, isRetiredMember } from "../../utils/memberBenefits";
 
 // 🎨 خريطة الألوان الاحترافية
 const colorMap = {
@@ -58,6 +59,19 @@ export default function EmployeeProfile({ data }) {
   );
 
   const initialChar = data.name ? String(data.name).charAt(0) : "ع";
+  const birthDate = formatEmployeeDate(getEmployeeBirthDate(data)) || data.birthDate || data.dateOfBirth || "—";
+  const retirementDate = formatEmployeeDate(getRetirementDate(data)) || data.retirementDate || "—";
+  const retired = isRetiredMember(data);
+  const deceased = isDeceasedMember(data);
+  const deathDate = formatEmployeeDate(getDeathDate(data)) || data.deathDate || data.dateOfDeath || "—";
+  const retirementDateValue = getRetirementDate(data);
+  const retirementAge = getLegalRetirementAge(data);
+  const retirementWarning = retirementDateValue
+    ? `لا يستحق العضو أي مزايا أو منافع بعد ${retirementDate}.`
+    : "تم تصنيف العضو كمحال للمعاش، لذلك تتوقف المزايا الجديدة له.";
+  const deceasedWarning = deathDate !== "—"
+    ? `لا يستحق العضو أي مزايا أو منافع بعد تاريخ الوفاة ${deathDate}.`
+    : "تم تصنيف العضو كحالة وفاة، لذلك تتوقف المزايا الجديدة له.";
 
   const tabs = [
     { id: "main", label: "الهوية والوظيفة", icon: User },
@@ -84,7 +98,7 @@ export default function EmployeeProfile({ data }) {
 
         <div className="relative z-10 flex-1 space-y-2 text-center md:text-right mt-2 md:mt-0">
           <div>
-            <h2 className="text-xl font-black text-slate-800 dark:text-white">
+            <h2 className={clsx("text-xl font-black text-slate-800 dark:text-white", (retired || deceased) && "line-through text-rose-700 dark:text-rose-300")}>
               {data.name || "ملف عضو غير مكتمل"}
             </h2>
             <p className="text-[11px] font-bold text-slate-500 mt-0.5">
@@ -108,9 +122,58 @@ export default function EmployeeProfile({ data }) {
                 <Shield size={12} /> {data.membershipStatus}
               </span>
             )}
+            {retired && (
+              <span className="px-2.5 py-1 bg-rose-100 text-rose-700 rounded-md flex items-center gap-1 text-[10px] font-black border border-rose-200">
+                <AlertTriangle size={12} /> معاش
+              </span>
+            )}
+            {deceased && (
+              <span className="px-2.5 py-1 bg-slate-200 text-slate-800 rounded-md flex items-center gap-1 text-[10px] font-black border border-slate-300">
+                <AlertTriangle size={12} /> وفاة
+              </span>
+            )}
           </div>
         </div>
       </div>
+
+      {retired && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50/80 dark:bg-rose-950/10 px-4 py-3 flex items-start gap-3">
+          <div className="p-2 rounded-xl bg-rose-100 text-rose-700">
+            <AlertTriangle size={18} />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-black text-rose-700">العضو محال للمعاش</p>
+            <p className="text-[11px] font-bold text-rose-600">
+              تاريخ الخروج للمعاش: {retirementDate}
+            </p>
+            {retirementAge && (
+              <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                السن القانوني المطبق: {retirementAge} سنة
+              </p>
+            )}
+            <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+              {retirementWarning}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {deceased && (
+        <div className="rounded-2xl border border-slate-300 bg-slate-50 dark:bg-slate-900/30 px-4 py-3 flex items-start gap-3">
+          <div className="p-2 rounded-xl bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <AlertTriangle size={18} />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-black text-slate-800 dark:text-slate-100">العضو متوفى</p>
+            <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+              تاريخ الوفاة: {deathDate}
+            </p>
+            <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+              {deceasedWarning}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── 2. شريط التنقل (Tabs) ── */}
       <div className="flex gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-px overflow-x-auto hide-scrollbar">
@@ -143,7 +206,7 @@ export default function EmployeeProfile({ data }) {
               <InfoCard icon={Phone} label="الموبايل الأساسي" val={data.phone} color="teal" T={T} />
               <InfoCard icon={PhoneCall} label="موبايل إضافي" val={data.phone2} color="sky" T={T} />
               <InfoCard icon={Mail} label="البريد الإلكتروني" val={data.email} color="amber" T={T} />
-              <InfoCard icon={Calendar} label="تاريخ الميلاد" val={data.birthDate} color="rose" T={T} />
+              <InfoCard icon={Calendar} label="تاريخ الميلاد" val={birthDate} color="rose" T={T} />
               <InfoCard icon={MapPin} label="محل الإقامة" val={data.address} color="purple" T={T} />
               <InfoCard icon={User} label="الحالة الاجتماعية" val={data.maritalStatus} color="sky" T={T} />
             </div>
@@ -155,7 +218,8 @@ export default function EmployeeProfile({ data }) {
                 <InfoCard icon={Briefcase} label="المسمى الوظيفي" val={data.jobTitle} color="sky" T={T} />
                 <InfoCard icon={Award} label="الدرجة الوظيفية" val={data.jobGrade} color="sky" T={T} />
                 <InfoCard icon={Calendar} label="تاريخ التعيين" val={data.hireDate} color="teal" T={T} />
-                <InfoCard icon={Calendar} label="تاريخ المعاش" val={data.retirementDate} color="rose" T={T} />
+                <InfoCard icon={Calendar} label="تاريخ الخروج للمعاش" val={retirementDate} color="rose" T={T} />
+                {deceased && <InfoCard icon={Calendar} label="تاريخ الوفاة" val={deathDate} color="gray" T={T} />}
                 <InfoCard icon={FileText} label="المؤهل الدراسي" val={data.qualification} color="purple" T={T} />
               </div>
             </div>

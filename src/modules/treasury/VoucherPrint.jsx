@@ -9,6 +9,8 @@
 
 import { tafqeet } from "../../utils/tafqeet";
 import { ORG_REPORT_SUBTITLE, ORG_REPORT_TITLE, getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { formatMoney } from "../../utils/numberFormat";
+import { openPrintWindow } from "../../utils/print";
 
 const ORG_NAME = `${ORG_REPORT_TITLE} - ${ORG_REPORT_SUBTITLE}`;
 const PRINT_FONT = `@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');`;
@@ -47,11 +49,11 @@ ${getPrintBrandStyles()}
 
 /** طباعة سند الخزينة (إيداع / صرف إعانة / سلفة) */
 export function printVoucher({ vType, vNum, date, party, amount, notes, checkNum, extraFields = [] }) {
-  const win = window.open("", "_blank", "width=900,height=700");
+  const win = openPrintWindow(vType, "width=900,height=700");
   if (!win) return;
 
   const numericAmount = Number(amount || 0);
-  const formattedAmount = numericAmount.toLocaleString("ar-EG");
+  const formattedAmount = formatMoney(numericAmount);
   const amountInWords = tafqeet(numericAmount); // التفقيط
   const isDeposit = vType.includes('إيداع');
 
@@ -65,7 +67,7 @@ export function printVoucher({ vType, vNum, date, party, amount, notes, checkNum
     </div>
     <div class="amt-box">
       <div class="amt-lbl">المبلغ الإجمالي</div>
-      <div class="amt-val">${formattedAmount} <span style="font-size:18px">ج.م</span></div>
+      <div class="amt-val">${formattedAmount}</div>
       <div class="amt-text">(${amountInWords})</div>
     </div>
     <div class="note-box"><strong>البيان التفصيلي:</strong> ${notes || 'لا يوجد تفاصيل إضافية'}</div>
@@ -83,7 +85,7 @@ export function printVoucher({ vType, vNum, date, party, amount, notes, checkNum
 
 /** طباعة طلب صرف الإعانة (مخصص للإعانات فقط) */
 export function printAidRequest({ emp, aidCat, aidRel, incDate, amount, date, notes }) {
-  const win = window.open("", "_blank", "width=900,height=800");
+  const win = openPrintWindow("aid-request", "width=900,height=800");
   if (!win) return;
 
   const numericAmount = Number(amount || 0);
@@ -102,7 +104,7 @@ export function printAidRequest({ emp, aidCat, aidRel, incDate, amount, date, no
       <tr>
         <th>المبلغ المستحق صرفه</th>
         <td>
-          <div style="font-size:20px;color:#0d9488;font-weight:800">${numericAmount.toLocaleString()} ج.م</div>
+          <div style="font-size:20px;color:#0d9488;font-weight:800">${formatMoney(numericAmount)}</div>
           <div style="font-size:14px;color:#0f766e;margin-top:4px;">(${amountInWords})</div>
         </td>
       </tr>

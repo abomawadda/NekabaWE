@@ -19,6 +19,8 @@ import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { BOARD_MEMBERSHIP_ROLES } from "../../utils/memberBenefits";
+import { formatMoney } from "../../utils/numberFormat";
+import { openPrintWindow } from "../../utils/print";
 import {
   CalendarDays, Plus, Users, Ticket, CheckCircle2, AlertCircle,
   Clock, X, Save, Tent, ShieldAlert, Edit, Trash2, CalendarClock,
@@ -57,7 +59,7 @@ const calcDaysLeft = (dateStr) => {
 
 // ── طباعة التقرير المالي الشامل ──
 const printFinancialReport = (events, bookingsMap) => {
-  const win = window.open("", "_blank", "width=1200,height=900");
+  const win = openPrintWindow("events-financial-report", "width=1200,height=900");
   if (!win) return;
   const today = new Date().toLocaleDateString("ar-EG", { dateStyle: "full" });
   let totalRevenue = 0, totalBookings = 0, totalPax = 0;
@@ -74,7 +76,7 @@ const printFinancialReport = (events, bookingsMap) => {
         <td style="text-align:center">${ev.date}</td><td style="text-align:center">${ev.capacity}</td>
         <td style="text-align:center">${pax}</td><td style="text-align:center">${bks.length}</td>
         <td style="text-align:center">${occ}%</td>
-        <td style="text-align:center; font-weight:900; color:${rev > 0 ? '#059669' : '#64748b'}">${rev.toLocaleString()} ج</td>
+        <td style="text-align:center; font-weight:900; color:${rev > 0 ? '#059669' : '#64748b'}">${formatMoney(rev)}</td>
         <td style="text-align:center">${ev.isFree ? "مجاني" : `${Number(ev.memberPrice || 0)} / ${Number(ev.companionPrice || 0)} / دعم ${Number(ev.memberSupportValue || 0)}`}</td>
       </tr>`;
   }).join("");
@@ -98,10 +100,10 @@ const printFinancialReport = (events, bookingsMap) => {
     <div class="kpi"><div class="val">${events.length}</div><div>إجمالي الفعاليات</div></div>
     <div class="kpi"><div class="val">${totalBookings.toLocaleString()}</div><div>حجوزات مؤكدة</div></div>
     <div class="kpi"><div class="val">${totalPax.toLocaleString()}</div><div>إجمالي الأفراد</div></div>
-    <div class="kpi"><div class="val" style="color:#059669">${totalRevenue.toLocaleString()} ج</div><div>إجمالي الإيرادات</div></div>
+    <div class="kpi"><div class="val" style="color:#059669">${formatMoney(totalRevenue)}</div><div>إجمالي الإيرادات</div></div>
   </div>
   <table><thead><tr><th>الفعالية</th><th>النوع</th><th>التاريخ</th><th>السعة</th><th>الأفراد</th><th>الحجوزات</th><th>الإشغال</th><th>الإيراد</th><th>سعر العضو/المرافق/الدعم</th></tr></thead>
-  <tbody>${rows}</tbody><tfoot><tr><td colspan="4" style="text-align:center">الإجماليات</td><td style="text-align:center">${totalPax.toLocaleString()}</td><td style="text-align:center">${totalBookings.toLocaleString()}</td><td style="text-align:center">—</td><td style="text-align:center; color:#059669">${totalRevenue.toLocaleString()} ج.م</td><td>—</td></tr></tfoot></table>
+  <tbody>${rows}</tbody><tfoot><tr><td colspan="4" style="text-align:center">الإجماليات</td><td style="text-align:center">${totalPax.toLocaleString()}</td><td style="text-align:center">${totalBookings.toLocaleString()}</td><td style="text-align:center">—</td><td style="text-align:center; color:#059669">${formatMoney(totalRevenue)}</td><td>—</td></tr></tfoot></table>
   <div style="display:flex; justify-content:space-between; font-weight:bold;"><span>تقرير آلي</span><span>توقيع المسؤول: ................................</span></div>
   <script>window.onload=()=>setTimeout(()=>window.print(),500);</script></body></html>`);
   win.document.close();
@@ -109,7 +111,7 @@ const printFinancialReport = (events, bookingsMap) => {
 
 // ── طباعة كشف تفصيلي لفعالية ──
 const printEventDetail = (event, bookings) => {
-  const win = window.open("", "_blank", "width=1000,height=800");
+  const win = openPrintWindow("event-detail-report", "width=1000,height=800");
   if (!win) return;
   const confirmed = bookings.filter(b => b.status === "confirmed");
   const pending = bookings.filter(b => b.status === "pending");
@@ -117,9 +119,9 @@ const printEventDetail = (event, bookings) => {
   const totalRev = confirmed.reduce((s, b) => s + Number(b.totalCost || 0), 0);
   const totalPax = confirmed.reduce((s, b) => s + Number(b.totalPax || 1), 0);
 
-  const rows = confirmed.map((b, i) => `<tr><td style="text-align:center">${i + 1}</td><td><strong>${b.memberName}</strong><br><small>كود: ${b.memberId} | ${b.memberPhone || "—"}</small>${b.companionsList?.length ? `<div style="font-size:10px;color:#6366f1;margin-top:3px">${b.companionsList.map(c => `· ${c.name} (${c.relation})`).join(" ")}</div>` : ""}</td><td style="text-align:center">${b.totalPax}</td><td style="text-align:center; color:#059669; font-weight:900">${Number(b.totalCost).toLocaleString()} ج</td><td style="text-align:center; font-size:10px">${b.paymentSummary || "مجاني"}</td><td style="text-align:center"></td></tr>`).join("");
+  const rows = confirmed.map((b, i) => `<tr><td style="text-align:center">${i + 1}</td><td><strong>${b.memberName}</strong><br><small>كود: ${b.memberId} | ${b.memberPhone || "—"}</small>${b.companionsList?.length ? `<div style="font-size:10px;color:#6366f1;margin-top:3px">${b.companionsList.map(c => `· ${c.name} (${c.relation})`).join(" ")}</div>` : ""}</td><td style="text-align:center">${b.totalPax}</td><td style="text-align:center; color:#059669; font-weight:900">${formatMoney(b.totalCost)}</td><td style="text-align:center; font-size:10px">${b.paymentSummary || "مجاني"}</td><td style="text-align:center"></td></tr>`).join("");
 
-  win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف الفعالية: ${event.title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}body{padding:25px;font-size:12px;}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:15px 0;}.m{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;text-align:center;}.m .v{font-size:18px;font-weight:900;color:#4f46e5;}.m .l{font-size:9px;color:#64748b;font-weight:700;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:9px;text-align:center;}td{padding:8px;border:1px solid #e2e8f0;vertical-align:top;}${getPrintBrandStyles()}</style></head><body>${getPrintBrandHeader({ reportTitle: `كشف فعالية: ${event.title}`, reportMeta: `${event.type} | التاريخ: ${event.date} | ${event.location || ""}` })}<div class="meta"><div class="m"><div class="v">${totalPax}</div><div class="l">إجمالي الأفراد</div></div><div class="m"><div class="v">${confirmed.length}</div><div class="l">حجوزات مؤكدة</div></div><div class="m"><div class="v">${pending.length}</div><div class="l">حجوزات معلقة</div></div><div class="m"><div class="v" style="color:#059669">${totalRev.toLocaleString()} ج</div><div class="l">إجمالي الإيراد</div></div></div><table><thead><tr><th>#</th><th>المشترك والمرافقين</th><th>الأفراد</th><th>التكلفة</th><th>الدفع</th><th>توقيع حضور</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8">لا توجد حجوزات مؤكدة</td></tr>`}</tbody></table>${cancelled.length > 0 ? `<p style="margin-top:15px;font-size:10px;color:#ef4444;font-weight:700">⚠ الملغيون (${cancelled.length}): ${cancelled.map(b=>b.memberName).join("، ")}</p>` : ""}<div style="margin-top:25px;display:flex;justify-content:space-between;font-size:11px;color:#64748b;"><span>مشرف الفعالية: ${Array.isArray(event.supervisors) ? event.supervisors.join("، ") : (event.supervisors || "—")}</span><span>توقيع المشرف: .........................</span></div><script>window.onload=()=>setTimeout(()=>window.print(),600);</script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف الفعالية: ${event.title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}body{padding:25px;font-size:12px;}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:15px 0;}.m{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;text-align:center;}.m .v{font-size:18px;font-weight:900;color:#4f46e5;}.m .l{font-size:9px;color:#64748b;font-weight:700;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:9px;text-align:center;}td{padding:8px;border:1px solid #e2e8f0;vertical-align:top;}${getPrintBrandStyles()}</style></head><body>${getPrintBrandHeader({ reportTitle: `كشف فعالية: ${event.title}`, reportMeta: `${event.type} | التاريخ: ${event.date} | ${event.location || ""}` })}<div class="meta"><div class="m"><div class="v">${totalPax}</div><div class="l">إجمالي الأفراد</div></div><div class="m"><div class="v">${confirmed.length}</div><div class="l">حجوزات مؤكدة</div></div><div class="m"><div class="v">${pending.length}</div><div class="l">حجوزات معلقة</div></div><div class="m"><div class="v" style="color:#059669">${formatMoney(totalRev)}</div><div class="l">إجمالي الإيراد</div></div></div><table><thead><tr><th>#</th><th>المشترك والمرافقين</th><th>الأفراد</th><th>التكلفة</th><th>الدفع</th><th>توقيع حضور</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8">لا توجد حجوزات مؤكدة</td></tr>`}</tbody></table>${cancelled.length > 0 ? `<p style="margin-top:15px;font-size:10px;color:#ef4444;font-weight:700">⚠ الملغيون (${cancelled.length}): ${cancelled.map(b=>b.memberName).join("، ")}</p>` : ""}<div style="margin-top:25px;display:flex;justify-content:space-between;font-size:11px;color:#64748b;"><span>مشرف الفعالية: ${Array.isArray(event.supervisors) ? event.supervisors.join("، ") : (event.supervisors || "—")}</span><span>توقيع المشرف: .........................</span></div><script>window.onload=()=>setTimeout(()=>window.print(),600);</script></body></html>`);
   win.document.close();
 };
 
@@ -292,7 +294,7 @@ export default function EventsMaster() {
                     </label>
                   </div>
                   {!formData.isFree && (
-                    <><FormField label="سعر العضو (ج.م)" required><input type="number" min="0" value={formData.memberPrice} onChange={e => setField("memberPrice", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 bg-white dark:bg-slate-900", T.inp)} /></FormField><FormField label="سعر المرافق (ج.م)" required><input type="number" min="0" value={formData.companionPrice} onChange={e => setField("companionPrice", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 bg-white dark:bg-slate-900", T.inp)} /></FormField></>
+                    <><FormField label="سعر العضو" required><input type="number" min="0" value={formData.memberPrice} onChange={e => setField("memberPrice", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 bg-white dark:bg-slate-900", T.inp)} /></FormField><FormField label="سعر المرافق" required><input type="number" min="0" value={formData.companionPrice} onChange={e => setField("companionPrice", e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 bg-white dark:bg-slate-900", T.inp)} /></FormField></>
                   )}
                 </div>
                 {!formData.isFree && (
@@ -308,7 +310,7 @@ export default function EventsMaster() {
                     </FormField>
                     <div className="rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-white/80 dark:bg-slate-900/50 px-4 py-3">
                       <p className="text-[10px] font-black text-slate-400">قيمة الدعم الخاص بالعضو</p>
-                      <p className="text-lg font-black text-emerald-600">{Number(formData.memberSupportValue || 0).toLocaleString()} ج.م</p>
+                      <p className="text-lg font-black text-emerald-600">{formatMoney(formData.memberSupportValue || 0)}</p>
                       <p className="text-[10px] font-bold text-slate-500 mt-1">تُسجل كمزية عضوية مستقلة عن بدلات المجلس.</p>
                     </div>
                   </div>
@@ -361,7 +363,7 @@ export default function EventsMaster() {
         <StatCard label="فعاليات قادمة" value={stats.upcoming} icon={Clock} colorClass="text-indigo-600"/>
         <StatCard label="مفتوح الحجز" value={stats.openCount} icon={Ticket} colorClass="text-sky-600"/>
         <StatCard label="إجمالي الأفراد" value={stats.totalPax} icon={Users} colorClass="text-violet-600"/>
-        <StatCard label="إجمالي الإيرادات" value={`${stats.totalRevenue.toLocaleString()}`} icon={DollarSign} colorClass="text-emerald-600"/>
+        <StatCard label="إجمالي الإيرادات" value={formatMoney(stats.totalRevenue)} icon={DollarSign} colorClass="text-emerald-600"/>
       </div>
 
       {/* ═══ عرض الفعاليات ═══ */}
@@ -427,9 +429,9 @@ export default function EventsMaster() {
 
                   {!event.isFree ? (
                     <div className="grid grid-cols-3 gap-2">
-                      <div className={clsx("p-2 rounded-xl text-center border", "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700")}><p className="text-[8px] font-black text-slate-400 uppercase">قيمة الاشتراك على العضو</p><p className="text-xs font-black text-indigo-600">{Number(event.memberPrice || 0).toLocaleString()} ج</p></div>
-                      <div className={clsx("p-2 rounded-xl text-center border", "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-900")}><p className="text-[8px] font-black text-emerald-600 uppercase">قيمة الدعم الخاص بالعضو</p><p className="text-xs font-black text-emerald-700 dark:text-emerald-300">{Number(event.memberSupportValue || 0).toLocaleString()} ج</p></div>
-                      <div className={clsx("p-2 rounded-xl text-center border", "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700")}><p className="text-[8px] font-black text-slate-400 uppercase">سعر المرافق</p><p className="text-xs font-black text-slate-700 dark:text-slate-300">{Number(event.companionPrice || 0).toLocaleString()} ج</p></div>
+                      <div className={clsx("p-2 rounded-xl text-center border", "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700")}><p className="text-[8px] font-black text-slate-400 uppercase">قيمة الاشتراك على العضو</p><p className="text-xs font-black text-indigo-600">{formatMoney(event.memberPrice || 0)}</p></div>
+                      <div className={clsx("p-2 rounded-xl text-center border", "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-900")}><p className="text-[8px] font-black text-emerald-600 uppercase">قيمة الدعم الخاص بالعضو</p><p className="text-xs font-black text-emerald-700 dark:text-emerald-300">{formatMoney(event.memberSupportValue || 0)}</p></div>
+                      <div className={clsx("p-2 rounded-xl text-center border", "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700")}><p className="text-[8px] font-black text-slate-400 uppercase">سعر المرافق</p><p className="text-xs font-black text-slate-700 dark:text-slate-300">{formatMoney(event.companionPrice || 0)}</p></div>
                     </div>
                   ) : <div className="bg-emerald-50 dark:bg-emerald-900/20 p-2 rounded-xl text-center text-emerald-600 border border-emerald-100 dark:border-emerald-900"><p className="text-xs font-black">✓ فعالية مجانية</p></div>}
 

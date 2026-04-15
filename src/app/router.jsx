@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import MainLayout from "./layout/MainLayout";
 
 // الشاشات الأساسية
@@ -32,17 +32,22 @@ export default function Router() {
       <Route element={<MainLayout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/dashboardpage" element={<DashboardPage />} />
+        <Route path="/dashboard" element={<Navigate to="/dashboardpage" replace />} />
+        <Route path="/home" element={<Navigate to="/dashboardpage" replace />} />
 
         <Route path="/employees" element={<EmployeesPage />} />
         <Route path="/board" element={<BoardDashboard />} />
 
+        <Route path="/activities" element={<Navigate to="/activities/master" replace />} />
         <Route path="/activities/master" element={<EventsMaster />} />
         <Route path="/activities/bookings" element={<EventBookings />} />
 
+        <Route path="/treasury" element={<Navigate to="/treasury/admin" replace />} />
         <Route path="/treasury/admin" element={<TreasuryPage />} />
         <Route path="/treasury/ledger" element={<TreasuryLedger />} />
         <Route path="/treasury/settlements" element={<SettlementTab />} />
 
+        <Route path="/settings" element={<Navigate to="/importer" replace />} />
         <Route path="/importer" element={<DataImporter />} />
         <Route path="/reports" element={<ReportBuilder />} />
       </Route>

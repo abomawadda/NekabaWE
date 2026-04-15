@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
+import { formatMoney } from "../../utils/numberFormat";
 import clsx from "clsx";
 
 const TYPE_LABELS = {
@@ -66,6 +67,12 @@ const getTxDetails = (tx) => {
 };
 
 const getTxCheckRef = (tx) => tx.checkNum || tx.bankReference || (tx.type === "bank_charge" ? "خصم مباشر" : "—");
+const formatCheckRef = (value) => {
+  if (!value || value === "—") return "—";
+  const normalized = String(value).replace(/[\u0660-\u0669]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? formatMoney(parsed) : value;
+};
 
 function StatCard({ label, value, icon: Icon, color, sub }) {
   const T = useT();
@@ -333,9 +340,9 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-            <StatCard label="إجمالي الوارد" value={`${totalIn.toLocaleString()} ج.م`} icon={TrendingUp} color="emerald" />
-            <StatCard label="إجمالي المنصرف" value={`${totalOut.toLocaleString()} ج.م`} icon={TrendingDown} color="rose" />
-            <StatCard label="رصيد الخزينة" value={`${balance.toLocaleString()} ج.م`} icon={Wallet} color="teal" sub={`رصيد افتتاحي ${OPENING_BALANCE.toLocaleString()} ج.م`} />
+            <StatCard label="إجمالي الوارد" value={formatMoney(totalIn)} icon={TrendingUp} color="emerald" />
+            <StatCard label="إجمالي المنصرف" value={formatMoney(totalOut)} icon={TrendingDown} color="rose" />
+            <StatCard label="رصيد الخزينة" value={formatMoney(balance)} icon={Wallet} color="teal" sub={`رصيد افتتاحي ${formatMoney(OPENING_BALANCE)}`} />
             <StatCard label="العهد المفتوحة" value={`${openAdvances}`} icon={RefreshCw} color="amber" sub="سلف وأنشطة لم تتم تسويتها بعد" />
           </div>
 
@@ -401,10 +408,10 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                       <td className="py-3 px-4 text-center font-black text-sm">
                         <span className={clsx(tx.type === "deposit" ? "text-emerald-600" : "text-rose-600")}>
                           {tx.type === "deposit" ? "+" : "-"}
-                          {Number(tx.amount || 0).toLocaleString()}
+                          {formatMoney(tx.amount || 0)}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-center text-[10px] font-bold text-slate-400">{getTxCheckRef(tx)}</td>
+                      <td className="py-3 px-4 text-center text-[10px] font-bold text-slate-400">{formatCheckRef(getTxCheckRef(tx))}</td>
                       <td className="py-3 px-4 text-center">
                         <span className={clsx("text-[9px] px-2 py-0.5 rounded-full font-black border inline-block", tx.state === "posted" ? "bg-teal-500/10 text-teal-600 border-teal-500/20" : tx.state === "draft" ? "bg-amber-500/10 text-amber-600 border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20")}>
                           {WORKFLOW_LABELS[tx.state] || tx.state || "مرحل"}
@@ -437,9 +444,9 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                     <tr>
                       <td colSpan={3} className="py-2 px-4 text-[10px] font-black text-slate-500">إجمالي المعروض ({visible.length} حركة)</td>
                       <td className="py-2 px-4 text-center font-black text-sm">
-                        <span className="text-emerald-600">+{visible.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount || 0), 0).toLocaleString()}</span>
+                        <span className="text-emerald-600">+{formatMoney(visible.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount || 0), 0))}</span>
                         {" / "}
-                        <span className="text-rose-600">-{visible.filter((t) => t.type !== "deposit").reduce((s, t) => s + Number(t.amount || 0), 0).toLocaleString()}</span>
+                        <span className="text-rose-600">-{formatMoney(visible.filter((t) => t.type !== "deposit").reduce((s, t) => s + Number(t.amount || 0), 0))}</span>
                       </td>
                       <td colSpan={4} />
                     </tr>

@@ -20,9 +20,12 @@ import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import {
   BOARD_MEMBERSHIP_ROLES,
   createBenefitLabel,
+  formatEmployeeDate,
+  getRetirementDate,
   isBoardMember,
   isEligibleForBenefit,
   isIndependentMember,
+  isRetiredMember,
   sortMembersByAgeThenJobId,
 } from "../../utils/memberBenefits";
 import {
@@ -183,7 +186,7 @@ export default function EventBookings() {
   const memberBasePrice = activeEvent?.isFree ? 0 : Number(activeEvent?.memberPrice || 0);
   const companionBasePrice = activeEvent?.isFree ? 0 : Number(activeEvent?.companionPrice || 0);
   const memberSupportValue = useMemo(() => {
-    if (!selectedMember || !activeEvent || activeEvent.isFree || !isEligibleForBenefit(selectedMember)) return 0;
+    if (!selectedMember || !activeEvent || activeEvent.isFree || !isEligibleForBenefit(selectedMember, activeEvent.date || getTodayISO())) return 0;
     return Number(activeEvent.memberSupportValue || 0);
   }, [selectedMember, activeEvent]);
 
@@ -242,8 +245,8 @@ export default function EventBookings() {
 
   const saveManualBenefit = async () => {
     if (!benefitModal) return;
-    if (isIndependentMember({ membershipStatus: benefitModal.membershipStatus })) {
-      showToast("عضو النقابة المستقلة لا يستحق دعماً أو ميزة.", "error");
+    if (!isEligibleForBenefit(benefitModal, benefitModal.benefitDate || getTodayISO())) {
+      showToast("هذا العضو غير مستحق للدعم أو الميزة في هذا التاريخ.", "error");
       return;
     }
 
@@ -254,7 +257,9 @@ export default function EventBookings() {
         memberId: benefitModal.memberId,
         memberName: benefitModal.memberName,
         membershipStatus: benefitModal.membershipStatus || "",
-        date: getTodayISO(),
+        memberState: benefitModal.memberState || "",
+        memberRetirementDate: benefitModal.memberRetirementDate || "",
+        date: benefitModal.benefitDate || getTodayISO(),
         benefitType: benefitForm.type,
         amount: Number(benefitForm.amount || 0),
         notes: benefitForm.notes || "",
@@ -305,8 +310,11 @@ export default function EventBookings() {
 
       batch.set(bookingRef, {
         eventId: activeEvent.id, eventTitle: activeEvent.title,
+        eventDate: activeEvent.date,
         memberId: selectedMember.jobId, memberName: selectedMember.name, memberPhone: selectedMember.phone || "",
         membershipStatus: selectedMember.membershipStatus || "",
+        memberState: selectedMember.memberState || "",
+        memberRetirementDate: selectedMember.retirementDate || "",
         companionsList: companionsList.map(({ id, parsedInfo, ...rest }) => rest),
         totalPax: requestedPax, totalCost: totalCost,
         isFree: activeEvent.isFree, boardDiscountType: boardDiscount,
@@ -318,12 +326,14 @@ export default function EventBookings() {
         createdAt: serverTimestamp()
       });
 
-      if (!isPending && memberSupportValue > 0 && isEligibleForBenefit(selectedMember)) {
+      if (!isPending && memberSupportValue > 0 && isEligibleForBenefit(selectedMember, activeEvent.date || getTodayISO())) {
         batch.set(doc(collection(db, "member_benefits")), {
           memberId: selectedMember.jobId,
           memberName: selectedMember.name,
           membershipStatus: selectedMember.membershipStatus || "",
-          date: getTodayISO(),
+          memberState: selectedMember.memberState || "",
+          memberRetirementDate: selectedMember.retirementDate || "",
+          date: activeEvent.date || getTodayISO(),
           benefitType: "دعم فعالية",
           amount: Number(memberSupportValue || 0),
           notes: "دعم معتمد على مستوى العضو داخل الفعالية",
@@ -344,10 +354,12 @@ export default function EventBookings() {
             memberId: selectedMember.jobId,
             memberName: selectedMember.name,
             membershipStatus: selectedMember.membershipStatus || "",
+            memberState: selectedMember.memberState || "",
+            memberRetirementDate: selectedMember.retirementDate || "",
             eventId: activeEvent.id,
             eventTitle: activeEvent.title,
             bookingId: bookingRef.id,
-            date: getTodayISO(),
+            date: activeEvent.date || getTodayISO(),
             benefitType: boardDiscount === "100" ? "إعفاء إشراف فعالية" : "خصم إشراف فعالية",
             amount: rewardAmount,
             notes: boardDiscount === "100" ? "إعفاء كامل للعضو القائم بالإشراف" : "خصم إشراف جزئي للعضو القائم بالإشراف",
@@ -400,12 +412,14 @@ export default function EventBookings() {
       batch.update(doc(db, "event_bookings", booking.id), { status: "confirmed", confirmedAt: serverTimestamp(), paymentSummary: "مؤكد يدوياً" });
       batch.update(doc(db, "events", activeEvent.id), { bookedCount: confirmedPax + Number(booking.totalPax || 1) });
 
-      if (Number(booking.memberSupportValue || 0) > 0 && !isIndependentMember({ membershipStatus: booking.membershipStatus })) {
+      if (Number(booking.memberSupportValue || 0) > 0 && isEligibleForBenefit(booking, booking.eventDate || getTodayISO())) {
         batch.set(doc(collection(db, "member_benefits")), {
           memberId: booking.memberId,
           memberName: booking.memberName,
           membershipStatus: booking.membershipStatus || "",
-          date: getTodayISO(),
+          memberState: booking.memberState || "",
+          memberRetirementDate: booking.memberRetirementDate || "",
+          date: booking.eventDate || getTodayISO(),
           benefitType: "دعم فعالية",
           amount: Number(booking.memberSupportValue || 0),
           notes: "دعم معتمد على مستوى العضو داخل الفعالية",
@@ -426,7 +440,9 @@ export default function EventBookings() {
             memberId: booking.memberId,
             memberName: booking.memberName,
             membershipStatus: booking.membershipStatus || "",
-            date: getTodayISO(),
+            memberState: booking.memberState || "",
+            memberRetirementDate: booking.memberRetirementDate || "",
+            date: booking.eventDate || getTodayISO(),
             benefitType: booking.boardDiscountType === "100" ? "إعفاء إشراف فعالية" : "خصم إشراف فعالية",
             amount: rewardAmount,
             notes: booking.boardDiscountType === "100" ? "إعفاء كامل للعضو القائم بالإشراف" : "خصم إشراف جزئي للعضو القائم بالإشراف",
@@ -553,17 +569,23 @@ export default function EventBookings() {
                   <input disabled={isBookingClosed} type="text" value={searchQ} onChange={e => { setSearchQ(e.target.value); setShowRes(true); setSelectedMember(null); }} placeholder="الاسم أو الرقم الوظيفي..." className={clsx("w-full pr-9 pl-4 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-indigo-500", T.inp, isBookingClosed && "opacity-50 cursor-not-allowed")} />
                   {showRes && filteredMembers.length > 0 && (
                     <div className={clsx("absolute top-full mt-1 w-full border rounded-xl shadow-2xl overflow-hidden z-[200]", T.card)}>
-                      {filteredMembers.map(emp => (
-                        <button key={emp.id} type="button" onMouseDown={() => { setSelectedMember(emp); setSearchQ(emp.name); setShowRes(false); }} className="w-full p-2.5 flex items-center justify-between hover:bg-indigo-50 transition-colors border-b last:border-0 text-right">
-                          <div><p className="text-[11px] font-black">{emp.name}</p><p className="text-[9px] text-slate-400">{emp.membershipStatus || emp.jobTitle}</p></div><span className="text-[9px] font-bold bg-slate-100 px-2 py-0.5 rounded-lg">{emp.jobId}</span>
+                      {filteredMembers.map(emp => {
+                        const retired = isRetiredMember(emp);
+                        return (
+                        <button key={emp.id} type="button" onMouseDown={() => { setSelectedMember(emp); setSearchQ(emp.name); setShowRes(false); }} className={clsx("w-full p-2.5 flex items-center justify-between hover:bg-indigo-50 transition-colors border-b last:border-0 text-right", retired && "bg-rose-50/60")}>
+                          <div>
+                            <p className={clsx("text-[11px] font-black", retired && "line-through text-rose-700")}>{emp.name}</p>
+                            <p className="text-[9px] text-slate-400">{retired ? `معاش${getRetirementDate(emp) ? ` - ${formatEmployeeDate(getRetirementDate(emp))}` : ""}` : (emp.membershipStatus || emp.jobTitle)}</p>
+                          </div>
+                          <span className="text-[9px] font-bold bg-slate-100 px-2 py-0.5 rounded-lg">{emp.jobId}</span>
                         </button>
-                      ))}
+                      )})}
                     </div>
                   )}
                 </div>
               </div>
 
-              {isBoardMember && !activeEvent.isFree && (
+              {memberIsBoard && !activeEvent.isFree && (
                 <div className="p-3 bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800 rounded-xl space-y-2 animate-in fade-in">
                   <div className="flex items-center gap-1.5 text-[11px] font-black text-sky-700 dark:text-sky-400"><Award size={14}/> إشراف مجلس الإدارة</div>
                   <select value={boardDiscount} onChange={e => setBoardDiscount(e.target.value)} className={clsx("w-full px-3 py-2 rounded-lg border text-xs font-bold outline-none text-sky-800", T.sel)}>
@@ -592,8 +614,24 @@ export default function EventBookings() {
               {selectedMember && (
                 <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-800 mt-4">
                   <div className="flex justify-between items-center text-[10px] font-bold mb-1"><span className="text-slate-500">حجز العضو:</span><span>{activeEvent.isFree ? "مجاني" : memberCost === 0 ? "مجاني (إشراف)" : `${memberCost.toLocaleString()} ج`}</span></div>
+                  {Number(activeEvent.memberSupportValue || 0) > 0 && (
+                    <div className="flex justify-between items-center text-[10px] font-bold mb-1">
+                      <span className="text-slate-500">قيمة الدعم الخاص بالعضو:</span>
+                      <span className={memberSupportValue > 0 ? "text-emerald-600" : "text-rose-600"}>
+                        {memberSupportValue > 0 ? `${memberSupportValue.toLocaleString()} ج` : "غير مستحق"}
+                      </span>
+                    </div>
+                  )}
                   {companionsList.length > 0 && <div className="flex justify-between items-center text-[10px] font-bold mb-2"><span className="text-slate-500">المرافقين ({companionsList.length}):</span><span>{activeEvent.isFree ? "مجاني" : `${companionsCost.toLocaleString()} ج`}</span></div>}
                   <div className="flex justify-between items-center pt-2 border-t border-indigo-200 dark:border-indigo-700"><span className="text-xs font-black text-indigo-700 dark:text-indigo-400">الإجمالي المطلوب:</span><span className="text-xl font-black text-indigo-700 dark:text-indigo-400">{totalCost.toLocaleString()} <span className="text-[10px]">ج.م</span></span></div>
+                </div>
+              )}
+
+              {selectedMember && (isIndependentSelected || (activeEvent?.date && !isEligibleForBenefit(selectedMember, activeEvent.date))) && (
+                <div className="p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-[10px] font-black">
+                  {isIndependentSelected
+                    ? "عضو النقابة المستقلة لا يستحق دعماً أو مزايا مرتبطة بالفعالية."
+                    : `هذا العضو محال للمعاش، لذلك لا تُسجل له مزايا بتاريخ ${activeEvent.date}${getRetirementDate(selectedMember) ? ` بعد تاريخ المعاش ${formatEmployeeDate(getRetirementDate(selectedMember))}` : ""}.`}
                 </div>
               )}
 

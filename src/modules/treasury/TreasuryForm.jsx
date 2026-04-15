@@ -24,6 +24,7 @@ import { collection, getDocs, query } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useLocation } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
+import { formatEmployeeDate, getRetirementDate, isEligibleForBenefit, isRetiredMember, sortMembersByAgeThenJobId } from "../../utils/memberBenefits";
 import clsx from "clsx";
 
 // ─────────────────────────────────────────────
@@ -364,14 +365,14 @@ export default function TreasuryForm({
     const lq = searchQ.toLowerCase();
 
     setSearchRes(
-      employeesDB
-        .filter(
+      sortMembersByAgeThenJobId(
+        employeesDB.filter(
           (e) =>
             e.name?.toLowerCase().includes(lq) ||
             e.jobId?.toString().includes(lq) ||
             e.nationalId?.includes(lq)
         )
-        .slice(0, 6)
+      ).slice(0, 6)
     );
   }, [searchQ, showRes, employeesDB]);
 
@@ -433,6 +434,12 @@ export default function TreasuryForm({
       if (!tx.aidRel) e.aidRel = "اختر صلة القرابة";
       if (tx.incidentDate && tx.date && tx.incidentDate > tx.date) {
         e.incidentDate = "تاريخ الواقعة لا يجوز أن يكون بعد تاريخ الحركة";
+      }
+      if (empData && !isEligibleForBenefit(empData, tx.date)) {
+        const retirementDate = getRetirementDate(empData);
+        e.party = retirementDate
+          ? `هذا العضو غير مستحق للرعاية بعد تاريخ المعاش (${formatEmployeeDate(retirementDate)}).`
+          : "هذا العضو غير مستحق للرعاية وفق حالة العضوية الحالية.";
       }
     }
 
@@ -779,17 +786,19 @@ export default function TreasuryForm({
                     )}
                   >
                     {searchRes.length > 0 ? (
-                      searchRes.map((emp) => (
+                      searchRes.map((emp) => {
+                        const retired = isRetiredMember(emp);
+                        return (
                         <button
                           key={emp.id}
                           type="button"
                           onMouseDown={() => selectEmployee(emp)}
-                          className="w-full p-2.5 flex items-center justify-between hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors border-b last:border-0 text-right"
+                          className={clsx("w-full p-2.5 flex items-center justify-between hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors border-b last:border-0 text-right", retired && "bg-rose-50/60 dark:bg-rose-950/10")}
                         >
                           <div>
-                            <p className="text-[11px] font-black">{emp.name}</p>
+                            <p className={clsx("text-[11px] font-black", retired && "line-through text-rose-700 dark:text-rose-300")}>{emp.name}</p>
                             <p className="text-[9px] text-slate-400">
-                              {emp.position || emp.jobTitle}
+                              {retired ? `محال للمعاش${emp.retirementDate ? ` - ${emp.retirementDate}` : ""}` : (emp.position || emp.jobTitle)}
                             </p>
                           </div>
 
@@ -797,7 +806,7 @@ export default function TreasuryForm({
                             {emp.jobId || "—"}
                           </span>
                         </button>
-                      ))
+                      )})
                     ) : searchQ.length >= 2 ? (
                       <div className="p-3 text-[10px] font-bold text-slate-500">
                         لا توجد نتائج مطابقة
@@ -811,6 +820,14 @@ export default function TreasuryForm({
                 <div className="flex items-center gap-1.5 text-teal-600 font-black text-[9px] mt-1 bg-teal-50 dark:bg-teal-900/30 w-fit px-2 py-0.5 rounded-lg">
                   <UserCheck size={10} />
                   مرتبط بالكود: {tx.employeeId}
+                </div>
+              )}
+
+              {tx.type === "aid" && empData && !isEligibleForBenefit(empData, tx.date) && (
+                <div className="mt-2 p-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-[10px] font-black">
+                  {getRetirementDate(empData)
+                    ? `هذا العضو غير مستحق للرعاية بعد تاريخ المعاش (${formatEmployeeDate(getRetirementDate(empData))}).`
+                    : "هذا العضو غير مستحق للرعاية أو المزايا وفق حالته الحالية."}
                 </div>
               )}
 

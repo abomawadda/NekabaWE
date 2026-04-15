@@ -1,8 +1,10 @@
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { formatMoney } from "../../utils/numberFormat";
+import { openPrintWindow } from "../../utils/print";
 
 // ── دالة طباعة كشف تسوية العهد والسلف ──
 export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBalance = 0, returnedActually }) {
-  const win = window.open("", "_blank", "width=950,height=750");
+  const win = openPrintWindow("settlement-print", "width=950,height=750");
   if (!win) return;
 
   const ADV_AMT = Number(advanceTxn?.advanceAmountBase || advanceTxn?.amount || 0);
@@ -15,7 +17,7 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
           <td style="text-align:center">${e.date}</td>
           <td style="color:#0f766e">${e.category}</td>
           <td>${e.notes || "—"}</td>
-          <td style="text-align:left; font-weight:900">${Number(e.amount).toLocaleString()} ج.م</td>
+          <td style="text-align:left; font-weight:900">${formatMoney(e.amount)}</td>
         </tr>
       `).join("")
     : `<tr><td colspan="5" style="text-align:center; padding:30px; color:#94a3b8;">لم يتم إدراج فواتير</td></tr>`;
@@ -59,10 +61,10 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
       </div>
       
       <div class="stats-grid">
-        <div class="stat-box"> <div class="stat-label">أصل السلفة المصروفة</div> <div class="stat-value" style="color:#334155">${ADV_AMT.toLocaleString()}</div> </div>
-        <div class="stat-box"> <div class="stat-label">رصيد مرحل من قبل</div> <div class="stat-value" style="color:#d97706">${Number(prevBalance).toLocaleString()}</div> </div>
-        <div class="stat-box" style="background:#f0fdf4; border-color:#86efac"> <div class="stat-label" style="color:#15803d">إجمالي المتاح للصرف</div> <div class="stat-value" style="color:#166534">${TOTAL_AVAILABLE.toLocaleString()}</div> </div>
-        <div class="stat-box" style="background:#fff1f2; border-color:#fda4af"> <div class="stat-label" style="color:#e11d48">إجمالي المنصرف الفعلي</div> <div class="stat-value" style="color:#be123c">${spent.toLocaleString()}</div> </div>
+        <div class="stat-box"> <div class="stat-label">أصل السلفة المصروفة</div> <div class="stat-value" style="color:#334155">${formatMoney(ADV_AMT)}</div> </div>
+        <div class="stat-box"> <div class="stat-label">رصيد مرحل من قبل</div> <div class="stat-value" style="color:#d97706">${formatMoney(prevBalance)}</div> </div>
+        <div class="stat-box" style="background:#f0fdf4; border-color:#86efac"> <div class="stat-label" style="color:#15803d">إجمالي المتاح للصرف</div> <div class="stat-value" style="color:#166534">${formatMoney(TOTAL_AVAILABLE)}</div> </div>
+        <div class="stat-box" style="background:#fff1f2; border-color:#fda4af"> <div class="stat-label" style="color:#e11d48">إجمالي المنصرف الفعلي</div> <div class="stat-value" style="color:#be123c">${formatMoney(spent)}</div> </div>
       </div>
 
       <h3 style="margin-bottom:10px; color:#334155; font-size: 14px;">بيان الفواتير والمصروفات المدرجة:</h3>
@@ -74,9 +76,9 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
       <div class="footer-note">
         الحالة النهائية للعهدة: 
         ${remaining > 0 
-          ? `يوجد مبلغ متبقٍ قدره (${remaining.toLocaleString()} ج.م) — ` + (returnedActually ? "تم توريده نقداً لخزينة النقابة بموجب إيصال استلام." : "تم ترحيله كـ 'رصيد دائن' ليُخصم من سلفة الموظف القادمة.")
+          ? `يوجد مبلغ متبقٍ قدره (${formatMoney(remaining)}) — ` + (returnedActually ? "تم توريده نقداً لخزينة النقابة بموجب إيصال استلام." : "تم ترحيله كـ 'رصيد دائن' ليُخصم من سلفة الموظف القادمة.")
           : remaining < 0 
-          ? `يوجد تجاوز في الصرف قدره (${Math.abs(remaining).toLocaleString()} ج.م) — يُصرف للموظف.`
+          ? `يوجد تجاوز في الصرف قدره (${formatMoney(Math.abs(remaining))}) — يُصرف للموظف.`
           : `تم تسوية العهدة بالكامل (صفر).`
         }
       </div>

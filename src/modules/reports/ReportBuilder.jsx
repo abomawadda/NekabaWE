@@ -15,6 +15,8 @@ import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { formatMoney } from "../../utils/numberFormat";
+import { openPrintWindow } from "../../utils/print";
 import * as XLSX from "xlsx";
 import {
   FileText, Printer, Download, Filter, Columns, Calendar,
@@ -126,8 +128,8 @@ const REPORT_MODULES = {
 // 🖨️ محرك الطباعة
 // ════════════════════════════════════════════════════════════
 const printReport = (data, config, selectedFieldKeys) => {
-  const win = window.open("", "_blank", "width=1200,height=900");
-  if (!win) { alert("يرجى السماح بالنوافذ المنبثقة"); return; }
+  const win = openPrintWindow(`report-${config.id}`, "width=1200,height=900");
+  if (!win) return;
 
   const fields = config.fields.filter(f => selectedFieldKeys.includes(f.key));
   const printDate = new Date().toLocaleString("ar-EG");
@@ -145,7 +147,7 @@ const printReport = (data, config, selectedFieldKeys) => {
     const cells = fields.map(f => {
       let val = row[f.key];
       if (f.format) val = f.format(val);
-      if (f.isCurrency) val = `<span style="color:#059669; font-weight:900;">${Number(val || 0).toLocaleString()} ج.م</span>`;
+      if (f.isCurrency) val = `<span style="color:#059669; font-weight:900;">${formatMoney(val)}</span>`;
       return `<td>${val ?? "—"}</td>`;
     }).join("");
     return `<tr${i % 2 === 0 ? "" : ' style="background:#f8fafc;"'}><td style="text-align:center; font-weight:bold;">${i + 1}</td>${cells}</tr>`;
@@ -154,7 +156,7 @@ const printReport = (data, config, selectedFieldKeys) => {
   const totalsRow = currencyFields.length > 0 ? `
     <tr class="totals-row">
       <td colspan="${fields.length - currencyFields.length + 1}" style="text-align:right; padding-left:20px;">إجمالي:</td>
-      ${currencyFields.map(f => `<td style="color:#059669; text-align:right;">${totals[f.key].toLocaleString()} ج.م</td>`).join("")}
+      ${currencyFields.map(f => `<td style="color:#059669; text-align:right;">${formatMoney(totals[f.key])}</td>`).join("")}
     </tr>
   ` : "";
 
@@ -429,7 +431,7 @@ function ReportBuilderInner() {
                         className={`accent-${accentColor}-600 w-3.5 h-3.5`}/>
                       <span className={clsx("text-[10px] font-bold transition-colors", selectedFields.includes(f.key) ? "text-slate-700 dark:text-slate-300" : "text-slate-400")}>
                         {f.label}
-                        {f.isCurrency && <span className="text-emerald-500 mr-1 text-[8px]">ج.م</span>}
+                        {f.isCurrency && <span className="text-emerald-500 mr-1 text-[8px]">قيمة</span>}
                       </span>
                     </label>
                   ))}
@@ -462,7 +464,7 @@ function ReportBuilderInner() {
                   <div className="min-w-0">
                     <p className="text-[9px] font-black text-slate-500 truncate">{f.label}</p>
                     <p className="text-base font-black text-emerald-600">
-                      {(summary.totals[f.key] || 0).toLocaleString()} <span className="text-[9px]">ج.م</span>
+                      {formatMoney(summary.totals[f.key] || 0)}
                     </p>
                   </div>
                 </div>
@@ -542,7 +544,7 @@ function ReportBuilderInner() {
                               "p-3 font-bold whitespace-nowrap max-w-[200px] truncate",
                               f.isCurrency ? "text-emerald-600 font-black" : "text-slate-700 dark:text-slate-300"
                             )}>
-                              {f.isCurrency ? `${Number(val || 0).toLocaleString()} ج.م` : (val ?? "—")}
+                              {f.isCurrency ? formatMoney(val) : (val ?? "—")}
                             </td>
                           );
                         })}
@@ -559,7 +561,7 @@ function ReportBuilderInner() {
                         </td>
                         {activeConfig.fields.filter(f => f.isCurrency && selectedFields.includes(f.key)).map(f => (
                           <td key={f.key} className="p-3 text-emerald-700 font-black whitespace-nowrap">
-                            {(summary.totals[f.key] || 0).toLocaleString()} ج.م
+                            {formatMoney(summary.totals[f.key] || 0)}
                           </td>
                         ))}
                       </tr>

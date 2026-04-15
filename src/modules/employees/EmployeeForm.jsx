@@ -12,6 +12,7 @@ import {
   Printer, AlertTriangle, RefreshCw
 } from "lucide-react";
 import clsx from "clsx";
+import { formatEmployeeDate, getBirthDateFromNationalId, getLegalRetirementDate } from "../../utils/memberBenefits";
 
 const MONTHS_AR = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 const DAYS_AR   = ["سبت","أحد","اثنين","ثلاثاء","أربعاء","خميس","جمعة"];
@@ -486,6 +487,9 @@ export default function EmployeeForm({
     if (actualData && Object.keys(actualData).length > 0) {
       setEmp({
         ...actualData,
+        birthDate:        actualData.birthDate || actualData.dateOfBirth || "",
+        retirementDate:   actualData.retirementDate || actualData.retireDate || "",
+        deathDate:        actualData.deathDate || actualData.dateOfDeath || "",
         membershipStatus: actualData.membershipStatus || "عضو جمعية عمومية",
         memberState:      actualData.memberState || "نشط",
         attachments:      actualData.attachments || [],
@@ -514,19 +518,24 @@ export default function EmployeeForm({
   useEffect(() => {
     const nid = toEn(emp.nationalId || "");
     if (nid.length !== 14 || !/^\d{14}$/.test(nid)) return;
-    const century = nid[0] === "3" ? "20" : "19";
-    const yr = century + nid.substring(1,3);
-    const mo = nid.substring(3,5);
-    const dy = nid.substring(5,7);
+
+    const derivedBirthDate = getBirthDateFromNationalId(nid);
+    if (!derivedBirthDate) return;
+
     const govCode = nid.substring(7,9);
-    const seq = parseInt(nid.substring(9,13));
+    const seq = parseInt(nid.substring(12,13), 10);
     const gender = seq % 2 === 0 ? "أنثى" : "ذكر";
     const gov = GOVS[govCode] || "محافظة أخرى";
-    const birthDt = `${dy}/${mo}/${yr}`;
-    const bYr = parseInt(yr);
-    const retAge = bYr >= 1979 ? 65 : bYr >= 1971 ? 61 : 60;
-    upd({ gender, birthDate: birthDt, placeOfBirth: gov, retirementDate: `${dy}/${mo}/${bYr+retAge}` });
-  }, [emp.nationalId, upd]);
+    const legalRetirementDate = getLegalRetirementDate({ nationalId: nid });
+
+    setEmp((prev) => ({
+      ...prev,
+      gender,
+      birthDate: formatEmployeeDate(derivedBirthDate) || prev.birthDate || "",
+      placeOfBirth: gov,
+      retirementDate: formatEmployeeDate(legalRetirementDate) || prev.retirementDate || "",
+    }));
+  }, [emp.nationalId]);
 
   const validate = useCallback(() => {
     const e = {};
@@ -737,6 +746,16 @@ export default function EmployeeForm({
             </div>
             <DynamicSelect label="الفرع النقابي" listKey="unionBranches" value={emp.unionBranch} onChange={v => upd({ unionBranch: v })} icon={Building} defaultOptions={["النقابة العامة","اللجنة النقابية بالمنصورة","اللجنة النقابية بطلخا"]}/>
             <ArabicDatePicker label="تاريخ الانتساب" value={emp.unionJoinDate} onChange={v => upd({ unionJoinDate: v })} minDate={emp.hireDate||addYearsToStr(emp.birthDate,18)} maxDate={fmtDate(new Date())} T={T}/>
+            {emp.memberState === "وفاة" && (
+              <ArabicDatePicker
+                label="تاريخ الوفاة"
+                value={emp.deathDate || ""}
+                onChange={v => upd({ deathDate: v })}
+                maxDate={fmtDate(new Date())}
+                minDate={emp.birthDate || undefined}
+                T={T}
+              />
+            )}
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase pr-1">حالة الاشتراك</label>
               <select value={emp.subscriptionStatus||""} onChange={e => upd({ subscriptionStatus: e.target.value })} className={clsx("w-full px-3 py-2 rounded-lg border text-xs font-bold outline-none focus:ring-2 focus:border-amber-500 h-[36px]", T.inp)}>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { collection, query, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
-import { sortMembersByAgeThenJobId } from "../../utils/memberBenefits";
+import { formatEmployeeDate, getDeathDate, getRetirementDate, isDeceasedMember, isRetiredMember, sortMembersByAgeThenJobId } from "../../utils/memberBenefits";
 
 import { 
   UserPlus, Search, Eye, Edit3, Trash2, 
@@ -53,6 +53,7 @@ export default function EmployeeDashboard() {
     let activeCount = 0, inactiveCount = 0;
 
     let retiringList = [];
+    let deceasedList = [];
     let bDays = { today: [], tomorrow: [], yesterday: [] };
     let anniversaries = [];
 
@@ -85,7 +86,9 @@ export default function EmployeeDashboard() {
     employees.forEach(emp => {
       const inactiveStates = ['معاش', 'موقوف', 'استقالة', 'وفاة', 'إجازة'];
       const state = emp.memberState?.trim() || "نشط";
-      const isActive = !inactiveStates.some(x => state.includes(x));
+      const retired = isRetiredMember(emp);
+      const deceased = isDeceasedMember(emp);
+      const isActive = !retired && !deceased && !inactiveStates.some(x => state.includes(x));
 
       if (isActive) {
         activeCount++;
@@ -107,20 +110,33 @@ export default function EmployeeDashboard() {
         else if (empBdayStr === yesterdayStr) bDays.yesterday.push(emp);
 
         let retYear;
-        let calcRetDate = emp.retirementDate;
+        let calcRetDate = formatEmployeeDate(getRetirementDate(emp));
         if (calcRetDate) {
-            const retParsed = parseDate(calcRetDate);
-            if (retParsed) retYear = retParsed.y;
-        }
-        if (!retYear && bDateParsed.y && !isNaN(bDateParsed.y)) {
-          const retAge = bDateParsed.y >= 1979 ? 65 : bDateParsed.y >= 1971 ? 61 : 60;
-          retYear = bDateParsed.y + retAge;
-          calcRetDate = `${bDateParsed.d}/${bDateParsed.m}/${retYear}`;
+          const retParsed = parseDate(calcRetDate);
+          if (retParsed) retYear = retParsed.y;
         }
         
-        if (retYear === currentYear && isActive) {
-          retiringList.push({ ...emp, displayRetDate: calcRetDate });
+        if (retYear === currentYear) {
+          const retParsed = parseDate(calcRetDate);
+          const retirementMonth = retParsed ? Number(retParsed.m) : null;
+          retiringList.push({
+            ...emp,
+            displayRetDate: calcRetDate,
+            retired,
+            isCurrentMonthRetirement: retirementMonth === today.getMonth() + 1,
+          });
         }
+      }
+
+      const deathDate = formatEmployeeDate(getDeathDate(emp));
+      const deathParsed = parseDate(deathDate);
+      if (deathParsed?.y === currentYear) {
+        deceasedList.push({
+          ...emp,
+          displayDeathDate: deathDate,
+          deceased,
+          isCurrentMonthDeath: Number(deathParsed.m) === today.getMonth() + 1,
+        });
       }
 
       const hDateParsed = parseDate(emp.hireDate);
@@ -136,6 +152,12 @@ export default function EmployeeDashboard() {
     });
 
     retiringList.sort((a, b) => {
+      if (a.isCurrentMonthRetirement !== b.isCurrentMonthRetirement) {
+        return a.isCurrentMonthRetirement ? -1 : 1;
+      }
+      if (a.retired !== b.retired) {
+        return a.retired ? -1 : 1;
+      }
       const getTimestamp = (dStr) => {
         if (!dStr) return 0;
         const p = dStr.split('/');
@@ -144,22 +166,36 @@ export default function EmployeeDashboard() {
       return getTimestamp(b.displayRetDate) - getTimestamp(a.displayRetDate);
     });
 
+    deceasedList.sort((a, b) => {
+      if (a.isCurrentMonthDeath !== b.isCurrentMonthDeath) {
+        return a.isCurrentMonthDeath ? -1 : 1;
+      }
+      const getTimestamp = (dStr) => {
+        if (!dStr) return 0;
+        const p = dStr.split('/');
+        return new Date(p[2], p[1] - 1, p[0]).getTime();
+      };
+      return getTimestamp(b.displayDeathDate) - getTimestamp(a.displayDeathDate);
+    });
+
     return { 
       totalActiveCount, generalCount, independentCount, 
       males, females, activeCount, inactiveCount,
-      retiringList, bDays, anniversaries 
+      retiringList, deceasedList, bDays, anniversaries 
     };
   }, [employees]);
 
   const searchResults = useMemo(() => {
-    if (!searchQ.trim()) return sortMembersByAgeThenJobId(employees);
+    if (!searchQ.trim()) return sortMembersByAgeThenJobId(employees.filter((e) => !isRetiredMember(e) && !isDeceasedMember(e)));
     const lowerQ = searchQ.toLowerCase().trim();
     return sortMembersByAgeThenJobId(
-      employees.filter(e => 
-        e.name?.toLowerCase().includes(lowerQ) || 
-        e.jobId?.toString().includes(lowerQ) || 
-        e.nationalId?.includes(lowerQ) ||
-        e.phone?.includes(lowerQ)
+      employees.filter(e =>
+        (
+          e.name?.toLowerCase().includes(lowerQ) ||
+          e.jobId?.toString().includes(lowerQ) ||
+          e.nationalId?.includes(lowerQ) ||
+          e.phone?.includes(lowerQ)
+        )
       )
     );
   }, [searchQ, employees]);
@@ -278,7 +314,7 @@ export default function EmployeeDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <div className={clsx("p-4 rounded-2xl border shadow-sm relative overflow-hidden", T.card)}>
           <div className="p-3 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 rounded-xl w-fit mb-3"><PieChart size={20}/></div>
           <p className="text-[10px] font-black text-slate-500 uppercase">إجمالي الأعضاء (النشطين)</p>
@@ -313,9 +349,14 @@ export default function EmployeeDashboard() {
           <p className="text-[10px] font-black text-slate-500 uppercase">مُحالين للمعاش هذا العام</p>
           <p className="text-3xl font-black text-rose-600 mt-1">{stats.retiringList.length}</p>
         </div>
+        <div className={clsx("p-4 rounded-2xl border shadow-sm relative overflow-hidden", T.card)}>
+          <div className="p-3 bg-slate-100 dark:bg-slate-800 text-slate-700 rounded-xl w-fit mb-3"><AlertCircle size={20}/></div>
+          <p className="text-[10px] font-black text-slate-500 uppercase">وفيات هذا العام</p>
+          <p className="text-3xl font-black text-slate-700 mt-1">{stats.deceasedList.length}</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-2 mt-2">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-2 mt-2">
         <div className={clsx("rounded-2xl border shadow-sm overflow-hidden flex flex-col h-[250px]", T.card)}>
           <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-emerald-50/50 dark:bg-emerald-900/10 flex items-center justify-between">
             <h3 className="font-black text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5"><Award size={14}/> أعياد التعيين (اليوم)</h3>
@@ -370,7 +411,10 @@ export default function EmployeeDashboard() {
 
         <div className={clsx("rounded-2xl border shadow-sm overflow-hidden flex flex-col h-[250px]", T.card)}>
           <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-rose-50/50 dark:bg-rose-900/10 flex items-center justify-between">
-            <h3 className="font-black text-[11px] text-rose-700 dark:text-rose-400 flex items-center gap-1.5"><CalendarClock size={14}/> إحالات المعاش (العام الحالي)</h3>
+            <div className="space-y-1">
+              <h3 className="font-black text-[11px] text-rose-700 dark:text-rose-400 flex items-center gap-1.5"><CalendarClock size={14}/> إحالات المعاش (العام الحالي)</h3>
+              <p className="text-[9px] font-bold text-rose-500">التركيز على الخارجين خلال الشهر الحالي</p>
+            </div>
             <span className="text-[9px] font-bold bg-rose-100 text-rose-700 px-2 py-0.5 rounded-md">{stats.retiringList.length} عضو</span>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -386,12 +430,55 @@ export default function EmployeeDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {stats.retiringList.map(emp => (
-                    <tr key={emp.id} className="hover:bg-rose-50/50 dark:hover:bg-rose-900/20 cursor-pointer transition-colors" onClick={() => openProfile(emp)}>
+                    <tr key={emp.id} className={clsx("cursor-pointer transition-colors", emp.isCurrentMonthRetirement ? "bg-amber-50/60 dark:bg-amber-900/10 hover:bg-amber-50" : "hover:bg-rose-50/50 dark:hover:bg-rose-900/20")} onClick={() => openProfile(emp)}>
                       <td className="py-1.5 px-2">
-                        <span className="font-black text-[9px] text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded">{emp.displayRetDate}</span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={clsx("font-black text-[9px] px-1.5 py-0.5 rounded", emp.isCurrentMonthRetirement ? "text-amber-700 bg-amber-100" : "text-rose-600 bg-rose-50")}>{emp.displayRetDate}</span>
+                          {emp.isCurrentMonthRetirement && <span className="text-[8px] font-black text-amber-700">هذا الشهر</span>}
+                        </div>
                       </td>
                       <td className="py-1.5 px-2">
-                        <p className="font-black text-[10px] text-slate-800 dark:text-slate-200 truncate max-w-[130px]">{emp.name}</p>
+                        <p className={clsx("font-black text-[10px] text-slate-800 dark:text-slate-200 truncate max-w-[130px]", emp.retired && "line-through text-rose-700 dark:text-rose-300")}>{emp.name}</p>
+                        <p className="text-[8px] font-bold text-slate-500 truncate max-w-[130px]">{emp.workplace}</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        <div className={clsx("rounded-2xl border shadow-sm overflow-hidden flex flex-col h-[250px]", T.card)}>
+          <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-800/70 flex items-center justify-between">
+            <div className="space-y-1">
+              <h3 className="font-black text-[11px] text-slate-700 dark:text-slate-200 flex items-center gap-1.5"><AlertCircle size={14}/> حالات الوفاة (العام الحالي)</h3>
+              <p className="text-[9px] font-bold text-slate-500">التركيز على الوفيات خلال الشهر الحالي</p>
+            </div>
+            <span className="text-[9px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded-md">{stats.deceasedList.length} عضو</span>
+          </div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {stats.deceasedList.length === 0 ? (
+              <p className="text-center text-[10px] font-bold text-slate-400 mt-6">لا توجد حالات وفاة مسجلة هذا العام</p>
+            ) : (
+              <table className="w-full text-right whitespace-nowrap">
+                <thead className="bg-slate-50 dark:bg-slate-800/80 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
+                  <tr>
+                    <th className="py-2 px-2 font-black text-[9px] text-slate-500">التاريخ</th>
+                    <th className="py-2 px-2 font-black text-[9px] text-slate-500">الاسم والسنترال</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {stats.deceasedList.map(emp => (
+                    <tr key={emp.id} className={clsx("cursor-pointer transition-colors", emp.isCurrentMonthDeath ? "bg-amber-50/60 dark:bg-amber-900/10 hover:bg-amber-50" : "hover:bg-slate-50 dark:hover:bg-slate-800/30")} onClick={() => openProfile(emp)}>
+                      <td className="py-1.5 px-2">
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={clsx("font-black text-[9px] px-1.5 py-0.5 rounded", emp.isCurrentMonthDeath ? "text-amber-700 bg-amber-100" : "text-slate-700 bg-slate-100 dark:bg-slate-700 dark:text-slate-100")}>{emp.displayDeathDate}</span>
+                          {emp.isCurrentMonthDeath && <span className="text-[8px] font-black text-amber-700">هذا الشهر</span>}
+                        </div>
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <p className="font-black text-[10px] text-slate-800 dark:text-slate-200 truncate max-w-[130px] line-through opacity-75">{emp.name}</p>
                         <p className="text-[8px] font-bold text-slate-500 truncate max-w-[130px]">{emp.workplace}</p>
                       </td>
                     </tr>
@@ -427,16 +514,29 @@ export default function EmployeeDashboard() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {searchResults.slice(0, visibleCount).map(emp => (
-              <div key={emp.id} className={clsx("p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all flex flex-col justify-between group", T.card)}>
+            {searchResults.slice(0, visibleCount).map(emp => {
+              const retired = isRetiredMember(emp);
+              const deceased = isDeceasedMember(emp);
+              return (
+              <div key={emp.id} className={clsx("p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all flex flex-col justify-between group", T.card, (retired || deceased) && "border-rose-200 bg-rose-50/40 dark:bg-rose-950/10")}>
                 <div className="flex items-start gap-3 mb-4">
                   <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center border shadow-sm shrink-0">
                     {emp.photo ? <img src={emp.photo} className="w-full h-full object-cover" alt={emp.name}/> : <UserCircle size={28} className="text-slate-400"/>}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="font-black text-sm text-slate-800 dark:text-slate-100 truncate" title={emp.name}>{emp.name}</p>
+                    <p className={clsx("font-black text-sm text-slate-800 dark:text-slate-100 truncate", (retired || deceased) && "line-through text-rose-700 dark:text-rose-300")} title={emp.name}>{emp.name}</p>
                     <p className="text-[10px] font-bold text-teal-600 dark:text-teal-400 mt-0.5 truncate flex items-center gap-1"><Briefcase size={10}/> {emp.jobTitle}</p>
                     <p className="text-[10px] font-bold text-slate-500 mt-0.5 truncate flex items-center gap-1"><Building size={10}/> {emp.workplace || "بدون سنترال"}</p>
+                    {retired && (
+                      <p className="text-[10px] font-black text-rose-600 mt-1">
+                        محال للمعاش: {formatEmployeeDate(getRetirementDate(emp)) || "تم تسجيله كمعاش"}
+                      </p>
+                    )}
+                    {deceased && (
+                      <p className="text-[10px] font-black text-slate-700 mt-1">
+                        وفاة: {formatEmployeeDate(getDeathDate(emp)) || "تم تسجيل الحالة"}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -445,7 +545,7 @@ export default function EmployeeDashboard() {
                   <div className="font-black text-slate-600 dark:text-slate-300 flex items-center gap-1"><Phone size={10} className="text-emerald-500"/> {emp.phone || "—"}</div>
                   <div className="col-span-2 flex items-center gap-2 mt-1 pt-1 border-t border-slate-200 dark:border-slate-700">
                     <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black shadow-sm", emp.membershipStatus === 'نقابة مستقلة' ? "bg-amber-100 text-amber-700" : "bg-teal-100 text-teal-700")}>{emp.membershipStatus || "عضو"}</span>
-                    <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black border", emp.memberState === "نشط" ? "border-emerald-200 text-emerald-600 bg-emerald-50" : "border-rose-200 text-rose-600 bg-rose-50")}>{emp.memberState || "نشط"}</span>
+                    <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black border", emp.memberState === "نشط" && !retired && !deceased ? "border-emerald-200 text-emerald-600 bg-emerald-50" : "border-rose-200 text-rose-600 bg-rose-50")}>{deceased ? "وفاة" : retired ? "معاش" : (emp.memberState || "نشط")}</span>
                   </div>
                 </div>
 
@@ -461,7 +561,7 @@ export default function EmployeeDashboard() {
                   </button>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         )}
 

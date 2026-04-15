@@ -7,9 +7,12 @@ import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
 import { logAuditEvent } from "../../utils/auditLog";
+import { getEmployeeAge } from "../../utils/memberBenefits";
+import { formatMoney } from "../../utils/numberFormat";
 import ResponsiveTable from "../../ui/ResponsiveTable";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
+import { printBoardAllowancesReport, printBoardMeetingsReport, printBoardOverview } from "./BoardPrints";
 import clsx from "clsx";
 import {
   ShieldCheck, Users, CalendarDays, Coins, PieChart, Activity,
@@ -23,31 +26,38 @@ import {
 // §1  الثوابت
 // ═══════════════════════════════════════════════════════════════
 
-const BOARD_ROLES = ["رئيس المجلس", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة"];
+const BOARD_ROLES = ["رئيس المجلس", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة", "عضو مجلس"];
+const BOARD_TERM_START = "2022/06/01";
+const BOARD_TERM_END = "2027/05/31";
+const BOARD_ROLE_ORDER = {
+  "رئيس المجلس": 1,
+  "الأمين العام": 2,
+  "أمين الصندوق": 3,
+  "عضو مجلس إدارة": 4,
+  "عضو مجلس": 5,
+};
 
 const ROLE_META = {
   "رئيس المجلس":    { icon: "👑", color: "amber",   meeting_rate: 75 },
   "الأمين العام":   { icon: "📝", color: "teal",    meeting_rate: 75 },
   "أمين الصندوق":   { icon: "💼", color: "emerald", meeting_rate: 75 },
   "عضو مجلس إدارة": { icon: "👤", color: "slate",   meeting_rate: 75 },
+  "عضو مجلس":       { icon: "👤", color: "slate",   meeting_rate: 75 },
 };
 
 const MONTHLY_ALLOWANCES = {
-  "رئيس المجلس":    { travel: 0, sessions: 0, phone: 0, representation: 0, responsibility: 0 },
-  "الأمين العام":   { travel: 0, sessions: 0, phone: 0, representation: 0, responsibility: 0 },
-  "أمين الصندوق":   { travel: 0, sessions: 0, phone: 0, representation: 0, responsibility: 0 },
-  "عضو مجلس إدارة": { travel: 0, sessions: 0, phone: 0, representation: 0, responsibility: 0 },
+  "رئيس المجلس":    { travel: 0, sessions: 0, hospitality: 0 },
+  "الأمين العام":   { travel: 0, sessions: 0, hospitality: 0 },
+  "أمين الصندوق":   { travel: 0, sessions: 0, hospitality: 0 },
+  "عضو مجلس إدارة": { travel: 0, sessions: 0, hospitality: 0 },
+  "عضو مجلس":       { travel: 0, sessions: 0, hospitality: 0 },
 };
 
 const ALLOWANCE_LABELS = {
   sessions: "بدل جلسات",
-  travel: "بدل انتقال", phone: "بدل تليفون",
-  representation: "بدل تمثيل", responsibility: "بدل مسؤولية",
+  travel: "بدل انتقال",
+  hospitality: "بدل ضيافة",
 };
-
-const CUSTOM_ALLOWANCE_TYPES = [
-  "مكافأة أداء", "بدل سفر خارجي", "بدل مؤتمر", "إعانة طارئة", "بدل تمثيل خاص", "أخرى",
-];
 
 const MEETING_TYPES = { ordinary: "عادي", emergency: "طارئ", annual: "سنوي عام", extraordinary: "استثنائي" };
 const MEETING_STATUSES = { scheduled: "مجدول", held: "منعقد", cancelled: "ملغي", postponed: "مؤجل" };
@@ -68,9 +78,22 @@ const MEMBER_STATE_COLORS = {
 };
 const ARABIC_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 
+const parseBoardDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const normalized = String(value).trim().replace(/\//g, "-");
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 const formatDate = (ds) => {
   if (!ds) return "—";
-  try { return new Date(ds).toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" }); }
+  try {
+    const parsed = parseBoardDate(ds);
+    return parsed
+      ? parsed.toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" })
+      : ds;
+  }
   catch { return ds; }
 };
 
@@ -78,6 +101,27 @@ const getInitials = (name = "") => name.split(" ").slice(0, 2).map(w => w[0]).jo
 
 const AVATAR_BG = ["bg-teal-600","bg-sky-600","bg-violet-600","bg-amber-600","bg-rose-600","bg-emerald-600","bg-indigo-600","bg-pink-600"];
 const avatarBg = (id, idx = 0) => AVATAR_BG[(String(id || idx).charCodeAt(0) || idx) % AVATAR_BG.length];
+const sortBoardMembers = (members = []) =>
+  [...members].sort((a, b) => {
+    const roleDiff = (BOARD_ROLE_ORDER[a.membershipStatus] || 99) - (BOARD_ROLE_ORDER[b.membershipStatus] || 99);
+    if (roleDiff !== 0) return roleDiff;
+    const ageDiff = getEmployeeAge(b) - getEmployeeAge(a);
+    if (ageDiff !== 0) return ageDiff;
+    return String(a.name || "").localeCompare(String(b.name || ""), "ar");
+  });
+
+const getSettlementAllowanceTotal = (transactions = []) =>
+  transactions
+    .filter((t) => ["advance", "activity"].includes(t.type) && t.isSettled)
+    .reduce((sum, tx) => {
+      const txTotal = (tx.settlementExpenses || []).reduce((expenseSum, expense) => {
+        if (!["بدل انتقال", "بدل جلسات", "ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category)) {
+          return expenseSum;
+        }
+        return expenseSum + Number(expense.amount || 0);
+      }, 0);
+      return sum + txTotal;
+    }, 0);
 
 // ═══════════════════════════════════════════════════════════════
 // §2  مكونات مشتركة
@@ -189,23 +233,21 @@ function ConfirmDelete({ open, onClose, onConfirm, label }) {
 // §3  تبويب النظرة العامة (Dashboard)
 // ═══════════════════════════════════════════════════════════════
 
-function DashboardTab({ members, meetings, customAllowances, settlementTransactions, T, setActiveTab, openEmployeeModal }) {
+function DashboardTab({ members, meetings, settlementTransactions, T, setActiveTab, openEmployeeModal }) {
   const activeMembers = members.filter(m => !["وفاة","استقالة"].includes(m.memberState)).length;
   const heldMeetings  = meetings.filter(m => m.status === "held").length;
   const decisionsCount = meetings.reduce((acc, m) => acc + (m.decisions?.length || 0), 0);
-  const settlementAllowanceTotal = settlementTransactions
-    .filter(t => ["advance", "activity"].includes(t.type) && t.isSettled)
-    .reduce((sum, tx) => {
-      const txTotal = (tx.settlementExpenses || []).reduce((expenseSum, expense) => {
-        if (!["بدل انتقال", "بدل جلسات"].includes(expense.category)) return expenseSum;
-        return expenseSum + Number(expense.amount || 0);
-      }, 0);
-      return sum + txTotal;
-    }, 0);
+  const settlementAllowanceTotal = getSettlementAllowanceTotal(settlementTransactions);
   const totalAllowances = members.reduce((sum, m) => {
     const monthly = Object.values(MONTHLY_ALLOWANCES[m.membershipStatus] || {}).reduce((a,b)=>a+b,0) * 12;
     return sum + monthly;
-  }, 0) + customAllowances.reduce((s,a)=>s+(a.amount||0),0) + settlementAllowanceTotal;
+  }, 0) + settlementAllowanceTotal;
+  const executiveMembers = members.filter((m) => ["رئيس المجلس", "الأمين العام", "أمين الصندوق"].includes(m.membershipStatus)).length;
+  const termStart = parseBoardDate(BOARD_TERM_START);
+  const termEnd = parseBoardDate(BOARD_TERM_END);
+  const termTotalDays = termStart && termEnd ? Math.max(1, Math.ceil((termEnd - termStart) / (1000 * 60 * 60 * 24))) : 1;
+  const termRemainingDays = termEnd ? Math.max(0, Math.ceil((termEnd - new Date()) / (1000 * 60 * 60 * 24))) : 0;
+  const termProgress = Math.min(100, Math.max(0, ((termTotalDays - termRemainingDays) / termTotalDays) * 100));
 
   return (
     <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
@@ -214,7 +256,50 @@ function DashboardTab({ members, meetings, customAllowances, settlementTransacti
         <BoardStatCard label="أعضاء المجلس" value={members.length} sub={`${activeMembers} نشط`} icon={Users} color="teal" T={T}/>
         <BoardStatCard label="اجتماعات منعقدة" value={heldMeetings} sub={`${meetings.filter(m=>m.status==="scheduled").length} مجدول`} icon={CalendarDays} color="sky" T={T}/>
         <BoardStatCard label="قرارات صادرة" value={decisionsCount} sub="في محاضر رسمية" icon={Gavel} color="amber" T={T}/>
-        <BoardStatCard label="تقديري البدلات" value={`${(totalAllowances/1000).toFixed(0)}k`} sub="جنيه مصري" icon={Coins} color="emerald" T={T}/>
+        <BoardStatCard label="إجمالي البدلات" value={formatMoney(totalAllowances)} sub="بدلات معتمدة" icon={Coins} color="emerald" T={T}/>
+      </div>
+
+      <div className={clsx("rounded-[2rem] border shadow-sm overflow-hidden", T.card)}>
+        <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_0.7fr]">
+          <div className="p-5 bg-gradient-to-l from-amber-50 via-white to-white dark:from-amber-900/10 dark:via-slate-900 dark:to-slate-900">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <span className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[10px] font-black border border-amber-200 dark:border-amber-800/40">
+                الدورة النقابية الحالية
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 text-[10px] font-black border border-teal-200 dark:border-teal-800/40">
+                من {BOARD_TERM_START} إلى {BOARD_TERM_END}
+              </span>
+            </div>
+            <h3 className="text-lg font-black text-slate-800 dark:text-slate-100">لوحة قيادة مجلس الإدارة</h3>
+            <p className={clsx("text-xs font-bold mt-1", T.muted)}>
+              ترتيب الأعضاء معتمد حسب الصفة الوظيفية أولاً ثم الأكبر سنًا عند التساوي، والبدلات تُقرأ من التسويات المعتمدة فقط.
+            </p>
+            <div className="h-2.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden mt-4">
+              <div className="h-full rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 transition-all duration-700" style={{ width: `${termProgress}%` }}/>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 mt-3 text-[11px] font-black">
+              <span className="text-amber-600 dark:text-amber-400">{termRemainingDays.toLocaleString("ar-EG")} يومًا حتى نهاية الدورة</span>
+              <span className="text-slate-400">بداية الدورة: {formatDate(BOARD_TERM_START)}</span>
+              <span className="text-slate-400">نهاية الدورة: {formatDate(BOARD_TERM_END)}</span>
+            </div>
+          </div>
+          <div className="p-5 border-t lg:border-t-0 lg:border-r border-slate-100 dark:border-slate-800">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 p-4">
+                <div className="text-[10px] font-black text-slate-400 mb-1">القيادات التنفيذية</div>
+                <div className="text-2xl font-black text-amber-600">{executiveMembers}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 p-4">
+                <div className="text-[10px] font-black text-slate-400 mb-1">أعضاء المجلس</div>
+                <div className="text-2xl font-black text-sky-600">{Math.max(members.length - executiveMembers, 0)}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 p-4 col-span-2">
+                <div className="text-[10px] font-black text-slate-400 mb-1">بدلات معتمدة من التسويات</div>
+                <div className="text-2xl font-black text-emerald-600">{formatMoney(settlementAllowanceTotal)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -280,7 +365,7 @@ function DashboardTab({ members, meetings, customAllowances, settlementTransacti
                 <div className="space-y-1">
                   {ms.map(m=>(
                     <div key={m.id} onClick={()=>openEmployeeModal(m)} className="text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 cursor-pointer">
-                      {m.name?.split(" ").slice(0,2).join(" ")}
+                      {m.name || "—"}
                     </div>
                   ))}
                   {ms.length===0 && <div className="text-[10px] text-slate-400">شاغر</div>}
@@ -297,29 +382,17 @@ function DashboardTab({ members, meetings, customAllowances, settlementTransacti
           <div className="w-14 h-14 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-2xl shadow-md shrink-0">⚖️</div>
           <div className="text-center sm:text-right">
             <h3 className="text-sm font-black text-amber-600 dark:text-amber-500">السجل الإلكتروني الرسمي — ERB</h3>
-            <p className="text-[10px] font-bold text-slate-400 mt-1">جميع القرارات الواردة أدناه معتمدة وموثقة رسمياً. الدورة النقابية 2023-2026</p>
+            <p className="text-[10px] font-bold text-slate-400 mt-1">جميع القرارات الواردة أدناه معتمدة وموثقة رسمياً. الدورة النقابية من {BOARD_TERM_START} إلى {BOARD_TERM_END}</p>
           </div>
           <div className="sm:mr-auto flex gap-2">
-            <button className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 text-[10px] font-black hover:bg-amber-500/20 transition-all flex items-center gap-1"><Printer size={12}/> طباعة</button>
+            <button
+              onClick={() => printBoardMeetingsReport({ meetings, members })}
+              className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 text-[10px] font-black hover:bg-amber-500/20 transition-all flex items-center gap-1"
+            >
+              <Printer size={12}/> طباعة
+            </button>
             <button className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 text-[10px] font-black hover:bg-slate-200 dark:hover:bg-slate-700 transition-all flex items-center gap-1"><Download size={12}/> تصدير</button>
           </div>
-        </div>
-
-        {/* Signatories */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-          {members.filter(m=>!["وفاة","استقالة"].includes(m.memberState)).slice(0,4).map((m,i)=>(
-            <div key={m.id} className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-white/60 dark:bg-slate-900/30 text-center flex flex-col items-center gap-2">
-              <Avatar member={m} size="md" idx={i}/>
-              <div>
-                <p className="text-[10px] font-black text-slate-800 dark:text-slate-200 leading-tight">{m.name?.split(" ").slice(0,2).join(" ")}</p>
-                <p className="text-[9px] font-bold text-amber-600 mt-0.5">{m.membershipStatus}</p>
-              </div>
-              <div className="w-full h-px bg-slate-200 dark:bg-slate-700 relative">
-                <span className="absolute inset-x-0 -top-2 text-center text-[9px] font-mono text-slate-300 italic">Signed</span>
-              </div>
-              <p className="text-[9px] font-black text-emerald-500 flex items-center gap-0.5"><CheckCircle2 size={9}/> موثق</p>
-            </div>
-          ))}
         </div>
 
         {/* Decisions log */}
@@ -374,6 +447,36 @@ function MembersTab({ members, T, openEmployeeModal }) {
 
   return (
     <div className="animate-in fade-in duration-500 space-y-4">
+      <div className={clsx("p-4 rounded-3xl border shadow-sm bg-gradient-to-l from-teal-50/80 via-white to-white dark:from-teal-900/10 dark:via-slate-900 dark:to-slate-900", T.card)}>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-black text-slate-800 dark:text-slate-100">الهيكل الرسمي لمجلس الإدارة</h3>
+            <p className={clsx("text-[11px] font-bold mt-1", T.muted)}>
+              العرض مرتب تلقائيًا حسب الصفة الوظيفية ثم السن من الأكبر إلى الأصغر داخل كل صفة.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
+              <div className="text-[10px] font-black text-slate-400">إجمالي المجلس</div>
+              <div className="text-lg font-black text-teal-600">{members.length}</div>
+            </div>
+            <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
+              <div className="text-[10px] font-black text-slate-400">الرئاسة والأمانات</div>
+              <div className="text-lg font-black text-amber-600">{members.filter((m) => ["رئيس المجلس", "الأمين العام", "أمين الصندوق"].includes(m.membershipStatus)).length}</div>
+            </div>
+            <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
+              <div className="text-[10px] font-black text-slate-400">الأعضاء</div>
+              <div className="text-lg font-black text-sky-600">{members.filter((m) => ["عضو مجلس إدارة", "عضو مجلس"].includes(m.membershipStatus)).length}</div>
+            </div>
+            <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
+              <div className="text-[10px] font-black text-slate-400">مدة الدورة</div>
+              <div className="text-[11px] font-black text-slate-700 dark:text-slate-200">{BOARD_TERM_START}</div>
+              <div className="text-[11px] font-black text-slate-400">{BOARD_TERM_END}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-2">
         <h2 className="text-lg font-black flex items-center gap-2"><Users size={20} className="text-teal-500"/> أعضاء مجلس الإدارة</h2>
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -391,7 +494,8 @@ function MembersTab({ members, T, openEmployeeModal }) {
           {key:"رئيس المجلس",label:"الرئيس"},
           {key:"الأمين العام",label:"الأمين"},
           {key:"أمين الصندوق",label:"الصندوق"},
-          {key:"عضو مجلس إدارة",label:"الأعضاء"},
+          {key:"عضو مجلس إدارة",label:"أعضاء الإدارة"},
+          {key:"عضو مجلس",label:"عضو مجلس"},
           {key:"inactive",label:"غير نشط"},
         ].map(f=>(
           <button key={f.key} onClick={()=>setFilter(f.key)} className={clsx("px-3 py-1.5 rounded-full text-[11px] font-black transition-all border",
@@ -915,14 +1019,8 @@ function MeetingsTab({ members, meetings, T }) {
 // §6  تبويب البدلات — مفعّل مع الإضافة والحذف
 // ═══════════════════════════════════════════════════════════════
 
-const EMPTY_CUSTOM_ALLOWANCE = { memberId:"", type:"مكافأة أداء", amount:"", date:"", notes:"" };
-
-function AllowancesTab({ members, meetings, customAllowances, settlementTransactions, T }) {
-  const [subTab, setSubTab]     = useState("meetings");
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm]         = useState(EMPTY_CUSTOM_ALLOWANCE);
-  const [saving, setSaving]     = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+function AllowancesTab({ members, settlementTransactions, T }) {
+  const [subTab, setSubTab] = useState("members");
   const [filterMember, setFilterMember] = useState("all");
   const [filterMonth, setFilterMonth] = useState("all");
   const [filterYear, setFilterYear] = useState("all");
@@ -934,22 +1032,20 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
     const yearOk = filterYear === "all" || yearValue === filterYear;
     return monthOk && yearOk;
   }, [filterMonth, filterYear]);
+
   const periodYears = useMemo(() => {
-    const dates = [
-      ...customAllowances.map((item) => item.date || ""),
-      ...settlementTransactions.flatMap((tx) => [
-        tx.date || "",
-        tx.settlementDate || "",
-        ...(tx.settlementExpenses || []).map((expense) => expense.date || ""),
-      ]),
-    ];
+    const dates = settlementTransactions.flatMap((tx) => [
+      tx.date || "",
+      tx.settlementDate || "",
+      ...(tx.settlementExpenses || []).map((expense) => expense.date || ""),
+    ]);
     return [...new Set(dates.map((value) => String(value || "").slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a));
-  }, [customAllowances, settlementTransactions]);
+  }, [settlementTransactions]);
 
   const settlementAllowanceMap = useMemo(() => {
     const result = {};
     settlementTransactions
-      .filter(t => ["advance", "activity"].includes(t.type) && t.isSettled)
+      .filter((t) => ["advance", "activity"].includes(t.type) && t.isSettled)
       .forEach((tx) => {
         (tx.settlementExpenses || []).forEach((expense) => {
           if (!matchesPeriod(expense.date || tx.settlementDate || tx.date || "")) return;
@@ -958,13 +1054,15 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
               ? "travel"
               : expense.category === "بدل جلسات"
                 ? "sessions"
-                : null;
+                : ["ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category)
+                  ? "hospitality"
+                  : null;
 
           if (!allowanceKey || !Array.isArray(expense.boardMembers) || expense.boardMembers.length === 0) return;
 
           const perMember = Number(expense.allowancePerMember || 0) || (Number(expense.amount || 0) / expense.boardMembers.length);
           expense.boardMembers.forEach((memberId) => {
-            if (!result[memberId]) result[memberId] = { travel: 0, sessions: 0 };
+            if (!result[memberId]) result[memberId] = { travel: 0, sessions: 0, hospitality: 0 };
             result[memberId][allowanceKey] += perMember;
           });
         });
@@ -972,94 +1070,38 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
     return result;
   }, [matchesPeriod, settlementTransactions]);
 
-  // Session allowances per member from approved settlements only
-  const meetingRows = members.map(m=>{
-    const sessionExpenses = settlementTransactions
-      .filter(t => ["advance", "activity"].includes(t.type) && t.isSettled)
-        .flatMap(tx => (tx.settlementExpenses || []).filter(exp => exp.category === "بدل جلسات" && exp.boardMembers?.includes(m.id))
-        .map(exp => ({
-          meetingTitle: exp.meetingTitle || "جلسة مسواة",
-          meetingId: exp.meetingId || "",
-          perMember: Number(exp.allowancePerMember || 0),
-          date: exp.date || tx.settlementDate || tx.date || "",
+  const memberRows = members.map((m) => {
+    const allowances = settlementAllowanceMap[m.id] || { travel: 0, sessions: 0, hospitality: 0 };
+    const total = Number(allowances.sessions || 0) + Number(allowances.travel || 0) + Number(allowances.hospitality || 0);
+    return { member: m, allowances, total };
+  }).sort((a, b) => b.total - a.total);
+
+  const detailedRows = settlementTransactions
+    .filter((t) => ["advance", "activity"].includes(t.type) && t.isSettled)
+    .flatMap((tx) =>
+      (tx.settlementExpenses || [])
+        .filter((expense) => ["بدل انتقال", "بدل جلسات", "ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category))
+        .filter((expense) => matchesPeriod(expense.date || tx.settlementDate || tx.date || ""))
+        .map((expense) => ({
+          id: `${tx.id}-${expense.id || expense.category}-${expense.date || tx.settlementDate || tx.date || ""}`,
+          category: expense.category === "ضيافة وبوفيه" ? "بدل ضيافة" : expense.category,
+          amount: Number(expense.amount || 0),
+          perMember: Number(expense.allowancePerMember || 0),
+          memberIds: expense.boardMembers || [],
+          date: expense.date || tx.settlementDate || tx.date || "",
+          notes: expense.notes || "",
+          sourceName: tx.employeeName || tx.party || "تسوية معتمدة",
         }))
-        .filter(item => matchesPeriod(item.date)));
+    );
 
-    const uniqueRates = [...new Set(sessionExpenses.map(item => Number(item.perMember || 0)).filter(Boolean))];
-
-    return {
-      member: m,
-      attendedCount: sessionExpenses.length,
-      rate: uniqueRates.length === 1 ? uniqueRates[0] : null,
-      total: sessionExpenses.reduce((sum, item) => sum + Number(item.perMember || 0), 0),
-      attended: sessionExpenses,
-    };
-  }).sort((a,b)=>b.total-a.total);
-
-  // Monthly allowances per member
-  const monthlyRows = members.map(m=>{
-    const baseAllowances = MONTHLY_ALLOWANCES[m.membershipStatus]||{};
-    const settlementAllowances = settlementAllowanceMap[m.id] || { travel: 0, sessions: 0 };
-    const allowances = Object.keys(ALLOWANCE_LABELS).reduce((acc, key) => {
-      acc[key] = Number(baseAllowances[key] || 0) + Number(settlementAllowances[key] || 0);
-      return acc;
-    }, {});
-    const recurringMonthlyTotal = Object.values(baseAllowances).reduce((s,v)=>s+Number(v||0),0);
-    const sessionsTotal = Number(settlementAllowances.sessions || 0);
-    const travelTotal = Number(settlementAllowances.travel || 0);
-    const settlementTotal = travelTotal + sessionsTotal;
-    const total = Object.values(allowances).reduce((s,v)=>s+Number(v||0),0);
-    return {member:m, allowances, total, recurringMonthlyTotal, settlementTotal, sessionsTotal, travelTotal};
-  }).sort((a,b)=>b.total-a.total);
-
-  const grandMeetingTotal  = meetingRows.reduce((s,r)=>s+r.total,0);
-  const grandMonthlyTotal  = monthlyRows.reduce((s,r)=>s+r.total,0);
-  const grandRecurringMonthlyTotal = monthlyRows.reduce((s,r)=>s+r.recurringMonthlyTotal,0);
-  const grandTravelAllowanceTotal = monthlyRows.reduce((s,r)=>s+r.travelTotal,0);
-  const grandCustomTotal   = (filterMember==="all" ? customAllowances : customAllowances.filter(a=>a.memberId===filterMember))
-    .filter((a) => matchesPeriod(a.date || ""))
-    .reduce((s,a)=>s+(a.amount||0),0);
-
-  const saveCustom = async() => {
-    if (!form.memberId||!form.amount||!form.date) return;
-    setSaving(true);
-    try {
-      await addDoc(collection(db,"board_allowances"),{...form,amount:parseFloat(form.amount),createdAt:serverTimestamp()});
-      await logAuditEvent("board_allowance_created", {
-        memberId: form.memberId,
-        type: form.type,
-        amount: Number(form.amount || 0),
-        date: form.date,
-      });
-      setForm(EMPTY_CUSTOM_ALLOWANCE); setShowForm(false);
-    } catch(e){console.error(e);} finally{setSaving(false);}
-  };
-
-  const deleteCustom = async(id) => {
-    try {
-      await deleteDoc(doc(db,"board_allowances",id));
-      await logAuditEvent("board_allowance_deleted", {
-        allowanceId: id,
-        type: deleteTarget?.type || "",
-        memberId: deleteTarget?.memberId || "",
-        amount: Number(deleteTarget?.amount || 0),
-      });
-      setDeleteTarget(null);
-    } catch(e){console.error(e);}
-  };
-
-  const memberName = (id) => members.find(m=>m.id===id)?.name||"—";
-  const memberIdx  = (id) => members.findIndex(m=>m.id===id);
-
-  const filteredCustom = (filterMember==="all" ? customAllowances : customAllowances.filter(a=>a.memberId===filterMember))
-    .filter((a) => matchesPeriod(a.date || ""));
+  const grandSessionsTotal = memberRows.reduce((s, r) => s + Number(r.allowances.sessions || 0), 0);
+  const grandTravelTotal = memberRows.reduce((s, r) => s + Number(r.allowances.travel || 0), 0);
+  const grandHospitalityTotal = memberRows.reduce((s, r) => s + Number(r.allowances.hospitality || 0), 0);
+  const grandTotal = grandSessionsTotal + grandTravelTotal + grandHospitalityTotal;
 
   return (
     <div className="animate-in fade-in duration-500 space-y-5">
-      <ConfirmDelete open={!!deleteTarget} onClose={()=>setDeleteTarget(null)} label={deleteTarget?.type||"البدل"}
-        onConfirm={()=>deleteCustom(deleteTarget?.id)}/>
-
-      <div className={clsx("p-3 rounded-2xl border flex flex-wrap items-center gap-2", T.card)}>
+      <div className={clsx("p-4 rounded-3xl border flex flex-wrap items-center gap-3 bg-gradient-to-l from-amber-50/80 to-white dark:from-amber-900/10 dark:to-slate-900", T.card)}>
         <span className="text-[11px] font-black text-slate-400 flex items-center gap-1"><Filter size={12}/> الفترة:</span>
         <select value={filterMonth} onChange={e=>setFilterMonth(e.target.value)} className={clsx(inputCls,"w-auto py-1.5 text-xs min-w-[110px]")}>
           <option value="all">كل الشهور</option>
@@ -1071,22 +1113,24 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
           <option value="all">كل السنوات</option>
           {periodYears.map((year) => <option key={year} value={year}>{year}</option>)}
         </select>
-        <span className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-900/10 text-amber-700 dark:text-amber-300 text-[10px] font-black border border-amber-100 dark:border-amber-800/40">
-          البدلات حسب الفترة المحددة
+        <select className={clsx(inputCls,"w-auto py-1.5 text-xs min-w-[130px]")} value={filterMember} onChange={e=>setFilterMember(e.target.value)}>
+          <option value="all">كل الأعضاء</option>
+          {members.map(m=><option key={m.id} value={m.id}>{m.name?.split(" ").slice(0,3).join(" ")}</option>)}
+        </select>
+        <span className="px-2.5 py-1 rounded-lg bg-amber-100/80 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-[10px] font-black border border-amber-200 dark:border-amber-800/40">
+          تعرض البدلات المعتمدة من التسويات فقط
         </span>
       </div>
 
-      {/* Totals */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          {label:"بدل الجلسات",value:grandMeetingTotal,color:"text-sky-600"},
-          {label:"بدل الانتقال",value:grandTravelAllowanceTotal,color:"text-indigo-600"},
-          {label:"البدلات الشهرية",value:grandRecurringMonthlyTotal,color:"text-emerald-600"},
-          {label:"بدلات إضافية",value:grandCustomTotal,color:"text-violet-600"},
-          {label:"الإجمالي التقديري",value:grandMeetingTotal+grandTravelAllowanceTotal+grandRecurringMonthlyTotal*12+grandCustomTotal,color:"text-amber-600"},
+          {label:"بدل الجلسات",value:grandSessionsTotal,color:"text-sky-600"},
+          {label:"بدل الانتقال",value:grandTravelTotal,color:"text-indigo-600"},
+          {label:"بدل الضيافة",value:grandHospitalityTotal,color:"text-emerald-600"},
+          {label:"الإجمالي المعتمد",value:grandTotal,color:"text-amber-600"},
         ].map((s,i)=>(
           <div key={i} className={clsx("p-4 rounded-2xl border text-center",T.card)}>
-            <div className={clsx("text-xl font-black",s.color)}>{s.value.toLocaleString()} ج</div>
+            <div className={clsx("text-xl font-black",s.color)}>{formatMoney(s.value)}</div>
             <div className="text-[10px] font-bold text-slate-400 mt-1">{s.label}</div>
           </div>
         ))}
@@ -1096,9 +1140,8 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
       <div className="flex gap-2 flex-wrap items-center justify-between">
         <div className="flex gap-2 flex-wrap">
           {[
-            {k:"meetings",l:"🏛️ بدل الجلسات"},
-            {k:"monthly",l:"📅 البدلات الشهرية"},
-            {k:"custom",l:"➕ بدلات إضافية"},
+            {k:"members",l:"👥 حسب العضو"},
+            {k:"details",l:"🧾 سجل البدلات"},
             {k:"summary",l:"📊 ملخص"},
           ].map(t=>(
             <button key={t.k} onClick={()=>setSubTab(t.k)} className={clsx("px-3 py-1.5 rounded-xl text-[11px] font-black transition-all border",
@@ -1107,33 +1150,28 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
             </button>
           ))}
         </div>
-        {subTab==="custom" && (
-          <button onClick={()=>setShowForm(v=>!v)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-black bg-violet-500 text-white hover:bg-violet-600 shadow-sm shadow-violet-500/20 transition-all">
-            <Plus size={14}/> إضافة بدل
-          </button>
-        )}
-        {subTab==="meetings" && (
+        {subTab==="details" && (
           <button className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-all">
             <Download size={13}/> تصدير
           </button>
         )}
       </div>
 
-      {/* ── بدلات الاجتماعات ── */}
-      {subTab==="meetings" && (
+      {subTab==="members" && (
         <div className={clsx("rounded-2xl border shadow-sm overflow-hidden",T.card)}>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[540px]">
+            <table className="w-full min-w-[640px]">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
                   <th className="p-3.5 text-right text-[10px] font-black text-slate-500 uppercase tracking-wide">العضو</th>
-                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">جلسات مسواة</th>
-                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">نصيب الجلسة</th>
+                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">بدل الجلسات</th>
+                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">بدل الانتقال</th>
+                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">بدل الضيافة</th>
                   <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-wide">الإجمالي</th>
                 </tr>
               </thead>
               <tbody>
-                {meetingRows.map((r,i)=>(
+                {memberRows.filter((r) => filterMember === "all" || r.member.id === filterMember).map((r,i)=>(
                   <tr key={r.member.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-amber-500/3 transition-colors">
                     <td className="p-3.5">
                       <div className="flex items-center gap-2.5">
@@ -1144,20 +1182,20 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
                         </div>
                       </div>
                     </td>
-                    <td className="p-3.5 text-center">
-                      <span className="px-3 py-1 rounded-lg bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400 text-xs font-black">
-                        {r.attendedCount}
-                      </span>
-                    </td>
-                    <td className="p-3.5 text-center text-xs font-bold text-slate-500">{typeof r.rate === "number" ? `${r.rate.toLocaleString()} ج` : (r.attendedCount > 0 ? "متغير" : "—")}</td>
-                    <td className="p-3.5 text-center font-black text-base text-amber-600">{r.total.toLocaleString()} ج</td>
+                    <td className="p-3.5 text-center text-xs font-bold text-sky-600">{formatMoney(r.allowances.sessions || 0)}</td>
+                    <td className="p-3.5 text-center text-xs font-bold text-indigo-600">{formatMoney(r.allowances.travel || 0)}</td>
+                    <td className="p-3.5 text-center text-xs font-bold text-emerald-600">{formatMoney(r.allowances.hospitality || 0)}</td>
+                    <td className="p-3.5 text-center font-black text-base text-amber-600">{formatMoney(r.total)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="bg-amber-50 dark:bg-amber-900/10 border-t-2 border-amber-200 dark:border-amber-800/30">
-                  <td className="p-3.5 font-black text-xs text-slate-700 dark:text-slate-200" colSpan={3}>الإجمالي الفعلي لبدل الجلسات من التسويات</td>
-                  <td className="p-3.5 text-center font-black text-lg text-amber-600">{grandMeetingTotal.toLocaleString()} ج</td>
+                  <td className="p-3.5 font-black text-xs text-slate-700 dark:text-slate-200">الإجمالي</td>
+                  <td className="p-3.5 text-center font-black text-xs text-sky-600">{formatMoney(grandSessionsTotal)}</td>
+                  <td className="p-3.5 text-center font-black text-xs text-indigo-600">{formatMoney(grandTravelTotal)}</td>
+                  <td className="p-3.5 text-center font-black text-xs text-emerald-600">{formatMoney(grandHospitalityTotal)}</td>
+                  <td className="p-3.5 text-center font-black text-lg text-amber-600">{formatMoney(grandTotal)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -1165,48 +1203,44 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
         </div>
       )}
 
-      {/* ── البدلات الشهرية ── */}
-      {subTab==="monthly" && (
+      {subTab==="details" && (
         <div className={clsx("rounded-2xl border shadow-sm overflow-hidden",T.card)}>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px]">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
-                  <th className="p-3.5 text-right text-[10px] font-black text-slate-500 uppercase">العضو</th>
-                  {Object.values(ALLOWANCE_LABELS).map(l=><th key={l} className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase">{l}</th>)}
-                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase">الإجمالي</th>
+                  <th className="p-3.5 text-right text-[10px] font-black text-slate-500 uppercase">البدل</th>
+                  <th className="p-3.5 text-right text-[10px] font-black text-slate-500 uppercase">أعضاء المجلس</th>
+                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase">تاريخ التسوية</th>
+                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase">إجمالي البند</th>
+                  <th className="p-3.5 text-center text-[10px] font-black text-slate-500 uppercase">نصيب العضو</th>
+                  <th className="p-3.5 text-right text-[10px] font-black text-slate-500 uppercase">البيان</th>
                 </tr>
               </thead>
               <tbody>
-                {monthlyRows.map((r,i)=>(
-                  <tr key={r.member.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/3 transition-colors">
+                {detailedRows.filter((row) => filterMember === "all" || row.memberIds.includes(filterMember)).map((row)=>(
+                  <tr key={row.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/3 transition-colors">
+                    <td className="p-3.5 font-black text-xs text-slate-800 dark:text-slate-100">{row.category}</td>
                     <td className="p-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <Avatar member={r.member} size="sm" idx={i}/>
-                        <div>
-                          <p className="font-black text-xs text-slate-800 dark:text-slate-100">{r.member.name}</p>
-                          <p className="text-[9px] font-bold text-slate-400">{r.member.membershipStatus}</p>
-                        </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {row.memberIds.map((id) => {
+                          const member = members.find((m) => m.id === id);
+                          return <span key={id} className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-black text-slate-600 dark:text-slate-300">{member?.name?.split(" ").slice(0,2).join(" ") || "عضو"}</span>;
+                        })}
                       </div>
                     </td>
-                    {Object.keys(ALLOWANCE_LABELS).map(k=>(
-                      <td key={k} className="p-3.5 text-center text-xs font-bold text-slate-600 dark:text-slate-300">
-                        {(r.allowances[k]||0).toLocaleString()} ج
-                      </td>
-                    ))}
-                    <td className="p-3.5 text-center font-black text-base text-emerald-600">{r.total.toLocaleString()} ج</td>
+                    <td className="p-3.5 text-center text-xs font-bold text-slate-500">{formatDate(row.date)}</td>
+                    <td className="p-3.5 text-center font-black text-base text-amber-600">{formatMoney(row.amount)}</td>
+                    <td className="p-3.5 text-center text-xs font-bold text-slate-600 dark:text-slate-300">{formatMoney(row.perMember || 0)}</td>
+                    <td className="p-3.5 text-[11px] text-slate-400 font-bold max-w-[180px] truncate">{row.notes || row.sourceName}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="bg-emerald-50 dark:bg-emerald-900/10 border-t-2 border-emerald-200 dark:border-emerald-800/30">
-                  <td className="p-3.5 font-black text-xs text-slate-700 dark:text-slate-200">الإجمالي الشهري</td>
-                  {Object.keys(ALLOWANCE_LABELS).map(k=>(
-                    <td key={k} className="p-3.5 text-center font-black text-xs text-emerald-600">
-                      {monthlyRows.reduce((s,r)=>s+(r.allowances[k]||0),0).toLocaleString()}
-                    </td>
-                  ))}
-                  <td className="p-3.5 text-center font-black text-lg text-emerald-600">{grandMonthlyTotal.toLocaleString()} ج</td>
+                  <td className="p-3.5 font-black text-xs text-slate-700 dark:text-slate-200" colSpan={3}>الإجمالي المعتمد من التسويات</td>
+                  <td className="p-3.5 text-center font-black text-lg text-emerald-600">{formatMoney(detailedRows.filter((row) => filterMember === "all" || row.memberIds.includes(filterMember)).reduce((s,row)=>s+row.amount,0))}</td>
+                  <td colSpan={2}/>
                 </tr>
               </tfoot>
             </table>
@@ -1214,122 +1248,14 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
         </div>
       )}
 
-      {/* ── البدلات الإضافية ── */}
-      {subTab==="custom" && (
-        <div className="space-y-4">
-          {/* Add form (inline) */}
-          {showForm && (
-            <div className={clsx("p-5 rounded-2xl border-2 border-dashed border-violet-300 dark:border-violet-800/50 bg-violet-50/30 dark:bg-violet-900/10",T.card)}>
-              <h4 className="text-xs font-black text-violet-700 dark:text-violet-400 mb-4 flex items-center gap-1.5"><Plus size={13}/> إضافة بدل إضافي</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormField label="العضو" required>
-                  <select className={inputCls} value={form.memberId} onChange={e=>setForm(f=>({...f,memberId:e.target.value}))}>
-                    <option value="">-- اختر العضو --</option>
-                    {members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                </FormField>
-                <FormField label="نوع البدل" required>
-                  <select className={inputCls} value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}>
-                    {CUSTOM_ALLOWANCE_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
-                  </select>
-                </FormField>
-                <FormField label="المبلغ (جنيه)" required>
-                  <input type="number" min="0" className={inputCls} placeholder="0" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))}/>
-                </FormField>
-                <FormField label="التاريخ" required>
-                  <ArabicDatePicker label="" value={form.date} onChange={v=>setForm(f=>({...f,date:v}))} />
-                </FormField>
-                <FormField label="ملاحظات" hint="">
-                  <input className={inputCls} placeholder="سبب البدل أو الملاحظات..." value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))}/>
-                </FormField>
-              </div>
-              <div className="flex gap-2 justify-end mt-4">
-                <button onClick={()=>{setShowForm(false);setForm(EMPTY_CUSTOM_ALLOWANCE);}} className="px-4 py-2 rounded-xl text-xs font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">إلغاء</button>
-                <button onClick={saveCustom} disabled={!form.memberId||!form.amount||!form.date||saving}
-                  className={clsx("px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all",
-                    form.memberId&&form.amount&&form.date&&!saving?"bg-violet-500 text-white hover:bg-violet-600 shadow-sm":"bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed")}>
-                  <Save size={13}/>{saving?"جاري الحفظ...":"حفظ البدل"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Filter by member */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[11px] font-black text-slate-400 flex items-center gap-1"><Filter size={12}/> تصفية:</span>
-            <select className={clsx(inputCls,"w-auto py-1.5 text-xs")} value={filterMember} onChange={e=>setFilterMember(e.target.value)}>
-              <option value="all">كل الأعضاء</option>
-              {members.map(m=><option key={m.id} value={m.id}>{m.name?.split(" ").slice(0,3).join(" ")}</option>)}
-            </select>
-          </div>
-
-          {/* List */}
-          <div className={clsx("rounded-2xl border shadow-sm overflow-hidden",T.card)}>
-            {filteredCustom.length===0 ? (
-              <div className="py-12 text-center">
-                <Coins size={32} className="text-slate-200 dark:text-slate-700 mx-auto mb-3"/>
-                <p className="font-black text-slate-400 text-sm">لا توجد بدلات إضافية</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[540px]">
-                  <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
-                      {["العضو","النوع","التاريخ","المبلغ","ملاحظات","حذف"].map(h=>(
-                        <th key={h} className={clsx("p-3.5 text-[10px] font-black text-slate-500 uppercase tracking-wide",h==="حذف"?"text-center":"text-right")}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredCustom.map((a,i)=>(
-                      <tr key={a.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-violet-500/3 transition-colors group">
-                        <td className="p-3.5">
-                          <div className="flex items-center gap-2">
-                            <Avatar member={members.find(m=>m.id===a.memberId)} size="sm" idx={memberIdx(a.memberId)}/>
-                            <span className="font-bold text-xs text-slate-700 dark:text-slate-300 truncate max-w-[120px]">
-                              {memberName(a.memberId)?.split(" ").slice(0,3).join(" ")}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="p-3.5">
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400">{a.type}</span>
-                        </td>
-                        <td className="p-3.5 text-xs font-bold text-slate-500">{formatDate(a.date)}</td>
-                        <td className="p-3.5 font-black text-base text-violet-600">{(a.amount||0).toLocaleString()} ج</td>
-                        <td className="p-3.5 text-[11px] text-slate-400 font-bold max-w-[140px] truncate">{a.notes||"—"}</td>
-                        <td className="p-3.5 text-center">
-                          <button onClick={()=>setDeleteTarget({id:a.id,type:a.type})}
-                            className="w-7 h-7 rounded-lg bg-rose-50 dark:bg-rose-900/20 text-rose-400 hover:text-rose-600 hover:bg-rose-100 transition-all flex items-center justify-center mx-auto opacity-0 group-hover:opacity-100">
-                            <Trash2 size={13}/>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-violet-50 dark:bg-violet-900/10 border-t-2 border-violet-200 dark:border-violet-800/30">
-                      <td colSpan={3} className="p-3.5 font-black text-xs text-slate-700 dark:text-slate-200">إجمالي البدلات الإضافية</td>
-                      <td className="p-3.5 font-black text-lg text-violet-600">{filteredCustom.reduce((s,a)=>s+(a.amount||0),0).toLocaleString()} ج</td>
-                      <td colSpan={2}/>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ── الملخص الشامل ── */}
       {subTab==="summary" && (
         <div className="space-y-3">
           {members.map((m,i)=>{
-            const monthlyRow = monthlyRows.find(r => r.member.id === m.id);
-            const meetTotal = monthlyRow?.sessionsTotal || 0;
-            const travelTotal = monthlyRow?.travelTotal || 0;
-            const monthTotal = monthlyRow?.recurringMonthlyTotal || 0;
-            const customTotal = customAllowances.filter(a=>a.memberId===m.id).reduce((s,a)=>s+(a.amount||0),0);
-            const grandTotal = meetTotal + travelTotal + monthTotal*12 + customTotal;
+            const memberRow = memberRows.find(r => r.member.id === m.id);
+            const meetTotal = memberRow?.allowances.sessions || 0;
+            const travelTotal = memberRow?.allowances.travel || 0;
+            const hospitalityTotal = memberRow?.allowances.hospitality || 0;
+            const memberGrandTotal = meetTotal + travelTotal + hospitalityTotal;
             return (
               <div key={m.id} className={clsx("p-4 rounded-2xl border shadow-sm",T.card)}>
                 <div className="flex items-center gap-3 mb-3">
@@ -1339,19 +1265,18 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
                     <p className="text-[10px] font-bold text-amber-600">{m.membershipStatus}</p>
                   </div>
                   <div className="text-left shrink-0">
-                    <div className="text-xl font-black text-amber-600">{grandTotal.toLocaleString()} ج</div>
-                    <div className="text-[9px] font-bold text-slate-400 text-left">إجمالي سنوي</div>
+                    <div className="text-xl font-black text-amber-600">{formatMoney(memberGrandTotal)}</div>
+                    <div className="text-[9px] font-bold text-slate-400 text-left">إجمالي معتمد</div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {[
                     {l:"بدل الجلسات",v:meetTotal,c:"text-sky-600"},
                     {l:"بدل الانتقال",v:travelTotal,c:"text-indigo-600"},
-                    {l:"البدل الشهري",v:monthTotal,c:"text-emerald-600"},
-                    {l:"بدلات إضافية",v:customTotal,c:"text-violet-600"},
+                    {l:"بدل الضيافة",v:hospitalityTotal,c:"text-emerald-600"},
                   ].map((s,j)=>(
                     <div key={j} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50 text-center">
-                      <div className={clsx("font-black text-sm",s.c)}>{s.v.toLocaleString()}</div>
+                      <div className={clsx("font-black text-sm",s.c)}>{formatMoney(s.v)}</div>
                       <div className="text-[9px] font-bold text-slate-400 mt-0.5">{s.l}</div>
                     </div>
                   ))}
@@ -1369,9 +1294,35 @@ function AllowancesTab({ members, meetings, customAllowances, settlementTransact
 // §7  تبويب التقارير (محافظ على الربط الأصلي + تحسين)
 // ═══════════════════════════════════════════════════════════════
 
-function ReportsTab({ members, meetings, customAllowances, T }) {
+function ReportsTab({ members, meetings, settlementTransactions, T }) {
   const heldMeetings = meetings.filter(m=>m.status==="held");
-  const termDaysLeft = Math.max(0, Math.floor((new Date("2026-01-09")-new Date())/(1000*60*60*24)));
+  const termEnd = parseBoardDate(BOARD_TERM_END);
+  const termStart = parseBoardDate(BOARD_TERM_START);
+  const termDaysLeft = termEnd ? Math.max(0, Math.floor((termEnd - new Date())/(1000*60*60*24))) : 0;
+  const termTotalDays = termStart && termEnd ? Math.max(1, Math.ceil((termEnd - termStart)/(1000*60*60*24))) : 1;
+  const settlementAllowanceTotal = getSettlementAllowanceTotal(settlementTransactions);
+  const allowanceRows = members.map((member) => {
+    const totals = { sessions: 0, travel: 0, hospitality: 0 };
+    settlementTransactions
+      .filter((transaction) => ["advance", "activity"].includes(transaction.type) && transaction.isSettled)
+      .forEach((transaction) => {
+        (transaction.settlementExpenses || []).forEach((expense) => {
+          if (!Array.isArray(expense.boardMembers) || !expense.boardMembers.includes(member.id)) return;
+          const perMember = Number(expense.allowancePerMember || 0) || (
+            Number(expense.amount || 0) / Math.max(expense.boardMembers.length || 1, 1)
+          );
+          if (expense.category === "بدل جلسات") totals.sessions += perMember;
+          if (expense.category === "بدل انتقال") totals.travel += perMember;
+          if (["ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category)) totals.hospitality += perMember;
+        });
+      });
+
+    return {
+      member,
+      allowances: totals,
+      total: totals.sessions + totals.travel + totals.hospitality,
+    };
+  });
   let totalAttendancePct = 0;
   if (heldMeetings.length>0 && members.length>0) {
     const total = heldMeetings.reduce((acc,m)=>acc+(m.attendees?.length||0),0);
@@ -1382,18 +1333,51 @@ function ReportsTab({ members, meetings, customAllowances, T }) {
     <div className="animate-in fade-in duration-500 space-y-5">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-lg font-black flex items-center gap-2"><BarChart3 size={20} className="text-purple-500"/> التقارير والإحصاءات</h2>
-        <button className="px-3 py-1.5 rounded-xl text-[11px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-all flex items-center gap-1">
+        <button
+          onClick={() => printBoardOverview({ members, meetings, allowances: allowanceRows, termStart: BOARD_TERM_START, termEnd: BOARD_TERM_END })}
+          className="px-3 py-1.5 rounded-xl text-[11px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-all flex items-center gap-1"
+        >
           <Printer size={13}/> طباعة
         </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {[
+          {
+            title: "كشف التشكيل الرسمي",
+            desc: "يتضمن الأسماء الكاملة والصفات والحالة الإدارية.",
+            action: () => printBoardOverview({ members, meetings, allowances: allowanceRows, termStart: BOARD_TERM_START, termEnd: BOARD_TERM_END }),
+          },
+          {
+            title: "سجل الاجتماعات والقرارات",
+            desc: "تقرير مطبوع للاجتماعات المنعقدة والحاضرين والقرارات.",
+            action: () => printBoardMeetingsReport({ meetings, members }),
+          },
+          {
+            title: "تقرير البدلات المعتمدة",
+            desc: "يعرض الجلسات والانتقال والضيافة من التسويات فقط.",
+            action: () => printBoardAllowancesReport({ allowances: allowanceRows, termStart: BOARD_TERM_START, termEnd: BOARD_TERM_END }),
+          },
+        ].map((report) => (
+          <button
+            key={report.title}
+            onClick={report.action}
+            className={clsx("p-4 rounded-2xl border shadow-sm text-right transition-all hover:-translate-y-0.5 hover:shadow-md", T.card)}
+          >
+            <div className="text-sm font-black text-slate-800 dark:text-slate-100">{report.title}</div>
+            <div className="text-[11px] font-bold text-slate-400 mt-1">{report.desc}</div>
+            <div className="mt-3 inline-flex items-center gap-1 text-[11px] font-black text-amber-600"><Printer size={13}/> طباعة</div>
+          </button>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className={clsx("p-5 rounded-2xl border shadow-sm text-center",T.card)}>
           <div className="text-[11px] font-black text-slate-400 mb-2">أيام متبقية للولاية</div>
           <div className="text-5xl font-black text-amber-500">{termDaysLeft.toLocaleString("ar-EG")}</div>
-          <div className="text-[10px] font-bold text-slate-400 mt-2">حتى 9 يناير 2026</div>
+          <div className="text-[10px] font-bold text-slate-400 mt-2">حتى {BOARD_TERM_END}</div>
           <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full mt-4 overflow-hidden">
-            <div className="h-full bg-amber-500 rounded-full transition-all" style={{width:`${Math.max(0,100-(termDaysLeft/1095)*100)}%`}}/>
+            <div className="h-full bg-amber-500 rounded-full transition-all" style={{width:`${Math.max(0,100-(termDaysLeft/termTotalDays)*100)}%`}}/>
           </div>
         </div>
         <div className={clsx("p-5 rounded-2xl border shadow-sm text-center",T.card)}>
@@ -1433,7 +1417,7 @@ function ReportsTab({ members, meetings, customAllowances, T }) {
               {label:"متوسط القرارات لكل اجتماع", value:heldMeetings.length?(meetings.reduce((s,m)=>s+(m.decisions?.length||0),0)/heldMeetings.length).toFixed(1):0, color:"text-blue-500", icon:"📋"},
               {label:"نسبة تحقيق النصاب القانوني", value:"100%", color:"text-green-500", icon:"✅"},
               {label:"الأعضاء النشطون", value:`${members.filter(m=>m.memberState==="نشط"||!m.memberState).length}/${members.length}`, color:"text-amber-500", icon:"👤"},
-              {label:"إجمالي البدلات المصروفة", value:`${(customAllowances.reduce((s,a)=>s+(a.amount||0),0)).toLocaleString()} ج`, color:"text-violet-500", icon:"💰"},
+              {label:"إجمالي البدلات المصروفة", value:formatMoney(settlementAllowanceTotal), color:"text-violet-500", icon:"💰"},
             ].map((kpi,i)=>(
               <div key={i} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50">
                 <div className="flex items-center gap-2"><span className="text-base">{kpi.icon}</span><span className="text-[11px] font-bold">{kpi.label}</span></div>
@@ -1458,13 +1442,12 @@ export default function BoardDashboard() {
 
   const [allEmployees,    setAllEmployees]    = useState([]);
   const [meetings,        setMeetings]        = useState([]);
-  const [customAllowances,setCustomAllowances]= useState([]);
   const [transactions,    setTransactions]    = useState([]);
   const [loading,         setLoading]         = useState(true);
 
   useEffect(() => {
-    let empOk=false, meetOk=false, allowOk=false, txOk=false;
-    const check = () => { if (empOk && meetOk && allowOk && txOk) setLoading(false); };
+    let empOk=false, meetOk=false, txOk=false;
+    const check = () => { if (empOk && meetOk && txOk) setLoading(false); };
 
     const unsubEmp = onSnapshot(
       query(collection(db,"employees")),
@@ -1478,22 +1461,19 @@ export default function BoardDashboard() {
       err  => { console.error("board_meetings:",err); meetOk=true; check(); }
     );
 
-    const unsubAllow = onSnapshot(
-      query(collection(db,"board_allowances"), orderBy("createdAt","desc")),
-      snap => { setCustomAllowances(snap.docs.map(d=>({id:d.id,...d.data()}))); allowOk=true; check(); },
-      err  => { console.error("board_allowances:",err); allowOk=true; check(); }
-    );
-
     const unsubTx = onSnapshot(
       query(collection(db,"transactions"), orderBy("date","desc")),
       snap => { setTransactions(snap.docs.map(d=>({id:d.id,...d.data()}))); txOk=true; check(); },
       err  => { console.error("transactions:",err); txOk=true; check(); }
     );
 
-    return () => { unsubEmp(); unsubMeet(); unsubAllow(); unsubTx(); };
+    return () => { unsubEmp(); unsubMeet(); unsubTx(); };
   }, []);
 
-  const boardMembers = useMemo(()=>allEmployees.filter(emp=>BOARD_ROLES.includes(emp.membershipStatus)),[allEmployees]);
+  const boardMembers = useMemo(
+    () => sortBoardMembers(allEmployees.filter(emp=>BOARD_ROLES.includes(emp.membershipStatus))),
+    [allEmployees]
+  );
 
   const navTabs = [
     { id:"dashboard",  label:"نظرة عامة",    icon:ShieldCheck },
@@ -1512,7 +1492,44 @@ export default function BoardDashboard() {
 
   return (
     <div className={clsx("max-w-[1600px] mx-auto pb-20 animate-in fade-in duration-500",T.text)} dir="rtl">
-      <BrandHeader sectionTitle="منظومة مجلس الإدارة والبدلات" sectionHint="المتابعة الإدارية والمالية والقرارات" className="mb-5" />
+      <BrandHeader sectionTitle="منظومة مجلس الإدارة والبدلات" sectionHint="المتابعة الإدارية والمالية والقرارات" className="mb-4" />
+
+      <div className={clsx("mb-5 rounded-[2rem] border shadow-sm overflow-hidden", T.card)}>
+        <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr]">
+          <div className="p-5 bg-[radial-gradient(circle_at_top_right,_rgba(245,158,11,0.18),_transparent_32%),linear-gradient(135deg,rgba(20,184,166,0.06),rgba(255,255,255,0.86))] dark:bg-[radial-gradient(circle_at_top_right,_rgba(245,158,11,0.14),_transparent_32%),linear-gradient(135deg,rgba(13,148,136,0.12),rgba(15,23,42,0.9))]">
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <span className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[10px] font-black border border-amber-200 dark:border-amber-800/40">
+                مجلس الإدارة الحالي
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-700 dark:text-sky-300 text-[10px] font-black border border-sky-200 dark:border-sky-800/40">
+                الدورة من {BOARD_TERM_START} إلى {BOARD_TERM_END}
+              </span>
+            </div>
+            <h1 className="text-2xl font-black text-amber-600 dark:text-amber-400 flex items-center gap-2">
+              <ShieldCheck size={24} className="hidden sm:block"/> مجلس الإدارة
+            </h1>
+            <p className={clsx("text-xs font-bold mt-2 max-w-3xl", T.muted)}>
+              الشاشة تعرض التكوين الرسمي للمجلس، محاضر الاجتماعات، والبدلات المعتمدة من التسويات فقط بما فيها بدل الضيافة، مع استبعاد أي بدلات أخرى إلى حين إضافتها لاحقًا.
+            </p>
+          </div>
+          <div className="p-5 border-t xl:border-t-0 xl:border-r border-slate-100 dark:border-slate-800">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/60 p-4">
+                <div className="text-[10px] font-black text-slate-400">أعضاء المجلس</div>
+                <div className="text-2xl font-black text-teal-600 mt-1">{boardMembers.length}</div>
+              </div>
+              <div className="rounded-2xl border border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/60 p-4">
+                <div className="text-[10px] font-black text-slate-400">اجتماعات منعقدة</div>
+                <div className="text-2xl font-black text-sky-600 mt-1">{meetings.filter((m) => m.status === "held").length}</div>
+              </div>
+              <div className="rounded-2xl border border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/60 p-4 col-span-2">
+                <div className="text-[10px] font-black text-slate-400">بدلات معتمدة من التسويات</div>
+                <div className="text-2xl font-black text-emerald-600 mt-1">{formatMoney(getSettlementAllowanceTotal(transactions))}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* ── شريط الهيدر والتبويبات ── */}
       <div className={clsx(
@@ -1521,11 +1538,9 @@ export default function BoardDashboard() {
       )}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div>
-            <h1 className="text-xl font-black text-amber-600 dark:text-amber-500 flex items-center gap-2">
-              <ShieldCheck size={24} className="hidden sm:block"/> مجلس الإدارة
-            </h1>
+            <h2 className="text-sm font-black text-slate-800 dark:text-slate-100">تنقلات شاشة مجلس الإدارة</h2>
             <p className={clsx("text-[10px] font-bold mt-0.5",T.muted)}>
-              اللجنة النقابية • {boardMembers.length} أعضاء • {meetings.filter(m=>m.status==="held").length} اجتماعات
+              اللجنة النقابية • {boardMembers.length} أعضاء • {meetings.filter(m=>m.status==="held").length} اجتماعات • ترتيب العضوية حسب الصفة ثم السن
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1552,11 +1567,11 @@ export default function BoardDashboard() {
 
       {/* ── محتوى التبويبات ── */}
       <div className="mt-2">
-        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} customAllowances={customAllowances} settlementTransactions={transactions} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
+        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} settlementTransactions={transactions} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="members"    && <MembersTab    members={boardMembers} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="meetings"   && <MeetingsTab   members={boardMembers} meetings={meetings} T={T}/>}
-        {activeTab==="allowances" && <AllowancesTab members={boardMembers} meetings={meetings} customAllowances={customAllowances} settlementTransactions={transactions} T={T}/>}
-        {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} customAllowances={customAllowances} T={T}/>}
+        {activeTab==="allowances" && <AllowancesTab members={boardMembers} settlementTransactions={transactions} T={T}/>}
+        {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} settlementTransactions={transactions} T={T}/>}
       </div>
     </div>
   );

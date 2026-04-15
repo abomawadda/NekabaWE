@@ -4,6 +4,7 @@ import { db } from "../../app/providers/FirebaseProvider";
 import { Link } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
 import BrandHeader from "../../ui/BrandHeader";
+import { formatMoney } from "../../utils/numberFormat";
 // 🎯 استدعاء أداة البطاقة السريعة لتعمل في الشاشة الرئيسية أيضاً
 import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
 import clsx from "clsx";
@@ -126,10 +127,10 @@ function MonthlyChart({ transactions, T }) {
           return (
             <div key={month} className="flex-1 flex flex-col items-center gap-1">
               <div className="flex items-end gap-1 h-28 w-full justify-center">
-                <div title={`وارد: ${vals.in.toLocaleString()} ج.م`}
+                <div title={`وارد: ${formatMoney(vals.in)}`}
                   className="w-4 sm:w-6 bg-emerald-500/80 rounded-t-md transition-all hover:bg-emerald-500 hover:brightness-110 cursor-pointer"
                   style={{ height: `${Math.max(inH, 4)}px` }}/>
-                <div title={`منصرف: ${vals.out.toLocaleString()} ج.م`}
+                <div title={`منصرف: ${formatMoney(vals.out)}`}
                   className="w-4 sm:w-6 bg-rose-500/80 rounded-t-md transition-all hover:bg-rose-500 hover:brightness-110 cursor-pointer"
                   style={{ height: `${Math.max(outH, 4)}px` }}/>
               </div>
@@ -314,9 +315,9 @@ export default function DashboardPage() {
 
       {/* ── 2. بطاقات الإحصاءات السريعة (KPIs) ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard label="الرصيد الدفتري الحالي" value={`${balance.toLocaleString()}`} sub={`افتتاحي: ${OPENING_BALANCE.toLocaleString()}`} icon={Wallet} color={balance >= 0 ? "teal" : "rose"} T={T} />
-        <KPICard label="إجمالي المقبوضات" value={`${totalIn.toLocaleString()}`} sub={`${posted.filter(t=>t.type==="deposit").length} سند مرحّل`} icon={TrendingUp} color="emerald" trend={2.4} T={T} />
-        <KPICard label="إجمالي المدفوعات" value={`${totalOut.toLocaleString()}`} sub="إعانات · سلف · نثريات" icon={TrendingDown} color="rose" trend={-1.2} T={T} />
+        <KPICard label="الرصيد الدفتري الحالي" value={formatMoney(balance)} sub={`افتتاحي: ${formatMoney(OPENING_BALANCE)}`} icon={Wallet} color={balance >= 0 ? "teal" : "rose"} T={T} />
+        <KPICard label="إجمالي المقبوضات" value={formatMoney(totalIn)} sub={`${posted.filter(t=>t.type==="deposit").length} سند مرحّل`} icon={TrendingUp} color="emerald" trend={2.4} T={T} />
+        <KPICard label="إجمالي المدفوعات" value={formatMoney(totalOut)} sub="إعانات · سلف · نثريات" icon={TrendingDown} color="rose" trend={-1.2} T={T} />
         <KPICard label="الأعضاء المسجلون" value={empCount} sub="مزامنة فورية" icon={Users} color="sky" trend={5.0} T={T} />
       </div>
 
@@ -399,7 +400,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="text-left shrink-0">
                     <p className={clsx("text-[13px] font-black", tx.type === "deposit" ? "text-emerald-600" : "text-rose-600")}>
-                      {tx.type === "deposit" ? "+" : "−"}{Number(tx.amount).toLocaleString()}
+                      {tx.type === "deposit" ? "+" : "−"}{formatMoney(tx.amount)}
                     </p>
                     <p className={clsx("text-[8px] font-bold mt-0.5", T.muted)}>{tx.date}</p>
                   </div>

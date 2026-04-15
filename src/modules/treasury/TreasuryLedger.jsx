@@ -14,6 +14,8 @@ import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { formatMoney } from "../../utils/numberFormat";
+import { openPrintWindow } from "../../utils/print";
 import * as XLSX from "xlsx";
 import {
   Printer, Wallet, TrendingUp, TrendingDown, FileText,
@@ -31,6 +33,13 @@ const getCheckSortValue = (checkNum) => {
   const normalized = normalizeArabicDigits(checkNum).trim();
   const numericValue = Number(normalized);
   return Number.isFinite(numericValue) && normalized !== "" ? numericValue : Number.MAX_SAFE_INTEGER;
+};
+
+const formatCheckReference = (checkNum) => {
+  const normalized = normalizeArabicDigits(checkNum).trim();
+  if (!normalized) return "—";
+  const numericValue = Number(normalized);
+  return Number.isFinite(numericValue) ? formatMoney(numericValue) : checkNum;
 };
 
 const getTypeLabel = (type, subType) => {
@@ -76,7 +85,7 @@ function StatCard({ label, value, icon: Icon, color, isCount }) {
         <p className={clsx("text-lg font-black leading-none mt-0.5", `text-${color}-600 dark:text-${color}-400`)}>
           {isCount
             ? value
-            : <>{Number(value || 0).toLocaleString()} <span className="text-[9px]">ج.م</span></>
+            : <>{formatMoney(value || 0)}</>
           }
         </p>
       </div>
@@ -233,18 +242,18 @@ function TreasuryLedgerInner() {
 
   // طباعة كشف الحساب
   const handlePrint = () => {
-    const win = window.open("", "_blank", "width=1200,height=900");
-    if (!win) { alert("يرجى السماح بالنوافذ المنبثقة"); return; }
+    const win = openPrintWindow("treasury-ledger", "width=1200,height=900");
+    if (!win) return;
 
     const rowsHtml = ledgerData.events.map((e, i) => `
       <tr style="${i % 2 === 0 ? "background:#f8fafc;" : ""}">
         <td style="text-align:center;">${e.date}</td>
         <td style="text-align:center;">${getTypeLabel(e.type, e.subType)}</td>
-        <td style="text-align:center;">${e.checkNum}</td>
+        <td style="text-align:center;">${formatCheckReference(e.checkNum)}</td>
         <td style="text-align:right; padding-right:8px;">${e.party}</td>
-        <td style="text-align:left; color:#059669;">${e.credit > 0 ? e.credit.toLocaleString() : "—"}</td>
-        <td style="text-align:left; color:#e11d48;">${e.debit > 0 ? e.debit.toLocaleString() : "—"}</td>
-        <td style="text-align:left; font-weight:900;">${(e.balance || 0).toLocaleString()}</td>
+        <td style="text-align:left; color:#059669;">${e.credit > 0 ? formatMoney(e.credit) : "—"}</td>
+        <td style="text-align:left; color:#e11d48;">${e.debit > 0 ? formatMoney(e.debit) : "—"}</td>
+        <td style="text-align:left; font-weight:900;">${formatMoney(e.balance || 0)}</td>
       </tr>
     `).join("");
 
@@ -270,7 +279,7 @@ function TreasuryLedgerInner() {
       <body>
         ${getPrintBrandHeader({
           reportTitle: "كشف حساب الخزينة العام (دفتر الأستاذ)",
-          reportMeta: `الرصيد الختامي: ${ledgerData.finalBalance.toLocaleString()} ج.م`
+          reportMeta: `الرصيد الختامي: ${formatMoney(ledgerData.finalBalance)}`
         })}
         <div class="info-bar">
           <div>الفترة: ${filterFrom || "الافتتاح"} — ${filterTo || getTodayISO()}</div>
@@ -287,13 +296,13 @@ function TreasuryLedgerInner() {
             <th style="width:12%; text-align:left;">الرصيد</th>
           </tr></thead>
           <tbody>
-            <tr class="opening-row"><td colspan="6">الرصيد الافتتاحي للفترة:</td><td style="text-align:left;">${ledgerData.periodOpeningBalance.toLocaleString()}</td></tr>
+            <tr class="opening-row"><td colspan="6">الرصيد الافتتاحي للفترة:</td><td style="text-align:left;">${formatMoney(ledgerData.periodOpeningBalance)}</td></tr>
             ${rowsHtml}
             <tr class="closing-row">
               <td colspan="4">الإجماليات والرصيد الختامي</td>
-              <td style="text-align:left; color:#34d399;">${ledgerData.periodCredit.toLocaleString()}</td>
-              <td style="text-align:left; color:#f87171;">${ledgerData.periodDebit.toLocaleString()}</td>
-              <td style="text-align:left; color:#5eead4;">${ledgerData.finalBalance.toLocaleString()}</td>
+              <td style="text-align:left; color:#34d399;">${formatMoney(ledgerData.periodCredit)}</td>
+              <td style="text-align:left; color:#f87171;">${formatMoney(ledgerData.periodDebit)}</td>
+              <td style="text-align:left; color:#5eead4;">${formatMoney(ledgerData.finalBalance)}</td>
             </tr>
           </tbody>
         </table>
@@ -313,7 +322,7 @@ function TreasuryLedgerInner() {
     const rows = ledgerData.events.map(e => ({
       "التاريخ":      e.date,
       "النوع":        getTypeLabel(e.type, e.subType),
-      "رقم الشيك":   e.checkNum,
+      "رقم الشيك":   formatCheckReference(e.checkNum),
       "الجهة":        e.party,
       "البيان":       e.notes,
       "وارد":         e.credit > 0 ? e.credit : "",
@@ -448,7 +457,7 @@ function TreasuryLedgerInner() {
               {/* رصيد افتتاحي */}
               <tr className="bg-emerald-50/40 dark:bg-emerald-900/10">
                 <td colSpan={6} className="p-2 text-emerald-700 font-bold text-[10px]">الرصيد الافتتاحي للفترة:</td>
-                <td className="p-2 text-left text-emerald-700 font-black">{ledgerData.periodOpeningBalance.toLocaleString()}</td>
+                <td className="p-2 text-left text-emerald-700 font-black">{formatMoney(ledgerData.periodOpeningBalance)}</td>
               </tr>
 
               {ledgerData.events.length === 0 ? (
@@ -475,23 +484,23 @@ function TreasuryLedgerInner() {
                     </span>
                   </td>
 
-                  <td className="p-2 text-center font-black text-amber-600 text-[10px] whitespace-nowrap">{row.checkNum}</td>
+                  <td className="p-2 text-center font-black text-amber-600 text-[10px] whitespace-nowrap">{formatCheckReference(row.checkNum)}</td>
 
                   <td className="p-2">
                     <p className="font-black text-slate-800 dark:text-slate-100 truncate max-w-[180px] md:max-w-[260px]">{row.party}</p>
                   </td>
 
                   <td className="p-2 text-center font-black text-emerald-600 whitespace-nowrap">
-                    {row.credit > 0 ? row.credit.toLocaleString() : <span className="text-slate-300">—</span>}
+                    {row.credit > 0 ? formatMoney(row.credit) : <span className="text-slate-300">—</span>}
                   </td>
                   <td className="p-2 text-center font-black text-rose-600 whitespace-nowrap">
-                    {row.debit > 0 ? row.debit.toLocaleString() : <span className="text-slate-300">—</span>}
+                    {row.debit > 0 ? formatMoney(row.debit) : <span className="text-slate-300">—</span>}
                   </td>
                   <td className={clsx(
                     "p-2 text-left font-black bg-slate-50/50 dark:bg-slate-800/50 whitespace-nowrap",
                     row.balance < 0 ? "text-rose-600" : "text-teal-700 dark:text-teal-300"
                   )}>
-                    {(row.balance || 0).toLocaleString()}
+                    {formatMoney(row.balance || 0)}
                   </td>
                 </tr>
               ))}
@@ -499,9 +508,9 @@ function TreasuryLedgerInner() {
               {/* الإجماليات */}
               <tr className="bg-slate-900 dark:bg-slate-950 text-white font-black">
                 <td colSpan={4} className="p-2.5 text-[11px]">الإجماليات والرصيد الختامي:</td>
-                <td className="p-2.5 text-center text-emerald-400 whitespace-nowrap">{ledgerData.periodCredit.toLocaleString()}</td>
-                <td className="p-2.5 text-center text-rose-400   whitespace-nowrap">{ledgerData.periodDebit.toLocaleString()}</td>
-                <td className="p-2.5 text-left  text-teal-300   whitespace-nowrap">{ledgerData.finalBalance.toLocaleString()}</td>
+                <td className="p-2.5 text-center text-emerald-400 whitespace-nowrap">{formatMoney(ledgerData.periodCredit)}</td>
+                <td className="p-2.5 text-center text-rose-400   whitespace-nowrap">{formatMoney(ledgerData.periodDebit)}</td>
+                <td className="p-2.5 text-left  text-teal-300   whitespace-nowrap">{formatMoney(ledgerData.finalBalance)}</td>
               </tr>
             </tbody>
           </table>
