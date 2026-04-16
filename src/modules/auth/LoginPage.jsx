@@ -95,7 +95,7 @@ export default function LoginPage() {
 
           <div className="relative z-10">
             <div className="flex items-center justify-between gap-4 flex-wrap">
-              <img src="/brand-right.webp" alt="شعار النقابة" className="w-24 h-24 object-contain drop-shadow-sm" />
+              <img src="/brand-right-we.svg" alt="شعار we" className="w-24 h-24 object-contain drop-shadow-sm" />
               <img src="/brand-left.png" alt="شعار إضافي" className="w-24 h-24 object-contain drop-shadow-sm" />
             </div>
 
@@ -111,24 +111,10 @@ export default function LoginPage() {
                 <p className="text-lg font-black text-slate-900">أ / محمود العراقي</p>
                 <p className="text-xs font-bold text-slate-500 mt-1">أمين الصندوق</p>
               </div>
-              <div className="rounded-2xl border border-teal-200 bg-teal-50/90 p-4 shadow-sm">
-                <p className="text-[11px] font-black text-teal-700 mb-1">سياسة الصلاحيات</p>
-                <p className="text-sm font-black text-teal-900">جميع المستخدمين من الأعضاء في وضع مشاهدة فقط</p>
-                <p className="text-[11px] font-bold text-teal-700 mt-1">التحرير والإدارة متاحان فقط لمسؤول النظام</p>
+              <div className="rounded-2xl border border-teal-200 bg-teal-50/90 p-4 shadow-sm flex items-center justify-center">
+                <p className="text-sm font-black text-teal-900">جاهز لبدء التشغيل المالي والإداري</p>
               </div>
             </div>
-          </div>
-
-          <div className="relative z-10 mt-8 grid sm:grid-cols-3 gap-3">
-            {[
-              "الدخول للأعضاء يعتمد على الرقم الوظيفي المسجل.",
-              "يجب مطابقة رقم الموبايل الأساسي كما هو بملف العضو.",
-              "يتم التحقق بآخر 4 أرقام من الرقم القومي.",
-            ].map((item) => (
-              <div key={item} className="rounded-2xl border border-slate-200/80 bg-white/70 p-3 text-xs font-bold text-slate-600">
-                {item}
-              </div>
-            ))}
           </div>
         </div>
 
@@ -167,7 +153,6 @@ export default function LoginPage() {
               <form className="space-y-4" onSubmit={handleEmployeeSubmit}>
                 <div className="space-y-1">
                   <p className="text-xl font-black text-slate-900">تسجيل دخول الأعضاء</p>
-                  <p className="text-sm font-bold text-slate-500">عرض فقط لجميع المستخدمين من بيانات الأعضاء المسجلة</p>
                 </div>
 
                 <LoginInput
@@ -214,7 +199,6 @@ export default function LoginPage() {
               <form className="space-y-4" onSubmit={handleAdminSubmit}>
                 <div className="space-y-1">
                   <p className="text-xl font-black text-slate-900">دخول مسؤول النظام</p>
-                  <p className="text-sm font-bold text-slate-500">صلاحيات الإدارة الكاملة للنظام المالي والإداري</p>
                 </div>
 
                 <LoginInput

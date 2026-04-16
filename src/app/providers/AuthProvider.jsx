@@ -4,7 +4,7 @@ import { db } from "./FirebaseProvider";
 
 const SESSION_KEY = "nekaba_user_session_v1";
 const ADMIN_CREDENTIALS = {
-  username: "محمود العراقي",
+  username: "mahmoud.eleraky",
   password: "Mawadda2030*#",
   displayName: "محمود العراقي",
   role: "admin",
@@ -101,8 +101,8 @@ export function AuthProvider({ children }) {
       employeeId: matchedEmployee.jobId || matchedEmployee.id,
       role: "viewer",
       displayName: matchedEmployee.name || "عضو",
-      title: "مشاهدة فقط",
-      membershipStatus: matchedEmployee.membershipStatus || "عضو",
+      title: matchedEmployee.membershipStatus || "عضو جمعية عمومية",
+      membershipStatus: matchedEmployee.membershipStatus || "عضو جمعية عمومية",
       phone: matchedEmployee.phone || "",
       loginMode: "employee",
     });

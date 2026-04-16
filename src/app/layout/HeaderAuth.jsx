@@ -7,6 +7,7 @@ export default function HeaderAuth({ toggleSidebar }) {
   const T = useT();
   const { dark, toggle } = useTh();
   const { user, isReadOnly, logout } = useAuth();
+  const userSubtitle = user?.membershipStatus || user?.title || "مستخدم النظام";
 
   return (
     <header className={clsx("h-14 border-b flex items-center justify-between px-4 sm:px-6 transition-colors duration-300 sticky top-0 z-40", T.hdr, T.div)}>
@@ -40,7 +41,7 @@ export default function HeaderAuth({ toggleSidebar }) {
           <div className="hidden md:block">
             <span className={clsx("block text-sm font-semibold", T.text)}>{user?.displayName || "مستخدم"}</span>
             <span className="block text-[10px] font-black text-slate-400">
-              {isReadOnly ? "مشاهدة فقط" : user?.title || "مسؤول النظام"}
+              {userSubtitle}
             </span>
           </div>
         </div>
