@@ -30,6 +30,7 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  writeBatch,
   collection,
   query,
   where,
@@ -43,14 +44,57 @@ import {
   deleteObject,
 } from "firebase/storage";
 import { useFirebase } from "../../../app/providers/FirebaseProvider";
+import {
+  buildLegacyIssuedCheckId,
+  isDirectFinanceType,
+  isLegacyCheckType,
+  getDefaultRequiresSettlement,
+  getPendingLegacyCheckTransactions,
+  getSettlementMode,
+  getIssuedCheckDisplayParty,
+  normalizeIssuedCheckType,
+} from "../helpers/issuedChecks";
+
+const LEGACY_COLLECTION = "transactions";
+const BATCH_SIZE = 400;
+const ISSUED_CHECKS_COLLECTION = "issued_checks";
+
+function normalizeIssuedCheckPayload(tx = {}, options = {}) {
+  const type = normalizeIssuedCheckType(tx.type);
+  const requiresSettlement = Boolean(
+    tx.requires_settlement ??
+      tx.requiresSettlement ??
+      getDefaultRequiresSettlement(type)
+  );
+
+  return {
+    ...tx,
+    ...options,
+    type,
+    requires_settlement: requiresSettlement,
+    requiresSettlement,
+    settlement_mode:
+      tx.settlement_mode ||
+      tx.settlementMode ||
+      getSettlementMode(type, requiresSettlement),
+    party: tx.party || getIssuedCheckDisplayParty(tx) || "",
+    attachments: Array.isArray(tx.attachments) ? tx.attachments : [],
+  };
+}
 
 export function useTreasuryService() {
   const { app } = useFirebase();
   const db = getFirestore(app);
   const storage = getStorage(app);
 
-  const COLLECTION = "transactions";
   const STORAGE_ROOT = "treasury/attachments";
+
+  const getTargetCollection = (tx = {}) => {
+    if (tx?.sourceCollection) return tx.sourceCollection;
+    if (isDirectFinanceType(tx.type)) return LEGACY_COLLECTION;
+    if (isLegacyCheckType(tx.type) && !tx?.legacySourceId) return LEGACY_COLLECTION;
+    return ISSUED_CHECKS_COLLECTION;
+  };
 
   // ──────────────────────────────────────────────────────────
   // حفظ / تحديث سند
@@ -61,18 +105,76 @@ export function useTreasuryService() {
    * - إذا لم يكن موجودًا → إنشاء مستند جديد بـ ID مُنشأ تلقائيًا
    */
   async function saveTransaction(tx) {
-    const txId = tx.id || doc(collection(db, COLLECTION)).id;
-
-    const finalData = {
-      ...tx,
+    const targetCollection = getTargetCollection(tx);
+    const txId = tx.id || doc(collection(db, targetCollection)).id;
+    const finalData = normalizeIssuedCheckPayload(tx, {
       id: txId,
-      attachments: tx.attachments || [],
+      checkNum: isDirectFinanceType(tx.type) ? "" : tx.checkNum,
+      requires_settlement: isDirectFinanceType(tx.type)
+        ? false
+        : Boolean(tx.requires_settlement ?? tx.requiresSettlement),
+      requiresSettlement: isDirectFinanceType(tx.type)
+        ? false
+        : Boolean(tx.requires_settlement ?? tx.requiresSettlement),
+      settlement_mode: isDirectFinanceType(tx.type)
+        ? "none"
+        : tx.settlement_mode ||
+          (Boolean(tx.requires_settlement ?? tx.requiresSettlement)
+            ? "check_only"
+            : "none"),
       updatedAt: new Date().toISOString(),
       createdAt: tx.createdAt || new Date().toISOString(),
-    };
+    });
 
-    await setDoc(doc(db, COLLECTION, txId), finalData);
+    await setDoc(doc(db, targetCollection, txId), finalData);
     return txId;
+  }
+
+  async function migrateLegacyChecksToIssuedChecks({
+    legacyTransactions = [],
+    issuedChecks = [],
+  } = {}) {
+    const pendingTransactions = getPendingLegacyCheckTransactions(
+      legacyTransactions,
+      issuedChecks
+    );
+
+    if (!pendingTransactions.length) {
+      return { migratedCount: 0, batches: 0 };
+    }
+
+    const now = new Date().toISOString();
+    let migratedCount = 0;
+    let batches = 0;
+
+    for (let index = 0; index < pendingTransactions.length; index += BATCH_SIZE) {
+      const slice = pendingTransactions.slice(index, index + BATCH_SIZE);
+      const batch = writeBatch(db);
+
+      slice.forEach((tx) => {
+        const migratedId = buildLegacyIssuedCheckId(tx.id);
+        const normalized = normalizeIssuedCheckPayload(tx, {
+          id: migratedId,
+          legacySourceId: tx.id,
+          sourceTransactionId: tx.id,
+          legacySourceCollection: LEGACY_COLLECTION,
+          migratedFromLegacy: true,
+          migratedAt: now,
+          originalLegacyType: tx.type,
+          createdAt: tx.createdAt || now,
+          updatedAt: now,
+          state: tx.state || "posted",
+        });
+
+        batch.set(doc(db, ISSUED_CHECKS_COLLECTION, migratedId), normalized, { merge: true });
+        migratedCount += 1;
+      });
+
+      await batch.commit();
+      batches += 1;
+    }
+
+    return { migratedCount, batches };
   }
 
   // ──────────────────────────────────────────────────────────
@@ -85,7 +187,7 @@ export function useTreasuryService() {
         tx.attachments.map((att) => deleteAttachment(att.storagePath))
       );
     }
-    await deleteDoc(doc(db, COLLECTION, tx.id));
+    await deleteDoc(doc(db, getTargetCollection(tx), tx.id));
   }
 
   // ──────────────────────────────────────────────────────────
@@ -95,7 +197,7 @@ export function useTreasuryService() {
     if (!chequeNum) return false;
 
     const q = query(
-      collection(db, COLLECTION),
+      collection(db, ISSUED_CHECKS_COLLECTION),
       where("checkNum", "==", String(chequeNum))
     );
     const snap = await getDocs(q);
@@ -174,6 +276,7 @@ export function useTreasuryService() {
 
   return {
     saveTransaction,
+    migrateLegacyChecksToIssuedChecks,
     deleteTransaction,
     isChequeDuplicate,
     uploadAttachment,

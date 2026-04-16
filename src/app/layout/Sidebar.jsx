@@ -38,11 +38,12 @@ export default function Sidebar({ isOpen, setIsOpen }) {
   ];
 
   const treasuryLinks = [
-    { label: " الشيكات", path: "/treasury/admin" },
-    { label: "إضافة إيداع", path: "/treasury/admin?type=deposit" },
-    { label: "صرف إعانة", path: "/treasury/admin?type=aid" },
-    { label: "صرف سلفة", path: "/treasury/admin?type=advance" },
-    { label: "تسوية السلف ", path: "/treasury/settlements" }, 
+    { label: " إصدار شيك", path: "/treasury/admin" },
+    { label: "شيك إعانة", path: "/treasury/admin?type=aid" },
+    { label: "شيك سلفة", path: "/treasury/admin?type=advance" },
+    { label: "شيك رحلة", path: "/treasury/admin?type=trip" },
+    { label: "خصم مباشر", path: "/treasury/admin?type=bank_charge" },
+    { label: "تسوية الشيكات", path: "/treasury/settlements" }, 
     { label: "كشف حساب ", path: "/treasury/ledger" }
   ];
 

@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import MainLayout from "./layout/MainLayout";
+import { useAuth } from "./providers/AuthProvider";
 
 // الشاشات الأساسية
 import DashboardPage from "../modules/dashboard/DashboardPage";
@@ -16,6 +17,7 @@ import EventBookings from "../modules/activities/EventBookings";
 // الإعدادات والتقارير
 import DataImporter from "../modules/settings/DataImporter";
 import ReportBuilder from "../modules/reports/ReportBuilder";
+import LoginPage from "../modules/auth/LoginPage";
 
 function NotFoundPage() {
   return (
@@ -26,10 +28,40 @@ function NotFoundPage() {
   );
 }
 
+function RequireAuth({ children }) {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="p-20 flex items-center justify-center min-h-screen text-slate-400 font-black" dir="rtl">
+        جارٍ تحميل جلسة المستخدم...
+      </div>
+    );
+  }
+
+  return isAuthenticated ? children : <Navigate to="/login" replace />;
+}
+
+function PublicOnly({ children }) {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="p-20 flex items-center justify-center min-h-screen text-slate-400 font-black" dir="rtl">
+        جارٍ تحميل جلسة المستخدم...
+      </div>
+    );
+  }
+
+  return isAuthenticated ? <Navigate to="/dashboardpage" replace /> : children;
+}
+
 export default function Router() {
   return (
     <Routes>
-      <Route element={<MainLayout />}>
+      <Route path="/login" element={<PublicOnly><LoginPage /></PublicOnly>} />
+
+      <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/dashboardpage" element={<DashboardPage />} />
         <Route path="/dashboard" element={<Navigate to="/dashboardpage" replace />} />

@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from "react";
-import { collection, query, onSnapshot, doc, updateDoc, orderBy, writeBatch, where } from "firebase/firestore";
+import { collection, query, onSnapshot, doc, setDoc, orderBy, writeBatch, where } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import FileUpload from "../treasury/FileUpload"; 
@@ -17,15 +17,37 @@ import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { logAuditEvent } from "../../utils/auditLog";
 import { formatMoney } from "../../utils/numberFormat";
 import { openPrintWindow } from "../../utils/print";
+import {
+  buildLegacyIssuedCheckId,
+  getDefaultRequiresSettlement,
+  getIssuedCheckDisplayParty,
+  getSettlementMode,
+  isLegacyCheckType,
+  mergeIssuedChecksSources,
+  normalizeIssuedCheckType,
+  normalizeRequiresSettlement,
+} from "../treasury/helpers/issuedChecks";
 import { ReceiptText, Plus, Trash2, Printer, CheckCircle2, FileText, Tag, DollarSign, Wallet, History, Search, AlertCircle, Info, ShieldCheck, ArrowDownRight, X, Check, Users, Save, AlertTriangle, Loader2, Edit3, RotateCcw } from "lucide-react";
 import clsx from "clsx";
 
-const INITIAL_CATS = ["ضيافة وبوفيه", "أدوات مكتبية", "بدل انتقال", "صيانة", "مشتريات أخرى", "بدل جلسات"];
+const INITIAL_CATS = ["بدل ضيافة", "أدوات مكتبية", "بدل انتقال", "صيانة", "مشتريات أخرى", "بدل جلسات"];
 const BOARD_ROLES = ["رئيس المجلس", "النقيب العام", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة", "عضو مجلس"];
+const SESSION_ALLOWANCE_CATEGORIES = ["بدل جلسات"];
+const HOSPITALITY_ALLOWANCE_CATEGORIES = ["بدل ضيافة", "ضيافة وبوفيه"];
+const ALLOWANCE_TYPE_LABELS = {
+  sessions: "بدل الجلسات",
+  hospitality: "بدل الضيافة",
+};
 const getTodayISO = () => new Date().toISOString().split("T")[0];
 const ARABIC_MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 const getMonthValue = (dateString = "") => (dateString || "").slice(5, 7);
 const getYearValue = (dateString = "") => (dateString || "").slice(0, 4);
+const getMeetingAllowanceType = (category = "") => {
+  if (SESSION_ALLOWANCE_CATEGORIES.includes(category)) return "sessions";
+  if (HOSPITALITY_ALLOWANCE_CATEGORIES.includes(category)) return "hospitality";
+  return "";
+};
+const isMeetingAllowanceCategory = (category = "") => Boolean(getMeetingAllowanceType(category));
 
 // ── دالة الطباعة المدمجة لمنع خطأ المتصفح ──
 const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBalance = 0, collectedSubs = 0, returnedActually }) => {
@@ -42,14 +64,14 @@ const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBala
 
   win.document.write(`
     <!DOCTYPE html><html lang="ar">
-    <head><meta charset="UTF-8"><title>تسوية ${advanceTxn?.type === 'activity' ? 'فاعلية' : 'عهدة'} - ${advanceTxn?.employeeName || advanceTxn?.party}</title>
+    <head><meta charset="UTF-8"><title>تسوية ${advanceTxn?.settlement_mode === 'carry_forward' ? 'عهدة' : 'شيك'} - ${advanceTxn?.employeeName || advanceTxn?.party}</title>
     <style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box;direction:rtl;}body{padding:30px;color:#1e293b;background:#fff;}.badge{display:inline-block;padding:5px 15px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;font-size:12px;font-weight:700;color:#0f766e;}.info-row{margin-bottom:20px;padding:15px;background:#f8fafc;border-right:4px solid #0d9488;border-radius:8px;font-size:16px;font-weight:bold;}.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}.stat-box{border:1px solid #e2e8f0;padding:15px;border-radius:10px;text-align:center;}.stat-label{font-size:11px;color:#64748b;font-weight:bold;margin-bottom:5px;text-transform:uppercase;}.stat-value{font-size:20px;font-weight:900;}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}th{background:#f1f5f9;color:#0f766e;border:1px solid #cbd5e1;padding:12px;text-align:right;font-weight:900;}td{border:1px solid #cbd5e1;padding:10px;text-align:right;font-weight:700;}.footer-note{margin-top:15px;padding:10px;background:#fefce8;border:1px solid #fef08a;border-radius:8px;font-size:13px;font-weight:bold;color:#854d0e;}.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:50px;text-align:center;}.sig-box{border-top:2px dashed #cbd5e1;padding-top:10px;font-size:14px;font-weight:900;color:#475569;}.sig-space{height:60px;}@media print{@page{margin:10mm;}body{padding:0;}}${getPrintBrandStyles()}</style>
     </head><body>
-      ${getPrintBrandHeader({ reportTitle: `كشف تسوية ${advanceTxn?.type === 'activity' ? 'فاعلية/نشاط' : 'عهدة مالية'}`, reportMeta: `تاريخ الاعتماد: ${advanceTxn?.settlementDate || '—'}` })}
+      ${getPrintBrandHeader({ reportTitle: `كشف تسوية ${advanceTxn?.settlement_mode === 'carry_forward' ? 'عهدة مالية' : 'شيك مصروف'}`, reportMeta: `تاريخ الاعتماد: ${advanceTxn?.settlementDate || '—'}` })}
       <div class="info-row">اسم مسؤول التسوية: <span style="font-size:20px; color:#0d9488; margin-right: 10px;">${advanceTxn?.employeeName || advanceTxn?.party || '—'}</span></div>
       <div class="stats-grid">
         <div class="stat-box"> <div class="stat-label">قيمة الشيك المُنصرف</div> <div class="stat-value" style="color:#334155">${formatMoney(ADV_AMT)}</div> </div>
-        <div class="stat-box"> <div class="stat-label">${advanceTxn?.type === 'activity' ? 'اشتراكات محصلة نقداً' : 'رصيد مرحل من قبل'}</div> <div class="stat-value" style="color:#d97706">${advanceTxn?.type === 'activity' ? formatMoney(SUBS_AMT) : formatMoney(prevBalance)}</div> </div>
+        <div class="stat-box"> <div class="stat-label">${advanceTxn?.settlement_mode === 'check_plus_subscriptions' ? 'اشتراكات الأعضاء' : 'رصيد مرحل من قبل'}</div> <div class="stat-value" style="color:#d97706">${advanceTxn?.settlement_mode === 'check_plus_subscriptions' ? formatMoney(SUBS_AMT) : formatMoney(prevBalance)}</div> </div>
         <div class="stat-box" style="background:#f0fdf4; border-color:#86efac"> <div class="stat-label" style="color:#15803d">إجمالي ميزانية التسوية</div> <div class="stat-value" style="color:#166534">${formatMoney(TOTAL_AVAILABLE)}</div> </div>
         <div class="stat-box" style="background:#fff1f2; border-color:#fda4af"> <div class="stat-label" style="color:#e11d48">المنصرف الفعلي بالفواتير</div> <div class="stat-value" style="color:#be123c">${formatMoney(spent)}</div> </div>
       </div>
@@ -107,7 +129,8 @@ function InlineDynamicSelect({ label, value, onChange, icon: Icon, defaultOption
 export default function SettlementTab() {
   const T = useT();
   const [activeTab,     setActiveTab]     = useState("current");
-  const [transactions,  setTransactions]  = useState([]);
+  const [issuedChecks,  setIssuedChecks]  = useState([]);
+  const [legacyTransactions, setLegacyTransactions] = useState([]);
   const [employees,     setEmployees]     = useState([]);
   const [boardMeetings, setBoardMeetings] = useState([]);
   const [loading,       setLoading]       = useState(true);
@@ -139,12 +162,48 @@ export default function SettlementTab() {
   const [selectedMembers, setSelectedMembers] = useState([]);
 
   useEffect(() => {
-    const qTrans = query(collection(db, "transactions"), orderBy("date", "desc"));
-    const unsubTrans = onSnapshot(qTrans, snap => setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    let checksReady = false;
+    let legacyReady = false;
+    let empsReady = false;
+    let meetingsReady = false;
+    const finishLoading = () => {
+      if (checksReady && legacyReady && empsReady && meetingsReady) setLoading(false);
+    };
+
+    const qChecks = query(collection(db, "issued_checks"), orderBy("date", "desc"));
+    const unsubChecks = onSnapshot(qChecks, snap => {
+      setIssuedChecks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      checksReady = true;
+      finishLoading();
+    }, err => {
+      console.error("issued_checks:", err);
+      setIssuedChecks([]);
+      checksReady = true;
+      finishLoading();
+    });
+
+    const qLegacy = query(collection(db, "transactions"), orderBy("date", "desc"));
+    const unsubLegacy = onSnapshot(qLegacy, snap => {
+      setLegacyTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      legacyReady = true;
+      finishLoading();
+    }, err => {
+      console.error("transactions:", err);
+      setLegacyTransactions([]);
+      legacyReady = true;
+      finishLoading();
+    });
 
     const qEmps = query(collection(db, "employees"));
     const unsubEmps = onSnapshot(qEmps, snap => {
       setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      empsReady = true;
+      finishLoading();
+    }, err => {
+      console.error("employees:", err);
+      setEmployees([]);
+      empsReady = true;
+      finishLoading();
     });
 
     const qMeetings = query(collection(db, "board_meetings"), where("status", "==", "held"));
@@ -154,11 +213,64 @@ export default function SettlementTab() {
           .map(d => ({ id: d.id, ...d.data() }))
           .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
       );
-      setLoading(false);
+      meetingsReady = true;
+      finishLoading();
+    }, err => {
+      console.error("board_meetings:", err);
+      setBoardMeetings([]);
+      meetingsReady = true;
+      finishLoading();
     });
 
-    return () => { unsubTrans(); unsubEmps(); unsubMeetings(); };
+    return () => { unsubChecks(); unsubLegacy(); unsubEmps(); unsubMeetings(); };
   }, []);
+
+  const sourceTransactions = useMemo(
+    () => mergeIssuedChecksSources(issuedChecks, legacyTransactions),
+    [issuedChecks, legacyTransactions]
+  );
+
+  const getIssuedCheckDocId = (tx) => {
+    if (!tx) return "";
+    if (tx.legacySourceId) return tx.id;
+    return isLegacyCheckType(tx.type) ? buildLegacyIssuedCheckId(tx.id) : tx.id;
+  };
+
+  const buildIssuedCheckRecord = (tx, overrides = {}) => {
+    const now = new Date().toISOString();
+    const normalizedType = normalizeIssuedCheckType(tx?.type);
+    const requiresSettlement = normalizeRequiresSettlement(tx);
+    const targetId = getIssuedCheckDocId(tx);
+    const isLegacySource = isLegacyCheckType(tx?.type) && !tx?.legacySourceId;
+
+    return {
+      ...tx,
+      ...overrides,
+      id: targetId,
+      type: normalizedType,
+      party: getIssuedCheckDisplayParty(tx),
+      requires_settlement: requiresSettlement,
+      requiresSettlement,
+      settlement_mode:
+        tx?.settlement_mode ||
+        tx?.settlementMode ||
+        getSettlementMode(
+          normalizedType,
+          requiresSettlement ?? getDefaultRequiresSettlement(normalizedType)
+        ),
+      updatedAt: now,
+      createdAt: tx?.createdAt || now,
+      state: tx?.state || "posted",
+      legacySourceId: tx?.legacySourceId || (isLegacySource ? tx.id : tx?.legacySourceId),
+      sourceTransactionId:
+        tx?.sourceTransactionId || (isLegacySource ? tx.id : tx?.sourceTransactionId),
+      legacySourceCollection:
+        tx?.legacySourceCollection || (isLegacySource ? "transactions" : tx?.legacySourceCollection),
+      migratedFromLegacy: Boolean(tx?.migratedFromLegacy || isLegacySource),
+      originalLegacyType:
+        tx?.originalLegacyType || (isLegacySource ? tx.type : tx?.originalLegacyType),
+    };
+  };
 
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
@@ -182,17 +294,22 @@ export default function SettlementTab() {
       return;
     }
 
+    if (isMeetingAllowanceCategory(expCat)) {
+      setSelectedMembers([]);
+      return;
+    }
+
     setSelectedMembers([]);
     setExpMeetingId("");
   }, [expCat, activeBoardMembers, selectedMeeting]);
 
   useEffect(() => {
-    if (expCat === "بدل جلسات" && selectedMeeting?.date) {
+    if (isMeetingAllowanceCategory(expCat) && selectedMeeting?.date) {
       setExpDate(selectedMeeting.date);
     }
   }, [expCat, selectedMeeting]);
 
-  const archivedSettlements = useMemo(() => transactions.filter(t => ["advance", "activity"].includes(t.type) && t.isSettled), [transactions]);
+  const archivedSettlements = useMemo(() => sourceTransactions.filter(t => normalizeRequiresSettlement(t) && t.isSettled), [sourceTransactions]);
   const editingSettlement = useMemo(() => archivedSettlements.find(t => t.id === editingSettlementId) || null, [archivedSettlements, editingSettlementId]);
   const archiveYears = useMemo(
     () => [...new Set(archivedSettlements.map(s => getYearValue(s.settlementDate || s.date)).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
@@ -218,7 +335,13 @@ export default function SettlementTab() {
     return (history.length > 0 && !history[0].returnedActually) ? Number(history[0].settlementReturned || 0) : 0;
   };
 
-  const openAdvances = useMemo(() => transactions.filter(t => ["advance", "activity"].includes(t.type) && !t.isSettled && t.state === "posted").map(adv => ({ ...adv, prevBalance: getPrevBalance(adv.employeeId, adv.id) })), [transactions, archivedSettlements]);
+  const openAdvances = useMemo(
+    () =>
+      sourceTransactions
+        .filter((t) => normalizeRequiresSettlement(t) && !t.isSettled && (t.state === "posted" || t.state === "approved" || !t.state))
+        .map((adv) => ({ ...adv, prevBalance: getPrevBalance(adv.employeeId, adv.id) })),
+    [sourceTransactions, archivedSettlements]
+  );
   const currentTxnOptions = useMemo(() => {
     const txMap = new Map();
     if (editingSettlement) txMap.set(editingSettlement.id, { ...editingSettlement, prevBalance: getPrevBalance(editingSettlement.employeeId, editingSettlement.id) });
@@ -229,11 +352,98 @@ export default function SettlementTab() {
   }, [editingSettlement, openAdvances, archivedSettlements]);
 
   const selectedTxn = useMemo(() => currentTxnOptions.find(a => a.id === selAdvId) || null, [currentTxnOptions, selAdvId]);
+  const currentSettlementTxnId = selectedTxn?.id || editingSettlementId || "";
 
-  // 🎯 حسابات الفاعلية والسلفة (أصل + اشتراكات أو مرحل)
-  const ADVANCE_AMT    = Number(selectedTxn?.amount || 0);
-  const PREV_BALANCE   = selectedTxn?.type === "activity" ? 0 : Number(selectedTxn?.prevBalance || 0);
-  const SUBS_AMT       = selectedTxn?.type === "activity" ? Number(collectedSubs || 0) : 0;
+  const blockedMeetingIdsByType = useMemo(() => {
+    const result = {
+      sessions: new Set(),
+      hospitality: new Set(),
+    };
+
+    sourceTransactions.forEach((tx) => {
+      if (!normalizeRequiresSettlement(tx) || tx.id === currentSettlementTxnId) return;
+
+      (tx.settlementExpenses || []).forEach((expense) => {
+        const allowanceType = getMeetingAllowanceType(expense.category);
+        const meetingId = String(expense.meetingId || "").trim();
+        if (!allowanceType || !meetingId) return;
+        result[allowanceType].add(meetingId);
+      });
+    });
+
+    expenses.forEach((expense) => {
+      const allowanceType = getMeetingAllowanceType(expense.category);
+      const meetingId = String(expense.meetingId || "").trim();
+      if (!allowanceType || !meetingId) return;
+      result[allowanceType].add(meetingId);
+    });
+
+    return result;
+  }, [currentSettlementTxnId, expenses, sourceTransactions]);
+
+  const availableMeetings = useMemo(() => {
+    const allowanceType = getMeetingAllowanceType(expCat);
+    if (!allowanceType) return boardMeetings;
+
+    return boardMeetings.filter((meeting) => !blockedMeetingIdsByType[allowanceType].has(String(meeting.id || "").trim()));
+  }, [boardMeetings, blockedMeetingIdsByType, expCat]);
+
+  const validateMeetingAllowanceExpenses = () => {
+    const seenMeetingIdsByType = {
+      sessions: new Set(),
+      hospitality: new Set(),
+    };
+
+    const reservedElsewhereByType = {
+      sessions: new Set(),
+      hospitality: new Set(),
+    };
+
+    sourceTransactions.forEach((tx) => {
+      if (!normalizeRequiresSettlement(tx) || tx.id === currentSettlementTxnId) return;
+
+      (tx.settlementExpenses || []).forEach((expense) => {
+        const allowanceType = getMeetingAllowanceType(expense.category);
+        const meetingId = String(expense.meetingId || "").trim();
+        if (!allowanceType || !meetingId) return;
+        reservedElsewhereByType[allowanceType].add(meetingId);
+      });
+    });
+
+    for (const expense of expenses) {
+      const allowanceType = getMeetingAllowanceType(expense.category);
+      if (!allowanceType) continue;
+
+      const meetingId = String(expense.meetingId || "").trim();
+      const meetingTitle = expense.meetingTitle || boardMeetings.find((meeting) => meeting.id === meetingId)?.title || "الاجتماع المحدد";
+
+      if (!meetingId) continue;
+
+      if (reservedElsewhereByType[allowanceType].has(meetingId)) {
+        return `تم صرف ${ALLOWANCE_TYPE_LABELS[allowanceType]} لهذا الاجتماع من قبل: ${meetingTitle}.`;
+      }
+
+      if (seenMeetingIdsByType[allowanceType].has(meetingId)) {
+        return `تم إدراج ${ALLOWANCE_TYPE_LABELS[allowanceType]} لنفس الاجتماع أكثر من مرة داخل هذه التسوية: ${meetingTitle}.`;
+      }
+
+      seenMeetingIdsByType[allowanceType].add(meetingId);
+    }
+
+    return "";
+  };
+
+  useEffect(() => {
+    if (!isMeetingAllowanceCategory(expCat) || !expMeetingId) return;
+    if (availableMeetings.some((meeting) => meeting.id === expMeetingId)) return;
+    setExpMeetingId("");
+  }, [availableMeetings, expCat, expMeetingId]);
+
+  // 🎯 حسابات التسوية الموحدة (شيك فقط / شيك + اشتراكات / عهدة مع رصيد مرحل)
+  const settlementMode = selectedTxn?.settlement_mode || "none";
+  const ADVANCE_AMT    = Number(selectedTxn?.advanceAmountBase || selectedTxn?.amount || 0);
+  const PREV_BALANCE   = settlementMode === "carry_forward" ? Number(selectedTxn?.prevBalance || 0) : 0;
+  const SUBS_AMT       = settlementMode === "check_plus_subscriptions" ? Number(collectedSubs || 0) : 0;
   const TOTAL_AVAILABLE= ADVANCE_AMT + PREV_BALANCE + SUBS_AMT;
   
   const spent          = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
@@ -242,7 +452,7 @@ export default function SettlementTab() {
   useEffect(() => {
     if (selectedTxn) {
       setExpenses(selectedTxn.settlementExpenses || []);
-      setCollectedSubs(selectedTxn.collectedSubscriptions || ""); // استدعاء الاشتراكات إن وجدت
+      setCollectedSubs(selectedTxn.collectedSubscriptions || selectedTxn.memberSubscriptions || "");
       setSettlementDate(selectedTxn.settlementDate || getTodayISO());
       setReturnedActually(Boolean(selectedTxn.returnedActually));
       setExpAmt(""); setExpNotes(""); setExpFiles([]); setSelectedMembers([]); setExpMeetingId("");
@@ -254,17 +464,20 @@ export default function SettlementTab() {
   const addExpense = () => {
     if (!expAmt || Number(expAmt) <= 0) return showToast("أدخل مبلغاً صحيحاً", "error");
     if (Number(expAmt) > remaining) return showToast(`تجاوزت المتاح! (${formatMoney(remaining || 0)})`, "error");
-    if (expCat === "بدل جلسات" && !selectedMeeting) return showToast("اختر الاجتماع أولاً", "error");
+    if (isMeetingAllowanceCategory(expCat) && !selectedMeeting) return showToast("اختر الاجتماع أولاً", "error");
     if (["بدل انتقال", "بدل جلسات"].includes(expCat) && selectedMembers.length === 0) return showToast("اختر عضو مجلس واحد على الأقل", "error");
+    if (isMeetingAllowanceCategory(expCat) && blockedMeetingIdsByType[getMeetingAllowanceType(expCat)].has(String(selectedMeeting?.id || "").trim())) {
+      return showToast(`تم صرف ${expCat === "بدل جلسات" ? "بدل الجلسات" : "بدل الضيافة"} لهذا الاجتماع بالفعل`, "error");
+    }
 
     setExpenses(prev => [...prev, {
       id: `e_${Date.now()}`,
-      date: expCat === "بدل جلسات" ? (selectedMeeting?.date || expDate) : expDate,
+      date: isMeetingAllowanceCategory(expCat) ? (selectedMeeting?.date || expDate) : expDate,
       amount: expAmt,
       category: expCat,
       notes: expNotes,
-      meetingId: expCat === "بدل جلسات" ? selectedMeeting?.id || "" : "",
-      meetingTitle: expCat === "بدل جلسات" ? selectedMeeting?.title || "" : "",
+      meetingId: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.id || "" : "",
+      meetingTitle: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.title || "" : "",
       boardMembers: ["بدل انتقال", "بدل جلسات"].includes(expCat) ? selectedMembers : [],
       allowancePerMember: ["بدل انتقال", "بدل جلسات"].includes(expCat) && selectedMembers.length > 0
         ? Number(expAmt) / selectedMembers.length
@@ -293,24 +506,28 @@ export default function SettlementTab() {
     if (!settlementToDelete) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, "transactions", settlementToDelete.id), {
-        isSettled: false,
-        settlementDate: "",
-        settlementExpenses: [],
-        settlementSpent: 0,
-        settlementReturned: 0,
-        returnedActually: false,
-        prevBalanceUsed: 0,
-        collectedSubscriptions: 0,
-        updatedAt: new Date().toISOString(),
-      });
+      const targetId = getIssuedCheckDocId(settlementToDelete);
+      await setDoc(
+        doc(db, "issued_checks", targetId),
+        buildIssuedCheckRecord(settlementToDelete, {
+          isSettled: false,
+          settlementDate: "",
+          settlementExpenses: [],
+          settlementSpent: 0,
+          settlementReturned: 0,
+          returnedActually: false,
+          prevBalanceUsed: 0,
+          collectedSubscriptions: 0,
+        }),
+        { merge: true }
+      );
       await logAuditEvent("settlement_deleted", {
-        transactionId: settlementToDelete.id,
+        transactionId: targetId,
         party: settlementToDelete.employeeName || settlementToDelete.party || "",
         settlementDate: settlementToDelete.settlementDate || "",
         type: settlementToDelete.type || "",
       });
-      if (editingSettlementId === settlementToDelete.id) {
+      if (editingSettlementId === settlementToDelete.id || editingSettlementId === targetId) {
         setEditingSettlementId("");
         setSelAdvId("");
         setExpenses([]);
@@ -331,15 +548,21 @@ export default function SettlementTab() {
   // 🎯 ميزة الحفظ المؤقت للرجوع لها لاحقاً
   const handleSaveDraft = async () => {
     if (!selectedTxn) return;
+    const validationError = validateMeetingAllowanceExpenses();
+    if (validationError) return showToast(validationError, "error");
     setSaving(true);
     try {
-      await updateDoc(doc(db, "transactions", selectedTxn.id), {
-        settlementExpenses: expenses,
-        collectedSubscriptions: SUBS_AMT,
-        updatedAt: new Date().toISOString()
-      });
+      const targetId = getIssuedCheckDocId(selectedTxn);
+      await setDoc(
+        doc(db, "issued_checks", targetId),
+        buildIssuedCheckRecord(selectedTxn, {
+          settlementExpenses: expenses,
+          collectedSubscriptions: SUBS_AMT,
+        }),
+        { merge: true }
+      );
       await logAuditEvent("settlement_draft_saved", {
-        transactionId: selectedTxn.id,
+        transactionId: targetId,
         party: selectedTxn.employeeName || selectedTxn.party || "",
         expensesCount: expenses.length,
         type: selectedTxn.type || "",
@@ -352,9 +575,12 @@ export default function SettlementTab() {
   };
 
   const openConfirmModal = () => {
+    const validationError = validateMeetingAllowanceExpenses();
+    if (validationError) return showToast(validationError, "error");
+
     setConfirmModalData({
-      txnId: selectedTxn.id,
-      party: selectedTxn.party,
+      txnId: getIssuedCheckDocId(selectedTxn),
+      party: getIssuedCheckDisplayParty(selectedTxn),
       totalAvailable: TOTAL_AVAILABLE,
       spent: spent,
       remaining: remaining,
@@ -367,24 +593,32 @@ export default function SettlementTab() {
 
   const handleFinalSettle = async () => {
     if (!confirmModalData) return;
+    const validationError = validateMeetingAllowanceExpenses();
+    if (validationError) {
+      setConfirmModalData(null);
+      return showToast(validationError, "error");
+    }
     
     setSaving(true);
     try {
       const batch = writeBatch(db);
 
-      batch.update(doc(db, "transactions", confirmModalData.txnId), {
-        isSettled: true,
-        settlementDate,
-        settlementExpenses: expenses,
-        settlementSpent: confirmModalData.spent,
-        settlementReturned: returnedActually ? 0 : confirmModalData.remaining,
-        returnedActually,
-        prevBalanceUsed: confirmModalData.prevBalance,
-        advanceAmountBase: confirmModalData.advanceAmountBase,
-        collectedSubscriptions: confirmModalData.collectedSubs,
-        employeeName: confirmModalData.party,
-        updatedAt: new Date().toISOString(),
-      });
+      batch.set(
+        doc(db, "issued_checks", confirmModalData.txnId),
+        buildIssuedCheckRecord(selectedTxn, {
+          isSettled: true,
+          settlementDate,
+          settlementExpenses: expenses,
+          settlementSpent: confirmModalData.spent,
+          settlementReturned: returnedActually ? 0 : confirmModalData.remaining,
+          returnedActually,
+          prevBalanceUsed: confirmModalData.prevBalance,
+          advanceAmountBase: confirmModalData.advanceAmountBase,
+          collectedSubscriptions: confirmModalData.collectedSubs,
+          employeeName: confirmModalData.party,
+        }),
+        { merge: true }
+      );
 
       await batch.commit();
       await logAuditEvent(editingSettlementId ? "settlement_updated" : "settlement_finalized", {
@@ -418,7 +652,7 @@ export default function SettlementTab() {
 
   return (
     <div className={clsx("flex flex-col gap-4 max-w-7xl mx-auto pb-10", T.text)} dir="rtl">
-      <BrandHeader sectionTitle="تسوية العهد والأنشطة" sectionHint="اعتماد التسويات ومتابعة الأرشيف" />
+      <BrandHeader sectionTitle="تسوية الشيكات" sectionHint="اعتماد التسويات ومتابعة الأرشيف للشيكات التي تتطلب تسوية" />
       
       {toast && (
         <div className={clsx("fixed top-20 left-1/2 -translate-x-1/2 z-[5000] px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 text-white font-bold animate-in fade-in slide-in-from-top-4", toast.type === "error" ? "bg-rose-600" : "bg-teal-600")}>
@@ -435,7 +669,7 @@ export default function SettlementTab() {
               <div><h2 className="font-black text-sm">حذف تسوية معتمدة</h2><p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">سيتم إعادة العهدة إلى القائمة المفتوحة</p></div>
             </div>
             <p className="text-xs font-bold leading-relaxed">
-              سيتم حذف التسوية الخاصة بـ <span className="font-black text-teal-600">{settlementToDelete.employeeName || settlementToDelete.party}</span> وإعادة السلفة/الفاعلية للتسوية من جديد.
+              سيتم حذف التسوية الخاصة بـ <span className="font-black text-teal-600">{settlementToDelete.employeeName || settlementToDelete.party}</span> وإعادة الشيك إلى قائمة التسويات المفتوحة من جديد.
             </p>
             <div className="flex gap-2 pt-2">
               <button onClick={() => setSettlementToDelete(null)} className={clsx("flex-1 py-2.5 rounded-xl font-bold text-xs border shadow-sm", T.btn)}>إلغاء</button>
@@ -504,7 +738,7 @@ export default function SettlementTab() {
       {/* التبويبات العلوية */}
       <div className="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-xl w-fit shadow-inner">
         <button onClick={() => setActiveTab("current")} className={clsx("px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2", activeTab === "current" ? "bg-white dark:bg-slate-700 shadow-md text-teal-600" : "text-slate-500 hover:text-slate-700")}>
-          <ReceiptText size={14}/> تسوية عهدة أو نشاط {openAdvances.length > 0 && <span className="bg-amber-500 text-white text-[9px] rounded-full px-1.5 py-0.5 shadow-sm">{openAdvances.length}</span>}
+          <ReceiptText size={14}/> تسوية شيك {openAdvances.length > 0 && <span className="bg-amber-500 text-white text-[9px] rounded-full px-1.5 py-0.5 shadow-sm">{openAdvances.length}</span>}
         </button>
         <button onClick={() => setActiveTab("archive")} className={clsx("px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2", activeTab === "archive" ? "bg-white dark:bg-slate-700 shadow-md text-teal-600" : "text-slate-500 hover:text-slate-700")}>
           <History size={14}/> أرشيف التقارير
@@ -521,10 +755,10 @@ export default function SettlementTab() {
               <div className="w-full md:w-2/5 space-y-1.5 relative z-[100]">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">اختر السلفة أو الفاعلية</label>
                 <select value={selAdvId} onChange={e => setSelAdvId(e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-teal-500 h-[42px]", T.sel)}>
-                  <option value="">— السلف والأنشطة المفتوحة —</option>
+                  <option value="">— الشيكات التي تتطلب تسوية —</option>
                   {currentTxnOptions.map(a => (
                     <option key={a.id} value={a.id}>
-                      {a.party} {a.type === "activity" ? "(دعم نشاط)" : ""} — {a.date || "—"} — شيك: {a.checkNum ? formatMoney(a.checkNum) : "—"} — {formatMoney(a.amount)} {a.isSettled ? "— [تعديل تسوية]" : ""}
+                      {getIssuedCheckDisplayParty(a)} {a.settlement_mode === "check_plus_subscriptions" ? "(رحلة)" : a.settlement_mode === "carry_forward" ? "(سلفة)" : "(شيك تسوية)"} — {a.date || "—"} — شيك: {a.checkNum ? formatMoney(a.checkNum) : "—"} — {formatMoney(a.amount)} {a.isSettled ? "— [تعديل تسوية]" : ""}
                     </option>
                   ))}
                 </select>
@@ -538,10 +772,9 @@ export default function SettlementTab() {
                   </div>
                 )}
 
-                {/* 🎯 إذا كان دعم نشاط، يمكنه إدخال الاشتراكات المحصلة */}
-                {selectedTxn?.type === "activity" && (
+                {settlementMode === "check_plus_subscriptions" && (
                   <div className="mt-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-xl space-y-1.5 animate-in fade-in">
-                    <label className="text-[9px] font-black text-indigo-700 uppercase">الاشتراكات المحصلة نقداً (خارج الشيك)</label>
+                    <label className="text-[9px] font-black text-indigo-700 uppercase">اشتراكات الأعضاء</label>
                     <div className="relative">
                       <DollarSign size={14} className="absolute right-3 top-2.5 text-indigo-400"/>
                       <input type="number" value={collectedSubs} onChange={e => setCollectedSubs(e.target.value)} placeholder="مثال: 5000" className={clsx("w-full px-3 py-2 rounded-lg border text-xs font-bold outline-none focus:ring-2 focus:border-indigo-400 h-[38px] bg-white", T.inp)}/>
@@ -551,11 +784,11 @@ export default function SettlementTab() {
               </div>
 
               {selectedTxn && (
-                <div className={clsx("flex-1 w-full grid gap-2", selectedTxn.type === "activity" ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-3")}>
-                  <FinanceCard label={selectedTxn.type === "activity" ? "شيك الدعم" : "أصل السلفة"} value={ADVANCE_AMT} color="slate" icon={ArrowDownRight}/>
+                <div className={clsx("flex-1 w-full grid gap-2", settlementMode === "check_plus_subscriptions" ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-3")}>
+                  <FinanceCard label={settlementMode === "carry_forward" ? "أصل السلفة" : "قيمة الشيك"} value={ADVANCE_AMT} color="slate" icon={ArrowDownRight}/>
                   
-                  {selectedTxn.type === "activity" ? (
-                    <FinanceCard label="اشتراكات محصلة" value={SUBS_AMT} color="indigo" icon={Plus}/>
+                  {settlementMode === "check_plus_subscriptions" ? (
+                    <FinanceCard label="اشتراكات الأعضاء" value={SUBS_AMT} color="indigo" icon={Plus}/>
                   ) : (
                     <FinanceCard label="رصيد مرحل" value={PREV_BALANCE} color="amber" icon={History}/>
                   )}
@@ -577,14 +810,16 @@ export default function SettlementTab() {
             <div className="space-y-3">
               <InlineDynamicSelect label="تصنيف المصروف (+ جديد)" defaultOptions={INITIAL_CATS} value={expCat} onChange={setExpCat} icon={Tag} />
               
-              {expCat === "بدل جلسات" && (
+              {isMeetingAllowanceCategory(expCat) && (
                 <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-xl space-y-2 animate-in fade-in">
                   <label className="text-[10px] font-black text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5">
                     <FileText size={14}/> اختر الاجتماع المنعقد
                   </label>
                   <select value={expMeetingId} onChange={e => setExpMeetingId(e.target.value)} className={clsx("w-full px-2 py-2 rounded-lg border text-[10px] font-bold outline-none", T.sel)}>
-                    <option value="">-- اختر الاجتماع --</option>
-                    {boardMeetings.map(m => (
+                    <option value="">
+                      {availableMeetings.length > 0 ? "-- اختر الاجتماع --" : "-- لا توجد اجتماعات متاحة لهذا البدل --"}
+                    </option>
+                    {availableMeetings.map(m => (
                       <option key={m.id} value={m.id}>
                         {m.title} — {m.date || "—"} — الحضور: {m.attendees?.length || 0}
                       </option>
@@ -592,7 +827,10 @@ export default function SettlementTab() {
                   </select>
                   {selectedMeeting && (
                     <p className="text-[9px] font-black text-indigo-600 mt-1 flex gap-1 bg-indigo-100/50 dark:bg-indigo-900/50 p-1.5 rounded">
-                      <Info size={10} className="shrink-0"/> سيتم توزيع {formatMoney(expAmt || 0)} على {selectedMeeting.attendees?.length || 0} من الحاضرين
+                      <Info size={10} className="shrink-0"/>
+                      {expCat === "بدل جلسات"
+                        ? `سيتم توزيع ${formatMoney(expAmt || 0)} على ${selectedMeeting.attendees?.length || 0} من الحاضرين`
+                        : `سيتم ربط بدل الضيافة بالاجتماع: ${selectedMeeting.title || "—"}`}
                     </p>
                   )}
                 </div>
@@ -635,7 +873,7 @@ export default function SettlementTab() {
                   <input type="number" value={expAmt} onChange={e => setExpAmt(e.target.value)} placeholder={`المتاح: ${remaining}`} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 focus:border-amber-500 h-[38px]", T.inp, Number(expAmt) > remaining && "!border-rose-500 bg-rose-50/10")} />
                 </div>
                 <div className="space-y-1 relative z-[90]">
-                  <ArabicDatePicker label="تاريخ الفاتورة" value={expDate} onChange={setExpDate} maxVal={getTodayISO()} disabled={expCat === "بدل جلسات"} />
+                  <ArabicDatePicker label="تاريخ الفاتورة" value={expDate} onChange={setExpDate} maxVal={getTodayISO()} disabled={isMeetingAllowanceCategory(expCat)} />
                 </div>
               </div>
 
@@ -756,12 +994,18 @@ export default function SettlementTab() {
                       <td className="p-3 font-bold text-slate-500 whitespace-nowrap">{s.settlementDate}</td>
                       <td className="p-3 font-black text-slate-800 dark:text-slate-100">
                         {s.employeeName || s.party}
-                        <span className="block text-[8px] text-slate-400 mt-0.5">{s.type === "activity" ? "نشاط / فاعلية" : "سلفة عادية"}</span>
+                        <span className="block text-[8px] text-slate-400 mt-0.5">
+                          {s.settlement_mode === "check_plus_subscriptions"
+                            ? "رحلة"
+                            : s.settlement_mode === "carry_forward"
+                              ? "سلفة عادية"
+                              : "شيك تسوية / فاعلية"}
+                        </span>
                       </td>
                       <td className="p-3">
                         <p className="font-bold text-slate-600">شيك: {formatMoney(sAdvance)}</p>
-                        {s.type === "activity" && sSubs > 0 && <p className="font-bold text-indigo-500 text-[9px]">اشتراكات: {formatMoney(sSubs)}</p>}
-                        {s.type !== "activity" && sPrevBal > 0 && <p className="font-bold text-amber-600 text-[9px]">مرحل: {formatMoney(sPrevBal)}</p>}
+                        {s.settlement_mode === "check_plus_subscriptions" && sSubs > 0 && <p className="font-bold text-indigo-500 text-[9px]">اشتراكات: {formatMoney(sSubs)}</p>}
+                        {s.settlement_mode !== "check_plus_subscriptions" && sPrevBal > 0 && <p className="font-bold text-amber-600 text-[9px]">مرحل: {formatMoney(sPrevBal)}</p>}
                       </td>
                       <td className="p-3 font-black text-teal-600 bg-teal-50/50 dark:bg-transparent rounded-lg">{formatMoney(sAvailable)}</td>
                       <td className="p-3 font-black text-rose-600">{formatMoney(s.settlementSpent || 0)}</td>

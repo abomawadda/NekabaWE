@@ -7,18 +7,30 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { nextWorkflowState } from "./helpers/workflow";
 import WorkflowStepper from "./WorkflowStepper";
 import { printVoucher, printAidRequest } from "./VoucherPrint";
 import FileUpload from "./FileUpload";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import DynamicSelect from "../../ui/inputs/DynamicSelect";
+import {
+  DIRECT_BANK_CHARGE_OPTIONS,
+  EVENT_DETAILS_TYPES,
+  EMPLOYEE_LOOKUP_TYPES,
+  getDefaultRequiresSettlement,
+  getIssuedCheckTypeLabel,
+  getSettlementMode,
+  ISSUED_CHECK_TYPE_COLORS,
+  ISSUED_CHECK_TYPE_LABELS,
+  ISSUED_CHECK_TYPES,
+  normalizeIssuedCheckType,
+  OPTIONAL_SETTLEMENT_TYPES,
+} from "./helpers/issuedChecks";
 
 import {
   Search, Loader2, CheckCircle2, Printer, Landmark,
   FileText, User, Heart, Building, AlertCircle, Hash,
   DollarSign, UserCheck, Users, MapPin, Tag,
-  Activity, X, Info, RotateCcw
+  Activity, X, Info, RotateCcw, Wallet, Sparkles
 } from "lucide-react";
 import { collection, getDocs, query } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
@@ -30,31 +42,11 @@ import clsx from "clsx";
 // ─────────────────────────────────────────────
 // ثوابت
 // ─────────────────────────────────────────────
-const DEP_OPTS = ["النقابة العامة بالدقهلية", "أمين الصندوق", "اشتراكات أعضاء", "جهة خارجية"];
-const BANK_OPTS = ["البنك الأهلي المصري", "بنك مصر", "البنك التجاري الدولي", "البنك العربي الأفريقي", "بنك آخر"];
-const BANK_CHARGE_CATEGORIES = ["رسوم كشف حساب", "رسوم بريدية", "دفتر شيكات", "عمولات بنكية", "مصاريف بنكية أخرى"];
-
 const AID_RELS = {
   "رعاية زواج": ["العضو نفسه", "ابن", "ابنة"],
   "رعاية وفاة": ["العضو نفسه", "الزوج", "الزوجة", "أب", "أم", "ابن", "ابنة"],
   "ظروف قهرية / صحية": ["العضو نفسه"],
   "مناسبات": ["ميزانيات", "دور وطني", "جوائز مسابقات", "مبادرات"],
-};
-
-const TYPE_LABELS = {
-  deposit: "سند إيداع (دائن)",
-  aid: "سند صرف رعاية (مدين)",
-  advance: "سند سلفة / عهدة (مدين)",
-  activity: "شيك دعم فاعلية (مدين)",
-  bank_charge: "خصم بنكي مباشر (مدين)",
-};
-
-const TYPE_COLORS = {
-  deposit: "emerald",
-  aid: "rose",
-  advance: "purple",
-  activity: "amber",
-  bank_charge: "slate",
 };
 
 const AID_AMOUNTS = {
@@ -82,6 +74,8 @@ const ACTIVITY_TYPES = [
   "ندوة / محاضرة",
   "أخرى"
 ];
+
+const EXPENSE_ITEM_OPTIONS = ["ميزانية تشغيل", "دعم نشاط", "مصروف إداري", "مخصص لجنة", "بند خاص", "أخرى"];
 
 const getTodayISO = () => new Date().toISOString().split("T")[0];
 
@@ -239,17 +233,37 @@ function ERPSelect({ label, icon: Icon, error, required, fullWidth, children, ..
 
 // بطاقة اختيار نوع السند
 function TypeSelector({ value, onChange }) {
-  const bankChargeType = { id: "bank_charge", label: "خصم بنكي", sub: "بدون شيك", icon: Landmark, color: "slate" };
+  const iconMap = {
+    aid: Heart,
+    budget: Wallet,
+    activities: Activity,
+    trip: MapPin,
+    event: Sparkles,
+    advance: User,
+    other: FileText,
+    bank_charge: Landmark,
+  };
+  const subMap = {
+    aid: "بدون تسوية",
+    budget: "مرن حسب التحديد",
+    activities: "مرن حسب التحديد",
+    trip: "شيك + اشتراكات",
+    event: "تتطلب تسوية",
+    advance: "عهدة تُسوّى",
+    other: "مرن حسب التحديد",
+    bank_charge: "خصم مباشر من الحساب",
+  };
   const types = [
-    { id: "deposit", label: "إيداع", sub: "سند دائن", icon: DollarSign, color: "emerald" },
-    { id: "aid", label: "رعاية", sub: "سند مدين", icon: Heart, color: "rose" },
-    { id: "advance", label: "سلفة", sub: "عهدة مدين", icon: User, color: "purple" },
-    { id: "activity", label: "نشاط", sub: "شيك فاعلية", icon: Activity, color: "amber" },
-  ];
-  types.push(bankChargeType);
+    ...ISSUED_CHECK_TYPES,
+    { id: "bank_charge", label: "خصم مباشر", color: "slate" },
+  ].map((item) => ({
+    ...item,
+    icon: iconMap[item.id] || Landmark,
+    sub: subMap[item.id] || "",
+  }));
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2">
       {types.map((t) => {
         const Icon = t.icon;
         const active = value === t.id;
@@ -293,7 +307,13 @@ export default function TreasuryForm({
 
   const location = useLocation();
   const urlParams = new URLSearchParams(location?.search || "");
-  const defaultType = urlParams.get("type") || "deposit";
+  const requestedType = normalizeIssuedCheckType(urlParams.get("type") || "aid");
+  const defaultType =
+    requestedType === "bank_charge" || ISSUED_CHECK_TYPE_LABELS[requestedType]
+      ? requestedType
+      : "aid";
+
+  const requiresChequeNumber = (type) => type !== "bank_charge";
 
   const getEmptyTx = useCallback(
     () => ({
@@ -301,9 +321,13 @@ export default function TreasuryForm({
       date: getTodayISO(),
       amount: "",
       party: "",
+      beneficiaryName: "",
+      expenseItem: "",
+      bankChargeCategory: "",
+      bankReference: "",
       employeeId: "",
       notes: "",
-      checkNum: !["deposit", "bank_charge"].includes(defaultType) ? (nextCheque || "") : "",
+      checkNum: requiresChequeNumber(defaultType) ? nextCheque || "" : "",
       aidCategory: "",
       aidRel: "",
       incidentDate: "",
@@ -312,23 +336,44 @@ export default function TreasuryForm({
       activityDate: "",
       participantsCount: "",
       activityLocation: "",
-      bankChargeCategory: "",
-      bankReference: "",
+      memberSubscriptions: "",
+      requires_settlement: getDefaultRequiresSettlement(defaultType),
       attachments: [],
       state: isTreasurer ? "posted" : "draft",
     }),
     [defaultType, nextCheque, isTreasurer]
   );
 
-  const [tx, setTx] = useState(() => (isEdit ? { ...initialData } : getEmptyTx()));
+  const [tx, setTx] = useState(() =>
+    isEdit
+      ? {
+          ...getEmptyTx(),
+          ...initialData,
+          type: normalizeIssuedCheckType(initialData?.type || defaultType),
+          requires_settlement:
+            initialData?.requires_settlement ??
+            initialData?.requiresSettlement ??
+            getDefaultRequiresSettlement(normalizeIssuedCheckType(initialData?.type || defaultType)),
+        }
+      : getEmptyTx()
+  );
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [employeesDB, setEmployeesDB] = useState([]);
-  const [searchQ, setSearchQ] = useState(initialData?.party || "");
+  const [searchQ, setSearchQ] = useState(initialData?.party || initialData?.beneficiaryName || "");
   const [searchRes, setSearchRes] = useState([]);
   const [showRes, setShowRes] = useState(false);
   const [empData, setEmpData] = useState(null);
   const [amountManuallyEdited, setAmountManuallyEdited] = useState(Boolean(isEdit));
+  const currentRequiresSettlement = Boolean(tx.requires_settlement);
+  const isAid = tx.type === "aid";
+  const isAdvance = tx.type === "advance";
+  const isTrip = tx.type === "trip";
+  const isEvent = tx.type === "event";
+  const isDirectCharge = tx.type === "bank_charge";
+  const usesEmployeeLookup = EMPLOYEE_LOOKUP_TYPES.includes(tx.type);
+  const usesEventDetails = EVENT_DETAILS_TYPES.includes(tx.type);
+  const allowsOptionalSettlement = OPTIONAL_SETTLEMENT_TYPES.includes(tx.type);
 
   const suggestedAidAmount = useMemo(() => {
     if (!tx.aidCategory || !tx.aidRel) return "";
@@ -378,13 +423,13 @@ export default function TreasuryForm({
 
   // اقتراح مبلغ الرعاية تلقائياً بدون منع التعديل اليدوي
   useEffect(() => {
-    if (tx.type !== "aid" || isEdit) return;
+    if (!isAid || isEdit) return;
     if (!tx.aidCategory || !tx.aidRel) return;
     if (amountManuallyEdited) return;
 
     update("amount", String(suggestedAidAmount));
   }, [
-    tx.type,
+    isAid,
     tx.aidCategory,
     tx.aidRel,
     isEdit,
@@ -395,8 +440,11 @@ export default function TreasuryForm({
 
   // إعادة رقم الشيك عند تغيير النوع
   useEffect(() => {
-    if (!isEdit) {
-      update("checkNum", !["deposit", "bank_charge"].includes(tx.type) ? (nextCheque || "") : "");
+    if (!isEdit && requiresChequeNumber(tx.type)) {
+      update("checkNum", nextCheque || "");
+    }
+    if (!requiresChequeNumber(tx.type) && tx.checkNum) {
+      update("checkNum", "");
     }
   }, [tx.type, nextCheque, isEdit, update]);
 
@@ -419,9 +467,7 @@ export default function TreasuryForm({
       e.amount = "صيغة المبلغ غير صحيحة";
     }
 
-    if (!tx.party?.trim()) e.party = "الجهة أو العضو مطلوب";
-
-    if (!["deposit", "bank_charge"].includes(tx.type)) {
+    if (requiresChequeNumber(tx.type)) {
       if (!tx.checkNum) {
         e.checkNum = "رقم الشيك مطلوب";
       } else if (!/^\d+$/.test(String(tx.checkNum))) {
@@ -429,8 +475,20 @@ export default function TreasuryForm({
       }
     }
 
-    if (tx.type === "aid") {
-      if (!tx.aidCategory) e.aidCategory = "اختر نوع الرعاية";
+    if (usesEmployeeLookup && !tx.party?.trim()) {
+      e.party = isAdvance ? "اسم مسؤول السلفة مطلوب" : "العضو أو المسؤول مطلوب";
+    }
+
+    if (!usesEmployeeLookup && !isDirectCharge && !tx.beneficiaryName?.trim()) {
+      e.beneficiaryName = "اسم المستفيد مطلوب";
+    }
+
+    if (isDirectCharge && !tx.bankChargeCategory?.trim()) {
+      e.bankChargeCategory = "اختر نوع الخصم المباشر";
+    }
+
+    if (isAid) {
+      if (!tx.aidCategory) e.aidCategory = "اختر نوع الإعانة";
       if (!tx.aidRel) e.aidRel = "اختر صلة القرابة";
       if (tx.incidentDate && tx.date && tx.incidentDate > tx.date) {
         e.incidentDate = "تاريخ الواقعة لا يجوز أن يكون بعد تاريخ الحركة";
@@ -438,22 +496,27 @@ export default function TreasuryForm({
       if (empData && !isEligibleForBenefit(empData, tx.date)) {
         const retirementDate = getRetirementDate(empData);
         e.party = retirementDate
-          ? `هذا العضو غير مستحق للرعاية بعد تاريخ المعاش (${formatEmployeeDate(retirementDate)}).`
-          : "هذا العضو غير مستحق للرعاية وفق حالة العضوية الحالية.";
+          ? `هذا العضو غير مستحق للإعانة بعد تاريخ المعاش (${formatEmployeeDate(retirementDate)}).`
+          : "هذا العضو غير مستحق للإعانة وفق حالة العضوية الحالية.";
       }
     }
 
-    if (tx.type === "activity") {
+    if (usesEventDetails) {
       if (!tx.activityName?.trim()) e.activityName = "اسم الفاعلية مطلوب";
-      if (!tx.activityType) e.activityType = "حدد نوع الفاعلية";
+      if (!tx.activityType) e.activityType = isTrip ? "حدد نوع الرحلة" : "حدد نوع الفاعلية";
       if (tx.participantsCount && Number(tx.participantsCount) < 0) {
         e.participantsCount = "عدد المشاركين غير صحيح";
       }
     }
 
-    if (tx.type === "bank_charge") {
-      if (!tx.bankChargeCategory) e.bankChargeCategory = "حدد نوع الخصم البنكي";
-      if (!tx.party?.trim()) e.party = "اسم البنك أو الحساب مطلوب";
+    if (OPTIONAL_SETTLEMENT_TYPES.includes(tx.type) && !tx.expenseItem?.trim()) {
+      e.expenseItem = "بند الصرف مطلوب";
+    }
+
+    if (isTrip) {
+      if (!tx.memberSubscriptions || Number(tx.memberSubscriptions) < 0) {
+        e.memberSubscriptions = "أدخل قيمة اشتراكات الأعضاء";
+      }
     }
 
     setErrors(e);
@@ -468,12 +531,30 @@ export default function TreasuryForm({
 
     setSaving(true);
     try {
+      const requiresSettlement = Boolean(tx.requires_settlement);
+      const normalizedParty = usesEmployeeLookup ? tx.party : tx.beneficiaryName;
+      const normalizedType = normalizeIssuedCheckType(tx.type);
+      const finalParty = isDirectCharge
+        ? tx.beneficiaryName?.trim() || tx.party?.trim() || "خصم بنكي مباشر"
+        : normalizedParty;
+
       await onSubmit(
         {
           ...tx,
+          type: normalizedType,
+          party: finalParty,
+          beneficiaryName: usesEmployeeLookup ? tx.beneficiaryName : finalParty,
           amount: String(tx.amount).trim(),
-          checkNum: !["deposit", "bank_charge"].includes(tx.type) ? String(tx.checkNum).trim() : "",
+          checkNum: requiresChequeNumber(normalizedType) ? String(tx.checkNum).trim() : "",
           participantsCount: tx.participantsCount ? String(tx.participantsCount).trim() : "",
+          memberSubscriptions: tx.memberSubscriptions ? String(tx.memberSubscriptions).trim() : "",
+          requires_settlement: isDirectCharge ? false : requiresSettlement,
+          requiresSettlement: isDirectCharge ? false : requiresSettlement,
+          settlement_mode: isDirectCharge ? "none" : getSettlementMode(normalizedType, requiresSettlement),
+          isSettled: isDirectCharge ? false : (requiresSettlement ? Boolean(tx.isSettled) : false),
+          settlementExpenses: isDirectCharge ? [] : (requiresSettlement ? (tx.settlementExpenses || []) : []),
+          advanceAmountBase: String(tx.amount).trim(),
+          employeeName: finalParty,
         },
         isEdit
       );
@@ -483,7 +564,9 @@ export default function TreasuryForm({
 
         setTx({
           ...getEmptyTx(),
-          checkNum: !["deposit", "bank_charge"].includes(tx.type) ? String(currentCheck + 1) : "",
+          type: normalizedType,
+          checkNum: requiresChequeNumber(normalizedType) ? String(currentCheck + 1) : "",
+          requires_settlement: getDefaultRequiresSettlement(normalizedType),
         });
         setSearchQ("");
         setEmpData(null);
@@ -498,7 +581,7 @@ export default function TreasuryForm({
     }
   };
 
-  const color = TYPE_COLORS[tx.type] || "teal";
+  const color = ISSUED_CHECK_TYPE_COLORS[tx.type] || "teal";
 
   return (
     <div
@@ -522,10 +605,16 @@ export default function TreasuryForm({
 
               <div className="min-w-0">
                 <h1 className="text-sm font-black text-slate-900 dark:text-white truncate">
-                  {isEdit ? "تعديل مستند مالي" : "إصدار مستند مالي جديد"}
+                  {isDirectCharge
+                    ? isEdit
+                      ? "تعديل حركة مالية مباشرة"
+                      : "إضافة حركة مالية مباشرة"
+                    : isEdit
+                      ? "تعديل إصدار شيك"
+                      : "إصدار شيك جديد"}
                 </h1>
                 <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                  {TYPE_LABELS[tx.type]}
+                  {ISSUED_CHECK_TYPE_LABELS[tx.type] || tx.type}
                 </p>
               </div>
             </div>
@@ -554,24 +643,56 @@ export default function TreasuryForm({
 
       {/* ── Main Content ── */}
       <div className={clsx("max-w-6xl mx-auto mt-20 pb-32 px-4 space-y-4", T.text)}>
-        {!isEdit && (
-          <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-1 h-6 bg-teal-500 rounded-full"></div>
+        <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-1 h-6 bg-teal-500 rounded-full"></div>
+            <div>
               <p className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase">
-                نوع المستند المالي
+                نوع الحركة المالية
               </p>
+              {isEdit && <p className="text-[10px] font-bold text-slate-400 mt-1">يمكنك تغيير نوع الحركة وسيتم تحديث الحقول التابعة لها تلقائيًا مع الإبقاء على البيانات المشتركة.</p>}
             </div>
-
-            <TypeSelector
-              value={tx.type}
-              onChange={(v) => {
-                setAmountManuallyEdited(false);
-                setTx((prev) => ({ ...getEmptyTx(), type: v, date: prev.date }));
-              }}
-            />
           </div>
-        )}
+
+          <TypeSelector
+            value={tx.type}
+            onChange={(v) => {
+              const normalizedType = normalizeIssuedCheckType(v);
+              setAmountManuallyEdited(false);
+              setSearchQ("");
+              setEmpData(null);
+              setTx((prev) => ({
+                ...getEmptyTx(),
+                id: prev.id,
+                createdAt: prev.createdAt,
+                updatedAt: prev.updatedAt,
+                state: prev.state,
+                attachments: prev.attachments || [],
+                amount: prev.amount,
+                date: prev.date,
+                notes: prev.notes,
+                checkNum: requiresChequeNumber(normalizedType) ? (prev.checkNum || nextCheque || "") : "",
+                type: normalizedType,
+                requires_settlement: normalizedType === "bank_charge" ? false : getDefaultRequiresSettlement(normalizedType),
+                party: EMPLOYEE_LOOKUP_TYPES.includes(normalizedType) ? prev.party : "",
+                employeeId: EMPLOYEE_LOOKUP_TYPES.includes(normalizedType) ? prev.employeeId : "",
+                beneficiaryName: EMPLOYEE_LOOKUP_TYPES.includes(normalizedType) ? "" : (prev.beneficiaryName || prev.party || ""),
+                expenseItem: OPTIONAL_SETTLEMENT_TYPES.includes(normalizedType) || normalizedType === "bank_charge" ? prev.expenseItem : "",
+                bankChargeCategory: normalizedType === "bank_charge" ? prev.bankChargeCategory : "",
+                bankReference: normalizedType === "bank_charge" ? prev.bankReference : "",
+                activityName: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.activityName : "",
+                activityType: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.activityType : "",
+                activityDate: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.activityDate : "",
+                activityLocation: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.activityLocation : "",
+                participantsCount: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.participantsCount : "",
+                memberSubscriptions: normalizedType === "trip" ? prev.memberSubscriptions : "",
+                aidCategory: normalizedType === "aid" ? prev.aidCategory : "",
+                aidRel: normalizedType === "aid" ? prev.aidRel : "",
+                incidentDate: normalizedType === "aid" ? prev.incidentDate : "",
+              }));
+            }}
+          />
+        </div>
 
         {/* البيانات الأساسية */}
         <ERPSection
@@ -597,11 +718,11 @@ export default function TreasuryForm({
           </div>
 
           <ERPInput
-            label="المبلغ الإجمالي (ج.م)"
+            label={isDirectCharge ? "قيمة الخصم المباشر (ج.م)" : "المبلغ الإجمالي (ج.م)"}
             required
             value={tx.amount}
             onChange={(e) => {
-              if (tx.type === "aid") setAmountManuallyEdited(true);
+              if (isAid) setAmountManuallyEdited(true);
               update("amount", normalizeNumericInput(e.target.value));
             }}
             isNumeric
@@ -617,8 +738,8 @@ export default function TreasuryForm({
             }
           />
 
-          {!["deposit", "bank_charge"].includes(tx.type) && (
-            <div className="sm:col-span-2 space-y-1">
+          {requiresChequeNumber(tx.type) ? (
+          <div className="sm:col-span-2 space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase pr-1 flex justify-between">
                 رقم الشيك البنكي
                 <span className="text-[9px] text-amber-500 font-bold">
@@ -654,86 +775,105 @@ export default function TreasuryForm({
                   {errors.checkNum}
                 </p>
               )}
-            </div>
+          </div>
+          ) : (
+          <ERPInput
+            label="مرجع العملية البنكية"
+            value={tx.bankReference || ""}
+            onChange={(e) => update("bankReference", e.target.value)}
+            icon={Hash}
+            placeholder="اختياري: رقم العملية أو مرجع البنك"
+            fullWidth
+          />
           )}
         </ERPSection>
 
-        {/* بيانات الإيداع */}
-        {tx.type === "deposit" && (
-          <ERPSection title="جهة الإيداع والمصدر" icon={Building} colorClass="emerald">
-            <div className="sm:col-span-2">
-              <DynamicSelect
-                label="جهة الإيداع *"
-                value={tx.party}
-                onChange={(v) => update("party", v)}
-                icon={Building}
-                defaultOptions={DEP_OPTS}
+        {allowsOptionalSettlement && (
+          <ERPSection title="إعدادات التسوية" icon={Wallet} colorClass="emerald">
+            <label className="sm:col-span-2 flex items-start gap-2 p-3 rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20 cursor-pointer hover:bg-emerald-100/70 transition-colors">
+              <input
+                type="checkbox"
+                checked={currentRequiresSettlement}
+                onChange={(e) => update("requires_settlement", e.target.checked)}
+                className="w-4 h-4 mt-0.5 accent-emerald-600"
               />
-              {errors.party && (
+              <div>
+                <span className="text-xs font-black text-emerald-800 dark:text-emerald-400 block">هذا الشيك يتطلب تسوية لاحقة</span>
+                <span className="text-[10px] font-bold text-emerald-700/80 dark:text-emerald-300/80">يمكن استخدامه مع الميزانيات والأنشطة والمصروفات الأخرى حسب قرارك الإداري.</span>
+              </div>
+            </label>
+          </ERPSection>
+        )}
+
+        {!usesEmployeeLookup && !isDirectCharge && (
+          <ERPSection title="بيانات المستفيد وبند الصرف" icon={Building} colorClass="slate">
+            <ERPInput
+              label="اسم المستفيد"
+              required
+              value={tx.beneficiaryName || ""}
+              onChange={(e) => update("beneficiaryName", e.target.value)}
+              icon={User}
+              error={errors.beneficiaryName}
+              placeholder="اسم الجهة أو المستفيد"
+            />
+
+            <div className="space-y-1">
+              <DynamicSelect
+                label="بند الصرف *"
+                value={tx.expenseItem || ""}
+                onChange={(v) => update("expenseItem", v)}
+                icon={Tag}
+                defaultOptions={EXPENSE_ITEM_OPTIONS}
+              />
+              {errors.expenseItem && (
                 <p className="text-[9px] text-rose-500 font-black mt-1 flex items-center gap-1">
                   <AlertCircle size={10} />
-                  {errors.party}
+                  {errors.expenseItem}
                 </p>
               )}
             </div>
           </ERPSection>
         )}
 
-        {tx.type === "bank_charge" && (
-          <ERPSection title="بيانات الخصم البنكي المباشر" icon={Landmark} colorClass="slate">
-            <div className="sm:col-span-2">
+        {isDirectCharge && (
+          <ERPSection title="بيانات الخصم المباشر" icon={Landmark} colorClass="slate" badge="بدون شيك">
+            <div className="space-y-1">
               <DynamicSelect
-                label="البنك / الحساب *"
-                value={tx.party}
-                onChange={(v) => update("party", v)}
-                icon={Landmark}
-                defaultOptions={BANK_OPTS}
+                label="نوع الخصم المباشر *"
+                value={tx.bankChargeCategory || ""}
+                onChange={(v) => update("bankChargeCategory", v)}
+                icon={Tag}
+                defaultOptions={DIRECT_BANK_CHARGE_OPTIONS}
               />
-              {errors.party && (
+              {errors.bankChargeCategory && (
                 <p className="text-[9px] text-rose-500 font-black mt-1 flex items-center gap-1">
                   <AlertCircle size={10} />
-                  {errors.party}
+                  {errors.bankChargeCategory}
                 </p>
               )}
             </div>
 
-            <ERPSelect
-              label="نوع الخصم البنكي"
-              required
-              icon={Tag}
-              value={tx.bankChargeCategory || ""}
-              error={errors.bankChargeCategory}
-              onChange={(e) => update("bankChargeCategory", e.target.value)}
-            >
-              <option value="">-- اختر نوع الخصم --</option>
-              {BANK_CHARGE_CATEGORIES.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </ERPSelect>
-
             <ERPInput
-              label="المرجع البنكي"
-              value={tx.bankReference || ""}
-              onChange={(e) => update("bankReference", e.target.value)}
-              icon={Hash}
-              placeholder="رقم مرجع الخصم من كشف الحساب"
+              label="الجهة أو البيان المختصر"
+              value={tx.beneficiaryName || ""}
+              onChange={(e) => update("beneficiaryName", e.target.value)}
+              icon={Building}
+              placeholder="مثال: البنك الأهلي - خصم كشف حساب"
             />
 
-            <div className="sm:col-span-2 flex items-start gap-2 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-3 py-2 rounded-xl">
+            <div className="sm:col-span-2 flex items-start gap-2 px-3 py-2 rounded-xl border bg-slate-50 dark:bg-slate-900/20 border-slate-200 dark:border-slate-800/40">
               <Info size={14} className="text-slate-600 mt-0.5 shrink-0" />
               <p className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
-                يُستخدم هذا النوع للحركات التي يخصمها البنك مباشرة مثل رسوم كشف الحساب أو العمولات البنكية، لذلك لا يحتاج إلى رقم شيك أو سند صرف نقدي.
+                هذه الحركة تُخصم مباشرة من كشف الحساب البنكي ولا تحتاج إلى إصدار شيك أو تسوية لاحقة.
               </p>
             </div>
           </ERPSection>
         )}
 
-        {/* بيانات العضو */}
-        {["advance", "aid", "activity"].includes(tx.type) && (
+        {/* بيانات العضو / المسؤول */}
+        {usesEmployeeLookup && (
           <ERPSection
-            title={tx.type === "activity" ? "مسؤول الفاعلية (الرحلة/الإفطار)" : "العضو المستفيد / مسؤول العهدة"}
+            title={usesEventDetails ? "مسؤول الشيك (الرحلة / الفاعلية)" : isAdvance ? "مسؤول السلفة / العهدة" : "العضو المستفيد"}
             icon={User}
             colorClass="teal"
           >
@@ -823,11 +963,11 @@ export default function TreasuryForm({
                 </div>
               )}
 
-              {tx.type === "aid" && empData && !isEligibleForBenefit(empData, tx.date) && (
+              {isAid && empData && !isEligibleForBenefit(empData, tx.date) && (
                 <div className="mt-2 p-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-[10px] font-black">
                   {getRetirementDate(empData)
-                    ? `هذا العضو غير مستحق للرعاية بعد تاريخ المعاش (${formatEmployeeDate(getRetirementDate(empData))}).`
-                    : "هذا العضو غير مستحق للرعاية أو المزايا وفق حالته الحالية."}
+                    ? `هذا العضو غير مستحق للإعانة بعد تاريخ المعاش (${formatEmployeeDate(getRetirementDate(empData))}).`
+                    : "هذا العضو غير مستحق للإعانة أو المزايا وفق حالته الحالية."}
                 </div>
               )}
 
@@ -841,11 +981,11 @@ export default function TreasuryForm({
           </ERPSection>
         )}
 
-        {/* بيانات الرعاية */}
-        {tx.type === "aid" && (
-          <ERPSection title="موجبات صرف الرعاية" icon={Heart} colorClass="rose">
+        {/* بيانات الإعانة */}
+        {isAid && (
+          <ERPSection title="موجبات صرف الإعانة" icon={Heart} colorClass="rose">
             <ERPSelect
-              label="نوع الرعاية"
+              label="نوع الإعانة"
               required
               icon={Tag}
               value={tx.aidCategory}
@@ -856,7 +996,7 @@ export default function TreasuryForm({
                 update("aidRel", "");
               }}
             >
-              <option value="">-- اختر نوع الرعاية --</option>
+              <option value="">-- اختر نوع الإعانة --</option>
               {Object.keys(AID_RELS).map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -886,7 +1026,7 @@ export default function TreasuryForm({
 
             <div className="sm:col-span-2 space-y-1">
               <ArabicDatePicker
-                label="تاريخ واقعة الرعاية"
+                label="تاريخ واقعة الإعانة"
                 value={tx.incidentDate}
                 maxVal={tx.date}
                 onChange={(v) => update("incidentDate", v)}
@@ -933,27 +1073,27 @@ export default function TreasuryForm({
           </ERPSection>
         )}
 
-        {/* بيانات الفاعلية */}
-        {tx.type === "activity" && (
+        {/* بيانات الرحلة / الفاعلية */}
+        {usesEventDetails && (
           <ERPSection
-            title="تفاصيل الفاعلية — شيك دعم النشاط"
-            icon={Activity}
-            colorClass="amber"
-            badge="جديد"
+            title={isTrip ? "تفاصيل الرحلة" : "تفاصيل الفاعلية"}
+            icon={isTrip ? MapPin : Activity}
+            colorClass={isTrip ? "indigo" : "amber"}
+            badge={isTrip ? "شيك + اشتراكات" : "تتطلب تسوية"}
           >
             <ERPInput
-              label="اسم الفاعلية / الحدث"
+              label={isTrip ? "اسم الرحلة" : "اسم الفاعلية / الحدث"}
               required
               fullWidth
               value={tx.activityName || ""}
               onChange={(e) => update("activityName", e.target.value)}
               error={errors.activityName}
               icon={Tag}
-              placeholder="مثال: رحلة شرم الشيخ الصيفية"
+              placeholder={isTrip ? "مثال: رحلة شرم الشيخ الصيفية" : "مثال: إفطار جماعي لشهر رمضان"}
             />
 
             <ERPSelect
-              label="نوع الفاعلية"
+              label={isTrip ? "نوع الرحلة" : "نوع الفاعلية"}
               required
               icon={Tag}
               value={tx.activityType || ""}
@@ -970,7 +1110,7 @@ export default function TreasuryForm({
 
             <div className="space-y-1">
               <ArabicDatePicker
-                label="موعد الفاعلية المقرر"
+                label={isTrip ? "موعد الرحلة" : "موعد الفاعلية"}
                 value={tx.activityDate || ""}
                 minVal={getTodayISO()}
                 onChange={(v) => update("activityDate", v)}
@@ -987,20 +1127,34 @@ export default function TreasuryForm({
               error={errors.participantsCount}
             />
 
+            {isTrip && (
+              <ERPInput
+                label="اشتراكات الأعضاء"
+                required
+                value={tx.memberSubscriptions || ""}
+                onChange={(e) => update("memberSubscriptions", normalizeNumericInput(e.target.value))}
+                isNumeric
+                icon={DollarSign}
+                placeholder="0.00"
+                error={errors.memberSubscriptions}
+              />
+            )}
+
             <ERPInput
-              label="موقع / وجهة الفاعلية"
+              label={isTrip ? "وجهة الرحلة" : "موقع الفاعلية"}
               fullWidth
               value={tx.activityLocation || ""}
               onChange={(e) => update("activityLocation", e.target.value)}
               icon={MapPin}
-              placeholder="مثال: شرم الشيخ / قاعة النقابة"
+              placeholder={isTrip ? "مثال: شرم الشيخ" : "مثال: قاعة النقابة"}
             />
 
-            <div className="sm:col-span-2 flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 px-3 py-2 rounded-xl">
-              <Info size={14} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400">
-                يُمثل هذا المستند شيك دعم فاعلية ويُخصم من رصيد الخزينة. تأكد من اعتماد رئيس
-                المجلس قبل الصرف.
+            <div className={clsx("sm:col-span-2 flex items-start gap-2 px-3 py-2 rounded-xl border", isTrip ? "bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800/40" : "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/40")}>
+              <Info size={14} className={clsx("mt-0.5 shrink-0", isTrip ? "text-indigo-600" : "text-amber-600")} />
+              <p className={clsx("text-[10px] font-bold", isTrip ? "text-indigo-700 dark:text-indigo-400" : "text-amber-700 dark:text-amber-400")}>
+                {isTrip
+                  ? "ميزانية الرحلة في التسوية ستساوي قيمة الشيك مضافًا إليها اشتراكات الأعضاء المسجلة هنا."
+                  : "الفاعلية تُسوى لاحقًا على أساس أن إجمالي تكلفة الفاعلية يساوي قيمة هذا الشيك."}
               </p>
             </div>
           </ERPSection>
@@ -1010,7 +1164,11 @@ export default function TreasuryForm({
         <ERPSection title="البيان التوضيحي والمرفقات" icon={FileText} colorClass="indigo">
           <div className="sm:col-span-2 space-y-1">
             <label className="text-[10px] font-black text-slate-400 uppercase pr-1">
-              {tx.type === "activity" ? "تفاصيل إضافية / بند الصرف" : "ملاحظات وبيان السند"}
+              {isDirectCharge
+                ? "تفاصيل الخصم المباشر"
+                : usesEventDetails
+                  ? "تفاصيل إضافية / بند الصرف"
+                  : "ملاحظات وبيان الشيك"}
             </label>
 
             <textarea
@@ -1022,12 +1180,32 @@ export default function TreasuryForm({
               value={tx.notes}
               onChange={(e) => update("notes", e.target.value)}
               placeholder={
-                tx.type === "activity"
+                isDirectCharge
+                  ? "اكتب شرحًا مختصرًا للعمولة أو المصروف البنكي المباشر..."
+                  : usesEventDetails
                   ? "اكتب تفاصيل بنود الصرف والميزانية..."
                   : "اكتب التفاصيل والمستندات المرفقة..."
               }
             />
           </div>
+
+          {currentRequiresSettlement && !isDirectCharge && (
+            <div className="sm:col-span-2 flex items-start gap-2 bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800/40 px-3 py-2 rounded-xl">
+              <Info size={14} className="text-teal-600 mt-0.5 shrink-0" />
+              <p className="text-[10px] font-bold text-teal-700 dark:text-teal-400">
+                سيتم إرسال هذا الشيك لاحقًا إلى شاشة التسويات ضمن مجموعة موحدة باسم <span className="font-black">issued_checks</span>.
+              </p>
+            </div>
+          )}
+
+          {isDirectCharge && (
+            <div className="sm:col-span-2 flex items-start gap-2 bg-slate-50 dark:bg-slate-900/20 border border-slate-200 dark:border-slate-800/40 px-3 py-2 rounded-xl">
+              <Info size={14} className="text-slate-600 mt-0.5 shrink-0" />
+              <p className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                سيتم حفظ هذه الحركة المباشرة داخل سجل <span className="font-black">transactions</span> لتظهر في كشف الحساب والداش بورد ضمن المصروفات البنكية والعمولات.
+              </p>
+            </div>
+          )}
 
           <div className="sm:col-span-2 pt-2 border-t border-slate-100 dark:border-slate-800">
             <FileUpload
@@ -1049,7 +1227,7 @@ export default function TreasuryForm({
         <div className="max-w-6xl mx-auto px-4 py-3">
           <div className="flex flex-wrap justify-between items-center gap-3">
             <div className="hidden sm:flex items-center gap-4 text-[10px] font-bold text-slate-600 dark:text-slate-400">
-              {tx.checkNum && !["deposit", "bank_charge"].includes(tx.type) && (
+              {tx.checkNum && requiresChequeNumber(tx.type) && (
                 <span className="flex items-center gap-1">
                   <Hash size={12} />
                   شيك #{tx.checkNum}
@@ -1074,7 +1252,7 @@ export default function TreasuryForm({
                 إلغاء
               </button>
 
-              {!isEdit && tx.type === "aid" && (
+              {!isEdit && isAid && (
                 <button
                   type="button"
                   onClick={() => {
@@ -1097,27 +1275,36 @@ export default function TreasuryForm({
                 </button>
               )}
 
-              {!isEdit && !["deposit", "bank_charge"].includes(tx.type) && (
+              {!isEdit && !isDirectCharge && (
                 <button
                   type="button"
                   onClick={() => {
                     if (validate()) {
                       printVoucher?.({
-                        vType: TYPE_LABELS[tx.type],
+                        vType: `إصدار شيك - ${ISSUED_CHECK_TYPE_LABELS[tx.type] || tx.type}`,
                         vNum: tx.checkNum,
                         date: tx.date,
-                        party: tx.party,
+                        party: usesEmployeeLookup ? tx.party : tx.beneficiaryName,
                         amount: tx.amount,
                         notes: tx.notes,
                         checkNum: tx.checkNum,
                         extraFields:
-                          tx.type === "activity"
-                            ? [
-                                { label: "اسم الفاعلية", value: tx.activityName },
-                                { label: "نوع الفاعلية", value: tx.activityType },
-                                { label: "الموقع", value: tx.activityLocation }
-                              ]
-                            : []
+                          [
+                            { label: "نوع الشيك", value: ISSUED_CHECK_TYPE_LABELS[tx.type] || tx.type },
+                            ...(usesEventDetails
+                              ? [
+                                  { label: isTrip ? "اسم الرحلة" : "اسم الفاعلية", value: tx.activityName },
+                                  { label: isTrip ? "نوع الرحلة" : "نوع الفاعلية", value: tx.activityType },
+                                  { label: isTrip ? "الوجهة" : "الموقع", value: tx.activityLocation },
+                                ]
+                              : []),
+                            ...(OPTIONAL_SETTLEMENT_TYPES.includes(tx.type)
+                              ? [{ label: "بند الصرف", value: tx.expenseItem }]
+                              : []),
+                            ...(currentRequiresSettlement
+                              ? [{ label: "التسوية", value: "يتطلب تسوية" }]
+                              : [{ label: "التسوية", value: "لا يتطلب تسوية" }]),
+                          ]
                       });
                     }
                   }}

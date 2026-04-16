@@ -4,6 +4,7 @@ import Router from "./router";
 import { ThemeProvider } from "./providers/ThemeProvider";
 import { FirebaseProvider } from "./providers/FirebaseProvider";
 import { AlertProvider } from "./providers/AlertProvider";
+import { AuthProvider } from "./providers/AuthProvider";
 
 // 🎯 استيراد المزود العالمي الجديد للبطاقة المنبثقة
 import { GlobalEmployeeModalProvider } from "./providers/GlobalEmployeeModal";
@@ -15,12 +16,14 @@ export default function App() {
         <AlertProvider>
           
           {/* 🎯 تغليف التطبيق بالمزود العالمي هنا */}
+          <AuthProvider>
           <GlobalEmployeeModalProvider>
             <BrowserRouter>
               {/* الراوتر الذي يحتوي على MainLayout والسايد بار */}
               <Router /> 
             </BrowserRouter>
           </GlobalEmployeeModalProvider>
+          </AuthProvider>
 
         </AlertProvider>
       </FirebaseProvider>

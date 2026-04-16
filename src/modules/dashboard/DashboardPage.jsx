@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
 import BrandHeader from "../../ui/BrandHeader";
 import { formatMoney } from "../../utils/numberFormat";
+import { excludeMigratedLegacyChecks, getIssuedCheckDisplayParty, getIssuedCheckTypeLabel, normalizeIssuedCheckType, normalizeRequiresSettlement } from "../treasury/helpers/issuedChecks";
 // 🎯 استدعاء أداة البطاقة السريعة لتعمل في الشاشة الرئيسية أيضاً
 import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
 import clsx from "clsx";
@@ -153,6 +154,8 @@ export default function DashboardPage() {
   const { openEmployeeModal } = useEmployeeModal();
 
   const [transactions, setTransactions] = useState([]);
+  const [issuedChecks, setIssuedChecks] = useState([]);
+  const [legacyTransactions, setLegacyTransactions] = useState([]);
   const [employees, setEmployees] = useState([]); 
   const [meetings, setMeetings] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
@@ -166,10 +169,34 @@ export default function DashboardPage() {
     const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
     setDateStr(new Date().toLocaleDateString('ar-EG', options));
 
+    let checksReady = false;
+    let legacyReady = false;
+    const finishTxLoading = () => {
+      if (checksReady && legacyReady) setLoadingTx(false);
+    };
+
+    const qChecks = query(collection(db, "issued_checks"), orderBy("date", "desc"));
+    const unsubChecks = onSnapshot(qChecks, snap => {
+      setIssuedChecks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      checksReady = true;
+      finishTxLoading();
+    }, err => {
+      console.error("issued_checks:", err);
+      setIssuedChecks([]);
+      checksReady = true;
+      finishTxLoading();
+    });
+
     const qTx = query(collection(db, "transactions"), orderBy("date", "desc"));
     const unsubTx = onSnapshot(qTx, snap => {
-      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoadingTx(false);
+      setLegacyTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      legacyReady = true;
+      finishTxLoading();
+    }, err => {
+      console.error("transactions:", err);
+      setLegacyTransactions([]);
+      legacyReady = true;
+      finishTxLoading();
     });
 
     const qEmp = query(collection(db, "employees"));
@@ -194,15 +221,27 @@ export default function DashboardPage() {
       );
     });
 
-    return () => { unsubTx(); unsubEmp(); unsubMeet(); unsubAudit(); };
+    return () => { unsubChecks(); unsubTx(); unsubEmp(); unsubMeet(); unsubAudit(); };
   }, []);
 
+  useEffect(() => {
+    const filteredLegacy = excludeMigratedLegacyChecks(
+      legacyTransactions,
+      issuedChecks
+    );
+    const merged = [
+      ...filteredLegacy.map((tx) => ({ ...tx, type: normalizeIssuedCheckType(tx.type) })),
+      ...issuedChecks.map((tx) => ({ ...tx, type: normalizeIssuedCheckType(tx.type) })),
+    ];
+    setTransactions(merged);
+  }, [issuedChecks, legacyTransactions]);
+
   // ── الحسابات والإحصاءات ──
-  const posted       = useMemo(() => transactions.filter(t => t.state === "posted"), [transactions]);
+  const posted       = useMemo(() => transactions.filter(t => t.state === "posted" || t.state === "approved" || !t.state), [transactions]);
   const totalIn      = useMemo(() => posted.filter(t => t.type === "deposit").reduce((s,t) => s+Number(t.amount),0), [posted]);
-  const totalOut     = useMemo(() => posted.filter(t => t.type !== "deposit").reduce((s,t) => s+Number(t.amount),0), [posted]);
+  const totalOut     = useMemo(() => posted.filter(t => t.type !== "deposit").reduce((s,t) => s+Number(t.amount || 0),0), [posted]);
   const balance      = OPENING_BALANCE + totalIn - totalOut;
-  const openAdvances = useMemo(() => transactions.filter(t => t.type === "advance" && !t.isSettled && t.state === "posted"), [transactions]);
+  const openAdvances = useMemo(() => transactions.filter(t => normalizeRequiresSettlement(t) && !t.isSettled && (t.state === "posted" || t.state === "approved" || !t.state)), [transactions]);
   const drafts       = useMemo(() => transactions.filter(t => t.state === "draft").length, [transactions]);
   const recentTx     = useMemo(() => transactions.slice(0, 6), [transactions]);
   const operationalAlerts = useMemo(() => {
@@ -214,9 +253,9 @@ export default function DashboardPage() {
     };
 
     const staleAdvances = openAdvances.filter((tx) => getAgeDays(tx.date) >= 30);
-    const unsettledActivities = transactions.filter((tx) => tx.type === "activity" && !tx.isSettled && tx.state === "posted");
+    const unsettledActivities = transactions.filter((tx) => (tx.type === "event" || tx.type === "trip") && !tx.isSettled && (tx.state === "posted" || tx.state === "approved" || !tx.state));
     const sessionWithoutMeeting = transactions
-      .filter((tx) => ["advance", "activity"].includes(tx.type) && tx.isSettled)
+      .filter((tx) => (normalizeRequiresSettlement(tx) || tx.type === "advance") && tx.isSettled)
       .flatMap((tx) =>
         (tx.settlementExpenses || [])
           .filter((expense) => expense.category === "بدل جلسات" && !expense.meetingId)
@@ -237,15 +276,15 @@ export default function DashboardPage() {
       staleAdvances.length > 0 ? {
         key: "stale-advances",
         tone: "amber",
-        title: "عهد مفتوحة متأخرة",
-        body: `${staleAdvances.length} عهدة مر عليها 30 يومًا أو أكثر بدون تسوية.`,
+        title: "شيكات تسوية متأخرة",
+        body: `${staleAdvances.length} شيك مر عليه 30 يومًا أو أكثر بدون تسوية.`,
         to: "/treasury/settlements",
       } : null,
       unsettledActivities.length > 0 ? {
         key: "open-activities",
         tone: "sky",
-        title: "فعاليات لم تُسوَّ بعد",
-        body: `${unsettledActivities.length} فعالية ما زالت في انتظار الإقفال المالي.`,
+        title: "رحلات أو فاعليات لم تُسوَّ بعد",
+        body: `${unsettledActivities.length} شيك من نوع رحلة أو فاعلية ما زال في انتظار الإقفال المالي.`,
         to: "/treasury/settlements",
       } : null,
       sessionWithoutMeeting.length > 0 ? {
@@ -304,7 +343,7 @@ export default function DashboardPage() {
         <div className="relative z-10 flex gap-2">
           {drafts > 0 && (
             <Link to="/treasury/admin?filter=draft" className="flex items-center gap-1.5 px-4 py-2 bg-amber-500/10 border border-amber-400/30 text-amber-700 dark:text-amber-400 rounded-xl text-xs font-black animate-pulse hover:bg-amber-500/20 transition-colors">
-              <AlertTriangle size={14}/> {drafts} سند مسودة
+              <AlertTriangle size={14}/> {drafts} شيك مسودة
             </Link>
           )}
           <button className="px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-black shadow-md hover:bg-teal-700 transition-all flex items-center gap-1.5 active:scale-95">
@@ -316,8 +355,8 @@ export default function DashboardPage() {
       {/* ── 2. بطاقات الإحصاءات السريعة (KPIs) ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard label="الرصيد الدفتري الحالي" value={formatMoney(balance)} sub={`افتتاحي: ${formatMoney(OPENING_BALANCE)}`} icon={Wallet} color={balance >= 0 ? "teal" : "rose"} T={T} />
-        <KPICard label="إجمالي المقبوضات" value={formatMoney(totalIn)} sub={`${posted.filter(t=>t.type==="deposit").length} سند مرحّل`} icon={TrendingUp} color="emerald" trend={2.4} T={T} />
-        <KPICard label="إجمالي المدفوعات" value={formatMoney(totalOut)} sub="إعانات · سلف · نثريات" icon={TrendingDown} color="rose" trend={-1.2} T={T} />
+        <KPICard label="إجمالي المقبوضات" value={formatMoney(totalIn)} sub={`${posted.filter(t=>t.type==="deposit").length} حركة مرحّلة`} icon={TrendingUp} color="emerald" trend={2.4} T={T} />
+        <KPICard label="إجمالي المدفوعات" value={formatMoney(totalOut)} sub="إعانات · سلف · رحلات · فاعليات" icon={TrendingDown} color="rose" trend={-1.2} T={T} />
         <KPICard label="الأعضاء المسجلون" value={empCount} sub="مزامنة فورية" icon={Users} color="sky" trend={5.0} T={T} />
       </div>
 
@@ -326,8 +365,8 @@ export default function DashboardPage() {
         <div className="p-4 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-900/20 flex items-center gap-4 shadow-sm animate-in slide-in-from-top-4">
           <div className="p-2.5 bg-amber-500 text-white rounded-lg shrink-0 animate-spin-slow"><RefreshCw size={16}/></div>
           <div className="flex-1 min-w-0">
-            <p className="font-black text-amber-800 dark:text-amber-400 text-sm">يوجد ({openAdvances.length}) عهدة بانتظار التسوية</p>
-            <p className="text-[10px] font-bold text-amber-600 dark:text-amber-500 mt-0.5 truncate">{openAdvances.map(a => a.party).join(" — ")}</p>
+            <p className="font-black text-amber-800 dark:text-amber-400 text-sm">يوجد ({openAdvances.length}) شيك بانتظار التسوية</p>
+            <p className="text-[10px] font-bold text-amber-600 dark:text-amber-500 mt-0.5 truncate">{openAdvances.map(a => getIssuedCheckDisplayParty(a)).join(" — ")}</p>
           </div>
           <Link to="/treasury/settlements" className="px-5 py-2.5 bg-amber-500 text-white rounded-lg text-xs font-black hover:bg-amber-600 transition shadow-sm active:scale-95 whitespace-nowrap">تسوية الآن</Link>
         </div>
@@ -363,8 +402,8 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {[
               { title: "الأعضاء", icon: Users, color: "teal", link: "/employees" },
-              { title: "الخزينة", icon: Wallet, color: "emerald", link: "/treasury/admin" },
-              { title: "العهد", icon: Briefcase, color: "amber", link: "/treasury/settlements" },
+              { title: "إصدار شيك", icon: Wallet, color: "emerald", link: "/treasury/admin" },
+              { title: "التسويات", icon: Briefcase, color: "amber", link: "/treasury/settlements" },
               { title: "كشف الحساب", icon: ReceiptText, color: "purple", link: "/treasury/ledger" },
               { title: "استيراد بيانات", icon: UploadCloud, color: "blue", link: "/importer" }, // 👈 الزر الجديد هنا
             ].map((mod, i) => {
@@ -395,8 +434,8 @@ export default function DashboardPage() {
                     {tx.type === "deposit" ? <ArrowDownRight size={16} className="text-emerald-500"/> : <ArrowUpRight size={16} className={tx.type === "aid" ? "text-sky-500" : "text-purple-500"}/>}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-black truncate text-slate-800 dark:text-slate-100">{tx.party || "—"}</p>
-                    <p className={clsx("text-[9px] font-bold truncate mt-0.5", T.muted)}>{tx.notes || "بدون بيان تفصيلي"}</p>
+                    <p className="text-xs font-black truncate text-slate-800 dark:text-slate-100">{getIssuedCheckDisplayParty(tx) || "—"}</p>
+                    <p className={clsx("text-[9px] font-bold truncate mt-0.5", T.muted)}>{getIssuedCheckTypeLabel(tx.type)}{tx.notes ? ` — ${tx.notes}` : ""}</p>
                   </div>
                   <div className="text-left shrink-0">
                     <p className={clsx("text-[13px] font-black", tx.type === "deposit" ? "text-emerald-600" : "text-rose-600")}>
@@ -415,10 +454,11 @@ export default function DashboardPage() {
         <div className="space-y-5">
           <div className={clsx("p-4 rounded-2xl border shadow-sm space-y-3", T.card)}>
             <h3 className="text-[11px] font-black px-1 text-slate-500 flex items-center gap-1.5"><Landmark size={14}/> عمليات الخزينة</h3>
-            <QuickLink to="/treasury/admin?type=deposit" icon={ArrowDownRight} label="سند إيداع" desc="اشتراكات وتبرعات" color="emerald" T={T}/>
-            <QuickLink to="/treasury/admin?type=aid" icon={ArrowUpRight} label="صرف إعانة" desc="زواج، وفاة، ظروف" color="sky" T={T}/>
-            <QuickLink to="/treasury/admin?type=advance" icon={ArrowUpRight} label="صرف عهدة" desc="مصروفات ونثريات" color="purple" T={T}/>
-            <QuickLink to="/treasury/settlements" icon={ReceiptText} label="تسوية عهدة" desc="إغلاق ومطابقة الفواتير" color="amber" T={T}/>
+            <QuickLink to="/treasury/admin?type=aid" icon={ArrowUpRight} label="إصدار إعانة" desc="زواج، وفاة، ظروف" color="sky" T={T}/>
+            <QuickLink to="/treasury/admin?type=advance" icon={ArrowUpRight} label="إصدار سلفة" desc="عهدة ومصروفات بعهدة" color="purple" T={T}/>
+            <QuickLink to="/treasury/admin?type=trip" icon={ArrowUpRight} label="إصدار رحلة" desc="شيك + اشتراكات الأعضاء" color="indigo" T={T}/>
+            <QuickLink to="/treasury/admin?type=bank_charge" icon={CreditCard} label="خصم مباشر" desc="عمولات ومصاريف بنكية" color="slate" T={T}/>
+            <QuickLink to="/treasury/settlements" icon={ReceiptText} label="تسوية شيك" desc="إغلاق ومطابقة الفواتير" color="amber" T={T}/>
           </div>
 
           {/* 🎯 مجلس الإدارة مبني برمجياً ومتصل بالقاعدة */}

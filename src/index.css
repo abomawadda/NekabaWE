@@ -13,3 +13,12 @@ body {
   background-color: var(--color-slate-50); /* استبدال @apply بكود CSS مباشر لتجنب تعارض المحرك في البداية */
   color: var(--color-slate-900);
 }
+
+main[data-readonly="true"] button,
+main[data-readonly="true"] input,
+main[data-readonly="true"] select,
+main[data-readonly="true"] textarea {
+  pointer-events: none;
+  opacity: 0.6;
+  cursor: not-allowed;
+}

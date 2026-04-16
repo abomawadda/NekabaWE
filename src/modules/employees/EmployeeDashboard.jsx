@@ -14,7 +14,7 @@ import {
 import clsx from "clsx";
 
 import EmployeeForm from "./EmployeeForm";
-import EmployeeProfile from "./EmployeeProfile";
+import EmployeeProfile from "./EmployeeProfileFund";
 
 export default function EmployeeDashboard() {
   const T = useT();

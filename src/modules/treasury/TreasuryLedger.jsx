@@ -1,10 +1,6 @@
 /**
  * TreasuryLedger — كشف حساب الخزينة العام
- * ✅ إصلاح: عرض نوع "activity" وتفاصيل الشيك
- * ✅ تحسين: توافق كامل مع الموبايل
- * ✅ تحسين: تصدير Excel (XLSX)
- * ✅ تحسين: بطاقات ملخص محسّنة
- * ✅ إصلاح: عدم ظهور صفحة بيضاء (error boundary + loading)
+ * يدعم السجلات القديمة والجديدة مع توحيد أنواع الشيكات إداريًا.
  */
 
 import React, { useEffect, useState, useMemo } from "react";
@@ -16,6 +12,7 @@ import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { formatMoney } from "../../utils/numberFormat";
 import { openPrintWindow } from "../../utils/print";
+import { excludeMigratedLegacyChecks, getIssuedCheckDisplayParty, getIssuedCheckTypeLabel, LEGACY_CHECK_TYPES, normalizeIssuedCheckType, normalizeRequiresSettlement } from "./helpers/issuedChecks";
 import * as XLSX from "xlsx";
 import {
   Printer, Wallet, TrendingUp, TrendingDown, FileText,
@@ -47,9 +44,14 @@ const getTypeLabel = (type, subType) => {
     case "deposit":  return "إيداع نقدي";
     case "refund":   return "رد سلفة";
     case "subs":     return "اشتراكات نشاط";
-    case "aid":      return subType ? subType.split(":")[0] : "مصروف";
-    case "advance":  return "سلفة / عهدة";
-    case "activity": return "شيك نشاط";
+    case "aid":      return subType ? `إعانة: ${subType.split(":")[0]}` : "إعانة";
+    case "advance":  return "سلفة";
+    case "activities": return "أنشطة";
+    case "trip":     return "رحلة";
+    case "event":    return "فاعلية";
+    case "budget":   return "ميزانية";
+    case "other":    return "شيك آخر";
+    case "activity": return "فاعلية";
     case "bank_charge": return subType ? `خصم بنكي: ${subType}` : "خصم بنكي مباشر";
     default:         return "حركة مالية";
   }
@@ -62,7 +64,12 @@ const getBadgeColor = (type) => {
     case "refund":  return "bg-sky-100    text-sky-700    border-sky-200    dark:bg-sky-900/30    dark:text-sky-400";
     case "aid":     return "bg-rose-100   text-rose-700   border-rose-200   dark:bg-rose-900/30   dark:text-rose-400";
     case "advance": return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400";
-    case "activity":return "bg-amber-100  text-amber-700  border-amber-200  dark:bg-amber-900/30  dark:text-amber-400";
+    case "activities":
+    case "activity":
+    case "event":   return "bg-amber-100  text-amber-700  border-amber-200  dark:bg-amber-900/30  dark:text-amber-400";
+    case "trip":    return "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400";
+    case "budget":  return "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-400";
+    case "other":   return "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900/30 dark:text-slate-300";
     case "bank_charge": return "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900/30 dark:text-slate-300";
     default:        return "bg-slate-100  text-slate-700  border-slate-200";
   }
@@ -120,6 +127,8 @@ class ErrorBoundary extends React.Component {
 function TreasuryLedgerInner() {
   const T = useT();
   const [transactions, setTransactions] = useState([]);
+  const [issuedChecks, setIssuedChecks] = useState([]);
+  const [legacyTransactions, setLegacyTransactions] = useState([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState(null);
   const [filterFrom, setFilterFrom]     = useState("");
@@ -130,26 +139,67 @@ function TreasuryLedgerInner() {
   // Firestore listener
   useEffect(() => {
     try {
-      const q = query(collection(db, "transactions"));
-      const unsub = onSnapshot(
-        q,
-        snap => {
-          setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      let checksReady = false;
+      let legacyReady = false;
+      const finishLoading = () => {
+        if (checksReady && legacyReady) {
           setLoading(false);
           setError(null);
+        }
+      };
+
+      const qChecks = query(collection(db, "issued_checks"));
+      const unsubChecks = onSnapshot(
+        qChecks,
+        snap => {
+          setIssuedChecks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+          checksReady = true;
+          finishLoading();
         },
         err => {
           console.error(err);
-          setError(err.message);
-          setLoading(false);
+          checksReady = true;
+          setIssuedChecks([]);
+          finishLoading();
         }
       );
-      return () => unsub();
+
+      const qLegacy = query(collection(db, "transactions"));
+      const unsubLegacy = onSnapshot(
+        qLegacy,
+        snap => {
+          setLegacyTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+          legacyReady = true;
+          finishLoading();
+        },
+        err => {
+          console.error(err);
+          legacyReady = true;
+          setLegacyTransactions([]);
+          finishLoading();
+        }
+      );
+      return () => {
+        unsubChecks();
+        unsubLegacy();
+      };
     } catch (e) {
       setError(e.message);
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    const filteredLegacy = excludeMigratedLegacyChecks(
+      legacyTransactions,
+      issuedChecks
+    );
+    const normalizedChecks = issuedChecks.map((tx) => ({
+      ...tx,
+      type: normalizeIssuedCheckType(tx.type),
+    }));
+    setTransactions([...filteredLegacy, ...normalizedChecks]);
+  }, [issuedChecks, legacyTransactions]);
 
   // بناء بيانات دفتر الأستاذ
   const ledgerData = useMemo(() => {
@@ -158,28 +208,29 @@ function TreasuryLedgerInner() {
 
     posted.forEach(tx => {
       const amt = Number(tx.advanceAmountBase || tx.amount || 0);
+      const normalizedType = normalizeIssuedCheckType(tx.type);
+      const isLegacyCheck = LEGACY_CHECK_TYPES.includes(tx.type);
       allEvents.push({
         id:       tx.id,
         date:     tx.date || getTodayISO(),
-        type:     tx.type,
-        subType:  tx.aidCategory || tx.activityType || tx.bankChargeCategory || "",
-        party:    tx.party || tx.employeeName || "—",
+        type:     normalizedType,
+        subType:  tx.aidCategory || tx.activityType || tx.bankChargeCategory || tx.expenseItem || "",
+        party:    getIssuedCheckDisplayParty(tx) || "—",
         notes:    tx.type === "bank_charge"
           ? [tx.notes, tx.bankReference ? `مرجع: ${tx.bankReference}` : ""].filter(Boolean).join(" - ") || tx.bankChargeCategory || "خصم بنكي مباشر"
-          : tx.notes || tx.activityName || (tx.type === "advance" ? "صرف عهدة" : tx.type === "activity" ? "شيك نشاط" : ""),
+          : tx.notes || tx.activityName || tx.expenseItem || (normalizedType === "advance" ? "صرف سلفة" : getIssuedCheckTypeLabel(normalizedType)),
         checkNum: tx.checkNum || tx.bankReference || (tx.type === "bank_charge" ? "خصم مباشر" : "—"),
         credit:   isCredit(tx.type) ? amt : 0,
-        debit:    !isCredit(tx.type) ? amt : 0,
+        debit:    !isCredit(tx.type) || (normalizeRequiresSettlement(tx) || isLegacyCheck) ? amt : 0,
       });
 
-      // اشتراكات النشاط
-      if (tx.type === "activity" && tx.isSettled && Number(tx.collectedSubscriptions || 0) > 0) {
+      if ((normalizedType === "trip" || tx.type === "activity") && tx.isSettled && Number(tx.collectedSubscriptions || tx.memberSubscriptions || 0) > 0) {
         allEvents.push({
           id: `${tx.id}_subs`, date: tx.settlementDate || tx.date, type: "subs", subType: "",
-          party: tx.employeeName || tx.party,
-          notes: `توريد اشتراكات نشاط (${tx.date})`,
+          party: getIssuedCheckDisplayParty(tx) || "—",
+          notes: `توريد اشتراكات ${normalizedType === "trip" ? "رحلة" : "نشاط"} (${tx.date})`,
           checkNum: "إيصال",
-          credit: Number(tx.collectedSubscriptions), debit: 0,
+          credit: Number(tx.collectedSubscriptions || tx.memberSubscriptions), debit: 0,
         });
       }
     });
@@ -212,8 +263,8 @@ function TreasuryLedgerInner() {
         const matchType =
           filterType === "all" ||
           (filterType === "deposit"  && ["deposit", "refund", "subs"].includes(e.type)) ||
-          (filterType === "expense"  && ["aid", "bank_charge"].includes(e.type)) ||
-          (filterType === "activity" && e.type === "activity") ||
+          (filterType === "aid"      && e.type === "aid") ||
+          (filterType === "event"    && ["event", "activities", "trip", "budget", "other"].includes(e.type)) ||
           (filterType === "advance"  && e.type === "advance");
 
         const matchSearch =
@@ -409,7 +460,7 @@ function TreasuryLedgerInner() {
           <input
             type="text" value={searchQ}
             onChange={e => setSearchQ(e.target.value)}
-            placeholder="بحث: جهة، بيان، شيك..."
+            placeholder="بحث: مستفيد، نوع شيك، بيان، رقم شيك..."
             className={clsx("w-full pr-8 pl-4 py-1.5 rounded-lg border text-[10px] font-bold outline-none focus:ring-2 focus:border-teal-500", T.inp)}
           />
         </div>
@@ -417,8 +468,8 @@ function TreasuryLedgerInner() {
           {[
             { id: "all",      label: "الكل"       },
             { id: "deposit",  label: "الوارد"     },
-            { id: "expense",  label: "المصروفات"  },
-            { id: "activity", label: "الأنشطة"    },
+            { id: "aid",      label: "الإعانات"   },
+            { id: "event",    label: "الشيكات"    },
             { id: "advance",  label: "السلف"      },
           ].map(f => (
             <button key={f.id} onClick={() => setFilterType(f.id)}

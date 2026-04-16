@@ -1,13 +1,11 @@
+import { normalizeIssuedCheckType } from "./issuedChecks";
+
 /**
- * التحقق من صحة بيانات حركة الخزينة
- * 
- * الأخطاء المُصلحة:
- * - إزالة التحقق من حقل employee (لم يعد كيانًا منفصلًا - أصبح نصًا في party)
- * - إضافة التحقق من حقل party لجميع أنواع السندات
- * - تحسين التحقق من المبلغ
+ * التحقق من صحة بيانات إصدار الشيكات والحركات المتوافقة القديمة.
  */
 export function validateTransaction(tx) {
   const errors = {};
+  const type = normalizeIssuedCheckType(tx.type);
 
   // ── التاريخ ──────────────────────────────────────────
   if (!tx.date) errors.date = "تاريخ الحركة مطلوب";
@@ -16,21 +14,21 @@ export function validateTransaction(tx) {
   if (!tx.amount || Number(tx.amount) <= 0)
     errors.amount = "المبلغ يجب أن يكون رقمًا موجبًا";
 
-  // ── رقم الشيك (للحركات المدينة فقط) ─────────────────
-  if (tx.type !== "deposit" && !tx.checkNum)
-    errors.checkNum = "رقم الشيك مطلوب للحركات المدينة";
+  // ── رقم الشيك ────────────────────────────────────────
+  if (type !== "deposit" && !tx.checkNum)
+    errors.checkNum = "رقم الشيك مطلوب";
 
-  // ── الجهة / اسم العضو ─────────────────────────────────
-  if (!tx.party || String(tx.party).trim() === "")
+  // ── الجهة / اسم العضو / المستفيد ─────────────────────
+  if (!tx.party && !tx.beneficiaryName)
     errors.party =
-      tx.type === "aid"
+      type === "aid"
         ? "اسم العضو مطلوب"
-        : tx.type === "deposit"
+        : type === "deposit"
         ? "جهة الإيداع مطلوبة"
         : "اسم المستلم مطلوب";
 
-  // ── تفاصيل خاصة بسند الإعانة ──────────────────────────
-  if (tx.type === "aid") {
+  // ── تفاصيل خاصة بالإعانة ─────────────────────────────
+  if (type === "aid") {
     if (!tx.aidCategory) errors.aidCategory = "تصنيف الإعانة مطلوب";
 
     if (tx.incidentDate && tx.incidentDate > tx.date)

@@ -3,6 +3,15 @@ import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useTreasuryService } from "./services/treasuryService";
 import { WORKFLOW_LABELS } from "./helpers/workflow";
+import {
+  DIRECT_FINANCE_TYPES,
+  getLegacyChecksMigrationPreview,
+  getIssuedCheckTypeLabel,
+  isDirectFinanceType,
+  mergeIssuedChecksSources,
+  normalizeRequiresSettlement,
+  normalizeIssuedCheckType,
+} from "./helpers/issuedChecks";
 import TreasuryForm from "./TreasuryForm";
 import {
   AlertTriangle,
@@ -24,6 +33,7 @@ import {
   AlertCircle,
   Star,
   Landmark,
+  ReceiptText,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
@@ -31,22 +41,26 @@ import { formatMoney } from "../../utils/numberFormat";
 import clsx from "clsx";
 
 const TYPE_LABELS = {
-  deposit: "إيداع",
-  aid: "مصروف",
-  advance: "سلفة / عهدة",
-  activity: "نشاط",
-  bank_charge: "خصم بنكي مباشر",
+  aid: "إعانة",
+  budget: "ميزانيات",
+  activities: "أنشطة",
+  trip: "رحلات",
+  event: "فاعليات",
+  advance: "سلفة",
+  other: "أخرى",
+  bank_charge: "خصم مباشر",
 };
 
 const TYPE_ICONS = {
-  deposit: <ArrowDownRight size={14} className="text-emerald-500" />,
-  aid: <ArrowUpRight size={14} className="text-sky-500" />,
+  aid: <ArrowUpRight size={14} className="text-rose-500" />,
+  budget: <Wallet size={14} className="text-sky-500" />,
+  activities: <Star size={14} className="text-amber-500" />,
+  trip: <RefreshCw size={14} className="text-indigo-500" />,
+  event: <Star size={14} className="text-orange-500" />,
   advance: <ArrowUpRight size={14} className="text-purple-500" />,
-  activity: <Star size={14} className="text-amber-500" />,
-  bank_charge: <Landmark size={14} className="text-slate-500" />,
+  other: <Landmark size={14} className="text-slate-500" />,
+  bank_charge: <ReceiptText size={14} className="text-slate-500" />,
 };
-
-const OPENING_BALANCE = 42685.79;
 
 const COLOR_STYLES = {
   emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -62,11 +76,27 @@ const getCheckSortValue = (value) => {
 };
 
 const getTxDetails = (tx) => {
-  const parts = [tx.notes, tx.bankChargeCategory, tx.bankReference ? `مرجع: ${tx.bankReference}` : ""].filter(Boolean);
+  if (tx.type === "bank_charge") {
+    return [
+      tx.bankChargeCategory ? `تصنيف الخصم: ${tx.bankChargeCategory}` : "",
+      tx.bankReference ? `مرجع البنك: ${tx.bankReference}` : "",
+      tx.notes,
+    ]
+      .filter(Boolean)
+      .join(" - ") || "خصم مباشر من كشف الحساب";
+  }
+
+  const parts = [
+    getIssuedCheckTypeLabel(tx.type) ? `النوع: ${getIssuedCheckTypeLabel(tx.type)}` : "",
+    tx.expenseItem ? `بند الصرف: ${tx.expenseItem}` : "",
+    tx.activityName,
+    tx.notes,
+    normalizeRequiresSettlement(tx) ? "يتطلب تسوية" : "لا يتطلب تسوية",
+  ].filter(Boolean);
   return parts.join(" - ") || "—";
 };
 
-const getTxCheckRef = (tx) => tx.checkNum || tx.bankReference || (tx.type === "bank_charge" ? "خصم مباشر" : "—");
+const getTxCheckRef = (tx) => tx.checkNum || tx.bankReference || "—";
 const formatCheckRef = (value) => {
   if (!value || value === "—") return "—";
   const normalized = String(value).replace(/[\u0660-\u0669]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
@@ -98,6 +128,8 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   const location = useLocation();
 
   const [transactions, setTransactions] = useState([]);
+  const [issuedChecks, setIssuedChecks] = useState([]);
+  const [legacyTransactions, setLegacyTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [selectedTx, setSelectedTx] = useState(null);
@@ -107,8 +139,10 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [viewAttachments, setViewAttachments] = useState(null);
   const [toast, setToast] = useState(null);
+  const [isMigratingLegacy, setIsMigratingLegacy] = useState(false);
 
-  const { deleteTransaction, saveTransaction } = useTreasuryService();
+  const { deleteTransaction, saveTransaction, migrateLegacyChecksToIssuedChecks } =
+    useTreasuryService();
 
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
@@ -116,7 +150,17 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   }, []);
 
   useEffect(() => {
-    if (location.search.includes("type=")) {
+    const params = new URLSearchParams(location.search || "");
+    const requestedType = normalizeIssuedCheckType(params.get("type") || "");
+    const requestedFilter = params.get("filter") || "";
+
+    if (requestedFilter === "draft") {
+      setFilterState("draft");
+    } else if (!params.get("type")) {
+      setFilterState("all");
+    }
+
+    if (requestedType && TYPE_LABELS[requestedType]) {
       setShowForm(true);
       setSelectedTx(null);
     } else if (!selectedTx) {
@@ -125,35 +169,104 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   }, [location.search, selectedTx]);
 
   useEffect(() => {
-    const qRef = query(collection(db, "transactions"), orderBy("date", "asc"), orderBy("checkNum", "asc"));
-    const unsub = onSnapshot(qRef, (snap) => {
-      setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
+    let checksReady = false;
+    let legacyReady = false;
+    const finishLoading = () => {
+      if (checksReady && legacyReady) setLoading(false);
+    };
 
-    return () => unsub();
+    const qChecks = query(collection(db, "issued_checks"), orderBy("date", "asc"));
+    const unsubChecks = onSnapshot(
+      qChecks,
+      (snap) => {
+        setIssuedChecks(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        checksReady = true;
+        finishLoading();
+      },
+      (error) => {
+        console.error("issued_checks:", error);
+        setIssuedChecks([]);
+        checksReady = true;
+        finishLoading();
+      }
+    );
+
+    const qLegacy = query(collection(db, "transactions"), orderBy("date", "asc"));
+    const unsubLegacy = onSnapshot(
+      qLegacy,
+      (snap) => {
+        setLegacyTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        legacyReady = true;
+        finishLoading();
+      },
+      (error) => {
+        console.error("transactions:", error);
+        setLegacyTransactions([]);
+        legacyReady = true;
+        finishLoading();
+      }
+    );
+
+    return () => {
+      unsubChecks();
+      unsubLegacy();
+    };
   }, []);
+
+  useEffect(() => {
+    const directFinanceEntries = legacyTransactions
+      .filter((tx) => DIRECT_FINANCE_TYPES.includes(tx.type))
+      .map((tx) => ({ ...tx, sourceCollection: "transactions" }));
+
+    setTransactions([
+      ...mergeIssuedChecksSources(issuedChecks, legacyTransactions),
+      ...directFinanceEntries,
+    ]);
+  }, [issuedChecks, legacyTransactions]);
+
+  const migrationPreview = useMemo(
+    () => getLegacyChecksMigrationPreview(legacyTransactions, issuedChecks),
+    [legacyTransactions, issuedChecks]
+  );
 
   const posted = useMemo(
     () => transactions.filter((t) => t.state === "posted" || t.state === "approved" || !t.state),
     [transactions]
   );
 
-  const totalIn = useMemo(
-    () => posted.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount || 0), 0),
+  const postedChecks = useMemo(
+    () => posted.filter((t) => !DIRECT_FINANCE_TYPES.includes(t.type)),
     [posted]
   );
 
-  const totalOut = useMemo(
-    () => posted.filter((t) => t.type !== "deposit").reduce((s, t) => s + Number(t.amount || 0), 0),
+  const postedDirectCharges = useMemo(
+    () => posted.filter((t) => DIRECT_FINANCE_TYPES.includes(t.type)),
     [posted]
   );
 
-  const balance = OPENING_BALANCE + totalIn - totalOut;
+  const totalIssued = useMemo(
+    () => postedChecks.reduce((sum, t) => sum + Number(t.amount || 0), 0),
+    [postedChecks]
+  );
 
-  const openAdvances = useMemo(
-    () => transactions.filter((t) => ["advance", "activity"].includes(t.type) && !t.isSettled && t.state === "posted").length,
-    [transactions]
+  const totalDirectCharges = useMemo(
+    () => postedDirectCharges.reduce((sum, t) => sum + Number(t.amount || 0), 0),
+    [postedDirectCharges]
+  );
+
+  const requiresSettlementCount = useMemo(
+    () => posted.filter((t) => normalizeRequiresSettlement(t)).length,
+    [posted]
+  );
+
+  const openSettlements = useMemo(
+    () => posted.filter((t) => normalizeRequiresSettlement(t) && !t.isSettled).length,
+    [posted]
+  );
+
+  const settledChecks = useMemo(
+    () => posted.filter((t) => normalizeRequiresSettlement(t) && t.isSettled).length,
+    [posted]
   );
 
   const nextCheque = useMemo(() => {
@@ -173,10 +286,14 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
         if (!queryText) return true;
         return [
           t.party,
+          t.beneficiaryName,
+          getIssuedCheckTypeLabel(t.type),
           t.notes,
-          t.checkNum,
-          t.bankReference,
+          t.expenseItem,
           t.bankChargeCategory,
+          t.bankReference,
+          t.activityName,
+          t.checkNum,
           getTxDetails(t),
         ]
           .filter(Boolean)
@@ -201,8 +318,30 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
 
   const handleSave = async (data, isEdit) => {
     try {
-      await saveTransaction(data);
-      showToast(isEdit ? "تم تحديث السند بنجاح" : "تم حفظ السند بنجاح");
+      const savedId = await saveTransaction(data);
+      const targetCollection = isDirectFinanceType(data.type) ? "transactions" : "issued_checks";
+      const savedRecord = {
+        ...data,
+        id: savedId,
+        type: normalizeIssuedCheckType(data.type),
+        sourceCollection: targetCollection,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (targetCollection === "issued_checks") {
+        setIssuedChecks((prev) => {
+          const next = prev.filter((item) => item.id !== savedId);
+          return [...next, savedRecord];
+        });
+      } else {
+        setLegacyTransactions((prev) => {
+          const next = prev.filter((item) => item.id !== savedId);
+          return [...next, savedRecord];
+        });
+      }
+
+      const savedLabel = data.type === "bank_charge" ? "الحركة المالية المباشرة" : "الشيك";
+      showToast(isEdit ? `تم تحديث ${savedLabel} بنجاح` : `تم حفظ ${savedLabel} بنجاح`);
 
       if (isEdit) {
         handleCloseForm();
@@ -224,12 +363,39 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
+      const targetCollection = deleteTarget?.sourceCollection || (isDirectFinanceType(deleteTarget?.type) ? "transactions" : "issued_checks");
       await deleteTransaction(deleteTarget);
+      if (targetCollection === "issued_checks") {
+        setIssuedChecks((prev) => prev.filter((item) => item.id !== deleteTarget.id));
+      } else {
+        setLegacyTransactions((prev) => prev.filter((item) => item.id !== deleteTarget.id));
+      }
       setDeleteTarget(null);
-      showToast("تم حذف السند بنجاح");
+      showToast(deleteTarget?.type === "bank_charge" ? "تم حذف الحركة المباشرة بنجاح" : "تم حذف الشيك بنجاح");
     } catch (error) {
       console.error(error);
-      showToast("تعذر حذف السند", "error");
+      showToast("تعذر حذف الشيك", "error");
+    }
+  };
+
+  const handleMigrateLegacyChecks = async () => {
+    try {
+      setIsMigratingLegacy(true);
+      const result = await migrateLegacyChecksToIssuedChecks({
+        legacyTransactions,
+        issuedChecks,
+      });
+
+      showToast(
+        result.migratedCount > 0
+          ? `تم ترحيل ${result.migratedCount} شيك قديم إلى السجل الموحد بنجاح`
+          : "لا توجد شيكات قديمة جديدة بحاجة إلى ترحيل"
+      );
+    } catch (error) {
+      console.error(error);
+      showToast("تعذر ترحيل الشيكات القديمة، يرجى المحاولة مرة أخرى", "error");
+    } finally {
+      setIsMigratingLegacy(false);
     }
   };
 
@@ -290,7 +456,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
               </div>
             </div>
             <p className="text-sm font-bold text-slate-600">
-              هل تريد حذف السند الخاص بـ <span className="text-rose-600">{deleteTarget.party || "—"}</span>؟
+              هل تريد حذف {deleteTarget.type === "bank_charge" ? "الحركة المباشرة" : "الشيك"} الخاص بـ <span className="text-rose-600">{deleteTarget.party || deleteTarget.beneficiaryName || deleteTarget.bankChargeCategory || "—"}</span>؟
             </p>
             <div className="flex gap-2">
               <button onClick={() => setDeleteTarget(null)} className={clsx("flex-1 py-2.5 rounded-xl text-xs font-black border", T.btn)}>
@@ -317,33 +483,89 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
         <>
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl font-black">إدارة خزينة السندات</h1>
-              <p className={clsx("text-xs font-bold mt-1", T.muted)}>إضافة وتعديل ومتابعة الإيداعات والمصروفات والسلف والخصومات البنكية المباشرة</p>
+              <h1 className="text-xl font-black">الماليات</h1>
+              <p className={clsx("text-xs font-bold mt-1", T.muted)}>إدارة الشيكات الصادرة والخصومات البنكية المباشرة داخل شاشة مالية موحدة مع التوافق مع البيانات السابقة</p>
             </div>
             <div className="flex gap-2 flex-wrap">
-              <button onClick={() => navigate("/treasury/admin?type=deposit")} className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-2 hover:bg-emerald-700">
-                <Plus size={14} /> إضافة إيداع
-              </button>
-              <button onClick={() => navigate("/treasury/admin?type=aid")} className="px-4 py-2.5 rounded-xl bg-sky-600 text-white text-xs font-black flex items-center gap-2 hover:bg-sky-700">
-                <Plus size={14} /> صرف مصروف
+              <button onClick={() => navigate("/treasury/admin?type=aid")} className="px-4 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-black flex items-center gap-2 hover:bg-rose-700">
+                <Plus size={14} /> شيك إعانة
               </button>
               <button onClick={() => navigate("/treasury/admin?type=advance")} className="px-4 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-black flex items-center gap-2 hover:bg-purple-700">
-                <Plus size={14} /> سلفة / عهدة
+                <Plus size={14} /> شيك سلفة
               </button>
-              <button onClick={() => navigate("/treasury/admin?type=activity")} className="px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black flex items-center gap-2 hover:bg-amber-700">
-                <Star size={14} /> دعم نشاط
+              <button onClick={() => navigate("/treasury/admin?type=trip")} className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-black flex items-center gap-2 hover:bg-indigo-700">
+                <Plus size={14} /> شيك رحلة
               </button>
-              <button onClick={() => navigate("/treasury/admin?type=bank_charge")} className="px-4 py-2.5 rounded-xl bg-slate-700 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-800">
-                <Landmark size={14} /> خصم بنكي مباشر
+              <button onClick={() => navigate("/treasury/admin?type=event")} className="px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black flex items-center gap-2 hover:bg-amber-700">
+                <Star size={14} /> شيك فاعلية
+              </button>
+              <button onClick={() => navigate("/treasury/admin?type=other")} className="px-4 py-2.5 rounded-xl bg-slate-700 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-800">
+                <Landmark size={14} /> شيك آخر
+              </button>
+              <button onClick={() => navigate("/treasury/admin?type=bank_charge")} className="px-4 py-2.5 rounded-xl bg-slate-500 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-600">
+                <ReceiptText size={14} /> خصم مباشر
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-            <StatCard label="إجمالي الوارد" value={formatMoney(totalIn)} icon={TrendingUp} color="emerald" />
-            <StatCard label="إجمالي المنصرف" value={formatMoney(totalOut)} icon={TrendingDown} color="rose" />
-            <StatCard label="رصيد الخزينة" value={formatMoney(balance)} icon={Wallet} color="teal" sub={`رصيد افتتاحي ${formatMoney(OPENING_BALANCE)}`} />
-            <StatCard label="العهد المفتوحة" value={`${openAdvances}`} icon={RefreshCw} color="amber" sub="سلف وأنشطة لم تتم تسويتها بعد" />
+          {migrationPreview.totalLegacy > 0 && (
+            <div
+              className={clsx(
+                "p-4 rounded-2xl border shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3",
+                T.card
+              )}
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-sm font-black">
+                  <RefreshCw
+                    size={16}
+                    className={clsx(
+                      migrationPreview.pendingCount > 0
+                        ? "text-amber-600"
+                        : "text-emerald-600"
+                    )}
+                  />
+                  <span>ترحيل السجلات القديمة إلى `issued_checks`</span>
+                </div>
+                <p className={clsx("text-xs font-bold", T.muted)}>
+                  تم رصد {migrationPreview.totalLegacy} شيك قديم داخل `transactions`.
+                  المتبقي للترحيل {migrationPreview.pendingCount}، والمرحّل بالفعل{" "}
+                  {migrationPreview.alreadyMigrated}.
+                </p>
+                <p className="text-[11px] font-bold text-slate-500">
+                  الترحيل آمن ومكررته محمية؛ أي سجل تم ترحيله سابقًا لن يظهر مرة ثانية داخل الشاشة أو التقارير.
+                </p>
+              </div>
+
+              <button
+                onClick={handleMigrateLegacyChecks}
+                disabled={isMigratingLegacy || migrationPreview.pendingCount === 0}
+                className={clsx(
+                  "px-4 py-2.5 rounded-xl text-xs font-black text-white flex items-center justify-center gap-2 min-w-[220px]",
+                  isMigratingLegacy || migrationPreview.pendingCount === 0
+                    ? "bg-slate-400 cursor-not-allowed"
+                    : "bg-teal-600 hover:bg-teal-700"
+                )}
+              >
+                <RefreshCw
+                  size={14}
+                  className={clsx(isMigratingLegacy && "animate-spin")}
+                />
+                {isMigratingLegacy
+                  ? "جارٍ ترحيل السجلات..."
+                  : migrationPreview.pendingCount > 0
+                    ? `ترحيل ${migrationPreview.pendingCount} شيك قديم`
+                    : "كل السجلات القديمة مُرحّلة"}
+              </button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+            <StatCard label="إجمالي الشيكات" value={formatMoney(totalIssued)} icon={TrendingDown} color="rose" />
+            <StatCard label="خصومات مباشرة" value={formatMoney(totalDirectCharges)} icon={ReceiptText} color="amber" sub={`${postedDirectCharges.length} حركة مباشرة`} />
+            <StatCard label="شيكات تتطلب تسوية" value={`${requiresSettlementCount}`} icon={Wallet} color="teal" />
+            <StatCard label="تسويات مفتوحة" value={`${openSettlements}`} icon={RefreshCw} color="amber" sub="سلف ورحلات وفاعليات وشيكات معلّمة للتسوية" />
+            <StatCard label="تسويات مغلقة" value={`${settledChecks}`} icon={TrendingUp} color="emerald" />
           </div>
 
           <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
@@ -353,18 +575,21 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                 <input
                   value={searchQ}
                   onChange={(e) => setSearchQ(e.target.value)}
-                  placeholder="بحث بالجهة أو البيان أو رقم الشيك أو المرجع البنكي"
+                  placeholder="بحث بالمستفيد أو نوع الحركة أو بند الصرف أو رقم الشيك أو المرجع البنكي"
                   className={clsx("w-full pr-9 pl-3 py-2.5 rounded-xl border text-xs font-bold", T.inp)}
                 />
               </div>
 
               <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={clsx("px-3 py-2.5 rounded-xl border text-xs font-bold", T.sel)}>
                 <option value="all">كل الأنواع</option>
-                <option value="deposit">إيداع</option>
-                <option value="aid">مصروف</option>
+                <option value="aid">إعانة</option>
+                <option value="budget">ميزانيات</option>
+                <option value="activities">أنشطة</option>
+                <option value="trip">رحلات</option>
+                <option value="event">فاعليات</option>
                 <option value="advance">سلفة</option>
-                <option value="activity">نشاط</option>
-                <option value="bank_charge">خصم بنكي مباشر</option>
+                <option value="other">أخرى</option>
+                <option value="bank_charge">خصم مباشر</option>
               </select>
 
               <select value={filterState} onChange={(e) => setFilterState(e.target.value)} className={clsx("px-3 py-2.5 rounded-xl border text-xs font-bold", T.sel)}>
@@ -383,7 +608,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                   <tr>
                     <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">التاريخ</th>
                     <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">النوع</th>
-                    <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">الجهة / البيان</th>
+                    <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">المستفيد / البيان</th>
                     <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">القيمة</th>
                     <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">رقم الشيك / المرجع</th>
                     <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">الحالة</th>
@@ -398,18 +623,15 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                       <td className="py-3 px-4">
                         <span className="inline-flex items-center gap-1.5 text-[10px] font-black px-2 py-1 rounded-full border bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700">
                           {TYPE_ICONS[tx.type] || <Filter size={12} />}
-                          {TYPE_LABELS[tx.type] || tx.type}
+                          {TYPE_LABELS[normalizeIssuedCheckType(tx.type)] || tx.type}
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="text-xs font-black">{tx.party || "—"}</div>
+                        <div className="text-xs font-black">{tx.party || tx.beneficiaryName || tx.bankChargeCategory || "—"}</div>
                         <div className="text-[10px] font-bold text-slate-400 mt-0.5">{getTxDetails(tx)}</div>
                       </td>
                       <td className="py-3 px-4 text-center font-black text-sm">
-                        <span className={clsx(tx.type === "deposit" ? "text-emerald-600" : "text-rose-600")}>
-                          {tx.type === "deposit" ? "+" : "-"}
-                          {formatMoney(tx.amount || 0)}
-                        </span>
+                        <span className="text-rose-600">{formatMoney(tx.amount || 0)}</span>
                       </td>
                       <td className="py-3 px-4 text-center text-[10px] font-bold text-slate-400">{formatCheckRef(getTxCheckRef(tx))}</td>
                       <td className="py-3 px-4 text-center">
@@ -444,9 +666,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                     <tr>
                       <td colSpan={3} className="py-2 px-4 text-[10px] font-black text-slate-500">إجمالي المعروض ({visible.length} حركة)</td>
                       <td className="py-2 px-4 text-center font-black text-sm">
-                        <span className="text-emerald-600">+{formatMoney(visible.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount || 0), 0))}</span>
-                        {" / "}
-                        <span className="text-rose-600">-{formatMoney(visible.filter((t) => t.type !== "deposit").reduce((s, t) => s + Number(t.amount || 0), 0))}</span>
+                        <span className="text-rose-600">{formatMoney(visible.reduce((s, t) => s + Number(t.amount || 0), 0))}</span>
                       </td>
                       <td colSpan={4} />
                     </tr>
