@@ -21,6 +21,14 @@ th{background:#0f172a;color:#fff;font-size:11px}
 tr:nth-child(even) td{background:#f8fafc}
 .section-title{margin:18px 0 10px;font-size:15px;font-weight:900;color:#0f766e}
 .empty{padding:24px;text-align:center;color:#94a3b8;font-weight:800;border:1px dashed #cbd5e1;border-radius:12px}
+@media print{
+body{padding:0}
+.meta,.cards,.card,.section-title,.brand-header{break-inside:avoid;page-break-inside:avoid}
+table{page-break-inside:auto;break-inside:auto}
+thead{display:table-header-group}
+tfoot{display:table-footer-group}
+tr,td,th{break-inside:avoid;page-break-inside:avoid}
+}
 ${getPrintBrandStyles()}
 </style></head><body>`;
 

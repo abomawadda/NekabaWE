@@ -329,9 +329,10 @@ function TreasuryLedgerInner() {
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
         * { font-family: 'Cairo', sans-serif; margin:0; padding:0; box-sizing:border-box; }
-        body { padding:15px; font-size:11px; color:#1e293b; }
+        html, body { width:100%; height:auto; }
+        body { padding:10px; font-size:11px; color:#1e293b; }
         .info-bar  { display:flex; justify-content:space-between; background:#f1f5f9; padding:6px 10px; border-radius:6px; margin-bottom:15px; font-size:10px; font-weight:700; }
-        table { width:100%; border-collapse:collapse; margin-bottom:15px; }
+        table { width:100%; border-collapse:collapse; margin-bottom:15px; page-break-inside:auto; break-inside:auto; }
         th { background:#1e293b; color:#fff; padding:7px 5px; text-align:center; font-weight:900; border:1px solid #334155; font-size:11px; }
         td { border:1px solid #cbd5e1; padding:5px 6px; vertical-align:middle; font-size:10px; }
         .opening-row td { background:#f0fdf4; font-weight:900; color:#166534; }
@@ -339,7 +340,14 @@ function TreasuryLedgerInner() {
         .signatures { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:40px; text-align:center; }
         .sig-box { font-size:10px; font-weight:700; color:#334155; }
         .sig-line { margin-top:35px; border-top:1px dashed #94a3b8; width:80%; margin-inline:auto; }
-        @media print { @page { margin:8mm; size:A4 landscape; } body { padding:0; } }
+        @media print {
+          @page { margin:8mm; size:A4 landscape; }
+          body { padding:0; }
+          .info-bar, .signatures, .sig-box, .brand-header { break-inside:avoid; page-break-inside:avoid; }
+          thead { display:table-header-group; }
+          tfoot { display:table-footer-group; }
+          tr, td, th { break-inside:avoid; page-break-inside:avoid; }
+        }
         ${getPrintBrandStyles()}
       </style></head>
       <body>

@@ -54,8 +54,9 @@ export const printMemberFundBenefitsReport = ({ member, entries = [], summary })
         <style>
           @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
           *{box-sizing:border-box;margin:0;padding:0;font-family:'Cairo',sans-serif}
-          body{padding:26px;color:#0f172a;background:#fff}
-          .report-shell{display:flex;flex-direction:column;gap:18px}
+          html,body{width:100%;height:auto}
+          body{padding:18px;color:#0f172a;background:#fff}
+          .report-shell{display:block}
           .member-box{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
           .member-card,.summary-card{border:1px solid #dbeafe;border-radius:16px;padding:14px;background:linear-gradient(180deg,#f8fafc,#ffffff)}
           .member-card .label,.summary-card .label{font-size:10px;font-weight:800;color:#64748b;margin-bottom:4px}
@@ -76,6 +77,12 @@ export const printMemberFundBenefitsReport = ({ member, entries = [], summary })
           @media print{
             @page{size:A4 portrait;margin:9mm}
             body{padding:0}
+            .report-shell,.member-box,.summary-grid,table,.footer{break-inside:auto;page-break-inside:auto}
+            .member-box,.summary-grid,.member-card,.summary-card,.section-title,.footer,.brand-header{break-inside:avoid;page-break-inside:avoid}
+            table{page-break-inside:auto;break-inside:auto}
+            thead{display:table-header-group}
+            tfoot{display:table-footer-group}
+            tr,td,th{break-inside:avoid;page-break-inside:avoid}
           }
           ${getPrintBrandStyles()}
         </style>

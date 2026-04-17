@@ -1,8 +1,12 @@
 import {
+  getEmployeeAge,
   formatEmployeeDate,
   getRetirementDate,
+  isDeceasedMember,
   isBoardMember,
+  isRetiredMember,
 } from "../../utils/memberBenefits";
+import { formatMoney } from "../../utils/numberFormat";
 import {
   getIssuedCheckDisplayParty,
   getIssuedCheckTypeLabel,
@@ -18,6 +22,107 @@ import {
   getSettlementModeLabel,
   toNumber,
 } from "./reportUtils";
+
+const REPORT_OPENING_BALANCE = 42685.79;
+const INCOME_TRANSACTION_TYPES = new Set(["deposit", "refund", "subs"]);
+const MONTH_NAMES_AR = [
+  "يناير",
+  "فبراير",
+  "مارس",
+  "أبريل",
+  "مايو",
+  "يونيو",
+  "يوليو",
+  "أغسطس",
+  "سبتمبر",
+  "أكتوبر",
+  "نوفمبر",
+  "ديسمبر",
+];
+
+const isPostedRecord = (record = {}) =>
+  !record?.state || record.state === "posted" || record.state === "approved";
+
+const getEmployeeStatusBucket = (member = {}) => {
+  if (isDeceasedMember(member)) return "خارج الخدمة";
+  if (isRetiredMember(member)) return "معاش";
+
+  const state = String(member?.memberState || "").trim();
+  if (!state || state === "نشط") return "نشط";
+  if (["موقوف", "إجازة بدون أجر"].includes(state)) return "موقوف";
+  if (["استقالة", "وفاة"].includes(state)) return "خارج الخدمة";
+  return state;
+};
+
+const buildDistributionItems = (rows = [], key, maxItems = 8) => {
+  const counts = new Map();
+
+  rows.forEach((row) => {
+    const label = String(row?.[key] || "غير محدد").trim() || "غير محدد";
+    counts.set(label, (counts.get(label) || 0) + 1);
+  });
+
+  const ordered = Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || compareArabic(a.label, b.label));
+
+  if (ordered.length <= maxItems) return ordered;
+
+  const visible = ordered.slice(0, maxItems);
+  const otherCount = ordered.slice(maxItems).reduce((sum, item) => sum + item.count, 0);
+  return [...visible, { label: "أخرى", count: otherCount }];
+};
+
+const getMergedPostedFinanceRows = (sourceData = {}) =>
+  mergeIssuedChecksSources(sourceData.issued_checks || [], sourceData.transactions || []).filter(isPostedRecord);
+
+const getDateParts = (value = "") => {
+  const raw = String(value || "").trim();
+  if (!raw) return { year: "", month: "", day: "" };
+
+  if (raw.includes("-")) {
+    return {
+      year: raw.slice(0, 4),
+      month: raw.slice(5, 7),
+      day: raw.slice(8, 10),
+    };
+  }
+
+  if (raw.includes("/")) {
+    const [day, month, year] = raw.split("/");
+    return {
+      year: String(year || ""),
+      month: String(month || "").padStart(2, "0"),
+      day: String(day || "").padStart(2, "0"),
+    };
+  }
+
+  return { year: "", month: "", day: "" };
+};
+
+const getMonthLabel = (month = "") => {
+  const monthNumber = Number(month);
+  if (!Number.isFinite(monthNumber) || monthNumber < 1 || monthNumber > 12) return "غير محدد";
+  return `${String(month).padStart(2, "0")} - ${MONTH_NAMES_AR[monthNumber - 1]}`;
+};
+
+const shiftMonthKey = (monthKey = "", delta = -1) => {
+  const [year, month] = String(monthKey || "").split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return "";
+  const shifted = new Date(year, month - 1 + delta, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const groupAmountBy = (rows = [], labelGetter) => {
+  const map = new Map();
+  rows.forEach((row) => {
+    const label = String(labelGetter(row) || "غير محدد").trim() || "غير محدد";
+    map.set(label, (map.get(label) || 0) + toNumber(row.amountValue || row.income || row.expense));
+  });
+  return Array.from(map.entries())
+    .map(([label, amount]) => ({ label, amount }))
+    .sort((a, b) => b.amount - a.amount || compareArabic(a.label, b.label));
+};
 
 export const getBoardRoleWeight = (role = "", roles = []) => {
   const index = roles.indexOf(String(role || "").trim());
@@ -203,6 +308,7 @@ export const buildEmployeesRows = (sourceData = {}) =>
     jobId: member.jobId || "—",
     name: member.name || "—",
     membershipStatus: member.membershipStatus || "—",
+    gender: member.gender || "غير محدد",
     memberState: member.memberState || "—",
     jobTitle: member.jobTitle || "—",
     workplace: member.workplace || "—",
@@ -213,11 +319,46 @@ export const buildEmployeesRows = (sourceData = {}) =>
       member.jobId,
       member.name,
       member.membershipStatus,
+      member.gender,
       member.jobTitle,
       member.workplace,
       member.phone,
     ].filter(Boolean).join(" "),
   }));
+
+export const buildAssemblyMembersRows = (sourceData = {}) =>
+  (sourceData.employees || [])
+    .filter((member) => String(member?.membershipStatus || "").trim() === "عضو جمعية عمومية")
+    .map((member) => {
+      const age = getEmployeeAge(member);
+      const statusBucket = getEmployeeStatusBucket(member);
+
+      return {
+        id: member.id,
+        jobId: member.jobId || "—",
+        name: member.name || "—",
+        administration: member.workplace || "غير محدد",
+        qualification: member.qualification || "غير محدد",
+        unionJoinDate: member.unionJoinDate || "",
+        memberState: member.memberState || "—",
+        memberStateNormalized: statusBucket,
+        jobTitle: member.jobTitle || "—",
+        phone: member.phone || member.mobile || "—",
+        age: age >= 0 ? age : null,
+        ageLabel: age >= 0 ? `${age}` : "—",
+        __search: [
+          member.jobId,
+          member.name,
+          member.workplace,
+          member.qualification,
+          member.memberState,
+          member.unionJoinDate,
+          member.jobTitle,
+          member.phone,
+          member.mobile,
+        ].filter(Boolean).join(" "),
+      };
+    });
 
 export const buildBoardMembersRows = (sourceData = {}) =>
   (sourceData.employees || [])
@@ -411,3 +552,389 @@ export const buildMemberBenefitsRows = (sourceData = {}) =>
       entry.displayLabel,
     ].filter(Boolean).join(" "),
   }));
+
+export const buildAssemblyMembersSummary = ({ rows = [] } = {}) => {
+  const ages = rows
+    .map((row) => Number(row?.age))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+
+  const totalMembers = rows.length;
+  const activeCount = rows.filter((row) => row.memberStateNormalized === "نشط").length;
+  const retiredCount = rows.filter((row) => row.memberStateNormalized === "معاش").length;
+  const frozenCount = rows.filter((row) => row.memberStateNormalized === "موقوف").length;
+  const averageAge = ages.length
+    ? `${(ages.reduce((sum, value) => sum + value, 0) / ages.length).toFixed(1)} سنة`
+    : "—";
+
+  return {
+    cards: [
+      { label: "عدد الأعضاء الإجمالي", value: String(totalMembers) },
+      { label: "عدد النشطين", value: String(activeCount) },
+      { label: "عدد المعاشات", value: String(retiredCount) },
+      { label: "عدد المجمدين", value: String(frozenCount) },
+      { label: "متوسط الأعمار", value: averageAge },
+    ],
+    sections: [
+      {
+        title: "حسب الحالة الوظيفية",
+        items: buildDistributionItems(rows, "memberStateNormalized", 6).map((item) => ({
+          label: item.label,
+          value: String(item.count),
+        })),
+      },
+      {
+        title: "توزيع حسب المؤهل",
+        items: buildDistributionItems(rows, "qualification", 6).map((item) => ({
+          label: item.label,
+          value: String(item.count),
+        })),
+      },
+      {
+        title: "توزيع حسب الإدارات",
+        items: buildDistributionItems(rows, "administration", 8).map((item) => ({
+          label: item.label,
+          value: String(item.count),
+        })),
+      },
+    ],
+  };
+};
+
+export const buildSimplifiedBalanceSheetRows = (sourceData = {}) => {
+  const posted = getMergedPostedFinanceRows(sourceData);
+
+  const totalIncome = posted.reduce((sum, record) => {
+    const normalizedType = normalizeIssuedCheckType(record.type);
+    return sum + (INCOME_TRANSACTION_TYPES.has(normalizedType) ? toNumber(record.advanceAmountBase || record.amount) : 0);
+  }, 0);
+
+  const totalExpenses = posted.reduce((sum, record) => {
+    const normalizedType = normalizeIssuedCheckType(record.type);
+    return sum + (INCOME_TRANSACTION_TYPES.has(normalizedType) ? 0 : toNumber(record.advanceAmountBase || record.amount));
+  }, 0);
+
+  const currentAdvancesRows = posted.filter((record) => {
+    const normalizedType = normalizeIssuedCheckType(record.type);
+    return normalizedType === "advance" && normalizeRequiresSettlement(record) && !record?.isSettled;
+  });
+
+  const settlementsInProgressRows = posted.filter((record) => {
+    const normalizedType = normalizeIssuedCheckType(record.type);
+    return normalizedType !== "advance" && normalizeRequiresSettlement(record) && !record?.isSettled;
+  });
+
+  const debtorsRows = posted.filter(
+    (record) => toNumber(record?.settlementReturned) > 0 && !record?.returnedActually
+  );
+
+  const creditorsRows = posted.filter((record) => {
+    if (!record?.isSettled) return false;
+    const availableAmount =
+      toNumber(record?.advanceAmountBase || record?.amount) +
+      toNumber(record?.prevBalanceUsed) +
+      toNumber(record?.collectedSubscriptions || record?.memberSubscriptions);
+    return toNumber(record?.settlementSpent) > availableAmount;
+  });
+
+  const currentAdvances = currentAdvancesRows.reduce(
+    (sum, record) => sum + toNumber(record.advanceAmountBase || record.amount),
+    0
+  );
+  const settlementsInProgress = settlementsInProgressRows.reduce(
+    (sum, record) => sum + toNumber(record.advanceAmountBase || record.amount),
+    0
+  );
+  const debtors = debtorsRows.reduce((sum, record) => sum + toNumber(record.settlementReturned), 0);
+  const creditors = creditorsRows.reduce((sum, record) => {
+    const availableAmount =
+      toNumber(record?.advanceAmountBase || record?.amount) +
+      toNumber(record?.prevBalanceUsed) +
+      toNumber(record?.collectedSubscriptions || record?.memberSubscriptions);
+    return sum + Math.max(toNumber(record?.settlementSpent) - availableAmount, 0);
+  }, 0);
+  const cashBalance = REPORT_OPENING_BALANCE + totalIncome - totalExpenses;
+
+  return [
+    {
+      id: "cash_balance",
+      category: "أصل متداول",
+      item: "رصيد نقدي",
+      amount: cashBalance,
+      note: `افتتاحي ${formatMoney(REPORT_OPENING_BALANCE)} + إيرادات ${formatMoney(totalIncome)} - مصروفات ${formatMoney(totalExpenses)}`,
+      countLabel: "حركة مجمعة",
+    },
+    {
+      id: "current_advances",
+      category: "أصل متداول",
+      item: "سلف جارية",
+      amount: currentAdvances,
+      note: "شيكات سلفة مفتوحة لم تُسوَّ بعد",
+      countLabel: `${currentAdvancesRows.length} حالة`,
+    },
+    {
+      id: "settlements_in_progress",
+      category: "أصل متداول",
+      item: "تسويات تحت الإجراء",
+      amount: settlementsInProgress,
+      note: "شيكات تتطلب تسوية ولم تُغلق حتى الآن",
+      countLabel: `${settlementsInProgressRows.length} حالة`,
+    },
+    {
+      id: "debtors",
+      category: "مدينون",
+      item: "أرصدة مرحّلة مستحقة",
+      amount: debtors,
+      note: "مبالغ باقية لم تُرد نقدًا ورُحلت للمتابعة",
+      countLabel: `${debtorsRows.length} حالة`,
+    },
+    {
+      id: "creditors",
+      category: "دائنون",
+      item: "مستحقات واجبة السداد",
+      amount: creditors,
+      note: "تجاوزات صرف معتمدة لصالح المستفيدين",
+      countLabel: `${creditorsRows.length} حالة`,
+    },
+    {
+      id: "revenues",
+      category: "نتيجة النشاط",
+      item: "إيرادات",
+      amount: totalIncome,
+      note: "إيداعات + ردود سلف + اشتراكات مرحّلة",
+      countLabel: "إجمالي الفترة",
+    },
+    {
+      id: "expenses",
+      category: "نتيجة النشاط",
+      item: "مصاريف",
+      amount: totalExpenses,
+      note: "إعانات + سلف + رحلات + أنشطة + خصومات مباشرة",
+      countLabel: "إجمالي الفترة",
+    },
+  ].map((row) => ({
+    ...row,
+    __search: [row.category, row.item, row.note, row.countLabel].filter(Boolean).join(" "),
+  }));
+};
+
+export const buildSimplifiedBalanceSheetSummary = ({ rows = [] } = {}) => {
+  const lookup = Object.fromEntries(rows.map((row) => [row.id, row]));
+  const revenues = toNumber(lookup.revenues?.amount);
+  const expenses = toNumber(lookup.expenses?.amount);
+
+  return {
+    cards: [
+      { label: "رصيد نقدي", value: formatMoney(toNumber(lookup.cash_balance?.amount)) },
+      { label: "سلف جارية", value: formatMoney(toNumber(lookup.current_advances?.amount)) },
+      { label: "تسويات تحت الإجراء", value: formatMoney(toNumber(lookup.settlements_in_progress?.amount)) },
+      { label: "مدينون", value: formatMoney(toNumber(lookup.debtors?.amount)) },
+      { label: "دائنون", value: formatMoney(toNumber(lookup.creditors?.amount)) },
+      { label: "صافي النشاط", value: formatMoney(revenues - expenses) },
+    ],
+    sections: [
+      {
+        title: "ملخص محاسبي",
+        items: [
+          { label: "الرصيد الافتتاحي", value: formatMoney(REPORT_OPENING_BALANCE) },
+          { label: "إجمالي الإيرادات", value: formatMoney(revenues) },
+          { label: "إجمالي المصروفات", value: formatMoney(expenses) },
+        ],
+      },
+    ],
+  };
+};
+
+export const buildMonthlyFinancialAnalysisRows = (sourceData = {}) =>
+  getMergedPostedFinanceRows(sourceData).map((record) => {
+    const normalizedType = normalizeIssuedCheckType(record.type);
+    const amount = toNumber(record.advanceAmountBase || record.amount);
+    const { year, month } = getDateParts(record.date || record.settlementDate || "");
+    const monthKey = year && month ? `${year}-${month}` : "";
+    const isIncome = INCOME_TRANSACTION_TYPES.has(normalizedType);
+    const party = getIssuedCheckDisplayParty(record) || "—";
+
+    const incomeSourceLabel =
+      normalizedType === "deposit"
+        ? record.party || record.notes || "إيداع"
+        : normalizedType === "refund"
+          ? `رد سلفة${party && party !== "—" ? ` - ${party}` : ""}`
+          : normalizedType === "subs"
+            ? record.party || "اشتراكات أعضاء"
+            : getIssuedCheckTypeLabel(normalizedType);
+
+    const expenseBucket =
+      normalizedType === "aid"
+        ? record.aidCategory || "إعانات"
+        : normalizedType === "advance"
+          ? record.expenseItem || "سلف وعهد"
+          : normalizedType === "bank_charge"
+            ? record.bankChargeCategory || "مصروفات بنكية"
+            : record.expenseItem ||
+              record.activityName ||
+              record.eventName ||
+              getIssuedCheckTypeLabel(normalizedType);
+
+    return {
+      id: record.id,
+      date: record.date || record.settlementDate || "",
+      monthKey,
+      monthLabel: getMonthLabel(month),
+      yearLabel: year || "غير محدد",
+      typeLabel: getIssuedCheckTypeLabel(normalizedType),
+      party,
+      incomeSourceLabel,
+      expenseBucket,
+      analysisBucket: isIncome ? "إيراد" : "مصروف",
+      income: isIncome ? amount : 0,
+      expense: isIncome ? 0 : amount,
+      amountValue: amount,
+      __search: [
+        record.date,
+        record.settlementDate,
+        party,
+        incomeSourceLabel,
+        expenseBucket,
+        record.notes,
+        record.expenseItem,
+        record.aidCategory,
+        record.activityName,
+        record.eventName,
+      ].filter(Boolean).join(" "),
+    };
+  });
+
+export const buildMonthlyFinancialAnalysisSummary = ({ rows = [], sourceData = {}, filters = {} } = {}) => {
+  const allRows = buildMonthlyFinancialAnalysisRows(sourceData);
+  const selectedMonthLabel = String(filters.monthLabel || "").trim();
+  const selectedYearLabel = String(filters.yearLabel || "").trim();
+
+  const currentMonthKey =
+    rows
+      .map((row) => row.monthKey)
+      .filter(Boolean)
+      .sort(compareArabic)
+      .slice(-1)[0] ||
+    allRows
+      .filter((row) =>
+        (!selectedMonthLabel || row.monthLabel === selectedMonthLabel) &&
+        (!selectedYearLabel || row.yearLabel === selectedYearLabel)
+      )
+      .map((row) => row.monthKey)
+      .filter(Boolean)
+      .sort(compareArabic)
+      .slice(-1)[0] ||
+    allRows.map((row) => row.monthKey).filter(Boolean).sort(compareArabic).slice(-1)[0] ||
+    "";
+
+  const currentRows = currentMonthKey ? rows.filter((row) => row.monthKey === currentMonthKey) : rows;
+  const previousMonthKey = shiftMonthKey(currentMonthKey, -1);
+  const previousRows = previousMonthKey ? allRows.filter((row) => row.monthKey === previousMonthKey) : [];
+
+  const currentIncome = currentRows.reduce((sum, row) => sum + toNumber(row.income), 0);
+  const currentExpense = currentRows.reduce((sum, row) => sum + toNumber(row.expense), 0);
+  const currentNet = currentIncome - currentExpense;
+
+  const previousIncome = previousRows.reduce((sum, row) => sum + toNumber(row.income), 0);
+  const previousExpense = previousRows.reduce((sum, row) => sum + toNumber(row.expense), 0);
+  const previousNet = previousIncome - previousExpense;
+  const netChange = currentNet - previousNet;
+  const growthRate =
+    previousNet === 0
+      ? currentNet === 0
+        ? 0
+        : 100
+      : (netChange / Math.abs(previousNet)) * 100;
+
+  const topExpenseParties = groupAmountBy(
+    currentRows.filter((row) => toNumber(row.expense) > 0),
+    (row) => row.party
+  ).slice(0, 5);
+
+  const topIncomeSources = groupAmountBy(
+    currentRows.filter((row) => toNumber(row.income) > 0),
+    (row) => row.incomeSourceLabel
+  ).slice(0, 5);
+
+  const expenseDistribution = groupAmountBy(
+    currentRows.filter((row) => toNumber(row.expense) > 0),
+    (row) => row.expenseBucket
+  ).slice(0, 6);
+
+  const incomeDistribution = groupAmountBy(
+    currentRows.filter((row) => toNumber(row.income) > 0),
+    (row) => row.incomeSourceLabel
+  ).slice(0, 6);
+
+  const advanceRows = currentRows.filter((row) => row.typeLabel === "سلفة");
+  const aidRows = currentRows.filter((row) => row.typeLabel === "إعانة");
+  const eventRows = currentRows.filter((row) => ["فاعليات", "رحلات", "أنشطة"].includes(row.typeLabel));
+
+  const currentMonthLabel =
+    currentRows.find((row) => row.monthKey === currentMonthKey)?.monthLabel ||
+    (currentMonthKey ? currentMonthKey : "الشهر المحدد");
+  const previousMonthLabel =
+    previousRows.find((row) => row.monthKey === previousMonthKey)?.monthLabel ||
+    (previousMonthKey ? previousMonthKey : "الشهر السابق");
+
+  return {
+    cards: [
+      { label: `إجمالي إيرادات ${currentMonthLabel}`, value: formatMoney(currentIncome) },
+      { label: `إجمالي مصروفات ${currentMonthLabel}`, value: formatMoney(currentExpense) },
+      { label: "صافي الشهر", value: formatMoney(currentNet) },
+      { label: `صافي ${previousMonthLabel}`, value: formatMoney(previousNet) },
+      { label: "المقارنة مع الشهر السابق", value: formatMoney(netChange) },
+      { label: "معدل النمو Growth Rate", value: `${growthRate.toFixed(1)}%` },
+    ],
+    sections: [
+      {
+        title: "توزيع المصروفات حسب البنود",
+        items: expenseDistribution.map((item) => ({
+          label: item.label,
+          value: formatMoney(item.amount),
+        })),
+      },
+      {
+        title: "توزيع الإيرادات حسب المصادر",
+        items: incomeDistribution.map((item) => ({
+          label: item.label,
+          value: formatMoney(item.amount),
+        })),
+      },
+      {
+        title: "أعلى 5 جهات تم الصرف لها",
+        items: topExpenseParties.map((item) => ({
+          label: item.label,
+          value: formatMoney(item.amount),
+        })),
+      },
+      {
+        title: "أعلى 5 مصادر إيراد",
+        items: topIncomeSources.map((item) => ({
+          label: item.label,
+          value: formatMoney(item.amount),
+        })),
+      },
+      {
+        title: "تحليل السلف خلال الشهر",
+        items: [
+          { label: "عدد حركات السلف", value: String(advanceRows.length) },
+          { label: "إجمالي السلف", value: formatMoney(advanceRows.reduce((sum, row) => sum + toNumber(row.expense), 0)) },
+        ],
+      },
+      {
+        title: "تحليل الإعانات خلال الشهر",
+        items: [
+          { label: "عدد الإعانات", value: String(aidRows.length) },
+          { label: "إجمالي الإعانات", value: formatMoney(aidRows.reduce((sum, row) => sum + toNumber(row.expense), 0)) },
+        ],
+      },
+      {
+        title: "تحليل الفعاليات خلال الشهر",
+        items: [
+          { label: "عدد الحركات", value: String(eventRows.length) },
+          { label: "إجمالي قيمة الفعاليات", value: formatMoney(eventRows.reduce((sum, row) => sum + toNumber(row.expense), 0)) },
+        ],
+      },
+    ],
+  };
+};

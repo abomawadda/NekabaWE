@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { REPORT_GROUPS, REPORT_MODULES } from "./reportModules";
-import { formatDisplayValue, getDateRange, getTodayISO, normalizeText, toNumber } from "./reportUtils";
+import { compareArabic, formatDisplayValue, getDateRange, getTodayISO, normalizeText, toNumber } from "./reportUtils";
 import { renderPrintReport } from "./reportPrint";
 
 class ErrorBoundary extends React.Component {
@@ -76,6 +76,21 @@ const EXECUTIVE_REPORTS = [
     description: "تقرير إداري مباشر بالإعانات وأنواعها والمستفيدين منها.",
   },
   {
+    id: "general_assembly_members",
+    title: "أعضاء الجمعية العمومية",
+    description: "كشف عضوية مع فلاتر الإدارة والحالة والمؤهل والانضمام.",
+  },
+  {
+    id: "balance_sheet_simplified",
+    title: "Balance Sheet مبسط",
+    description: "ملخص نقدي ومحاسبي سريع للسلف والتسويات والمدينين والدائنين.",
+  },
+  {
+    id: "monthly_financial_analysis",
+    title: "التحليل المالي الشهري",
+    description: "إيرادات ومصروفات وصافي الشهر مع مقارنة ونمو وتوزيع شهري.",
+  },
+  {
     id: "board_allowances",
     title: "بدلات المجلس",
     description: "متابعة بدل الجلسات والانتقال والضيافة من التسويات المعتمدة.",
@@ -97,6 +112,9 @@ const EXECUTIVE_REPORTS = [
   },
 ];
 
+const getInitialModuleFilters = (config) =>
+  Object.fromEntries((config?.customFilters || []).map((filter) => [filter.key, filter.defaultValue || ""]));
+
 function ReportBuilderInner() {
   const T = useT();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -106,6 +124,7 @@ function ReportBuilderInner() {
   const [loading, setLoading] = useState(true);
   const [searchQ, setSearchQ] = useState("");
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
+  const [moduleFilters, setModuleFilters] = useState(() => getInitialModuleFilters(REPORT_MODULES.treasury_ledger));
 
   const activeConfig = REPORT_MODULES[selectedModule];
   const isExecutiveMode = searchParams.get("mode") === "executive";
@@ -124,6 +143,7 @@ function ReportBuilderInner() {
     setSelectedFields(activeConfig.fields.map((field) => field.key));
     setSearchQ("");
     setDateRange({ from: "", to: "" });
+    setModuleFilters(getInitialModuleFilters(activeConfig));
   }, [selectedModule, activeConfig.fields]);
 
   useEffect(() => {
@@ -172,6 +192,26 @@ function ReportBuilderInner() {
 
   const rawRows = useMemo(() => activeConfig.buildRows(sourceData), [activeConfig, sourceData]);
 
+  const moduleFilterOptions = useMemo(() => {
+    return (activeConfig.customFilters || []).reduce((acc, filter) => {
+      if (filter.type !== "select") {
+        acc[filter.key] = [];
+        return acc;
+      }
+
+      const options = Array.from(
+        new Set(
+          rawRows
+            .map((row) => String(row?.[filter.rowKey || filter.key] || "").trim())
+            .filter(Boolean)
+        )
+      ).sort(compareArabic);
+
+      acc[filter.key] = options;
+      return acc;
+    }, {});
+  }, [activeConfig.customFilters, rawRows]);
+
   const filteredRows = useMemo(() => {
     let rows = [...rawRows];
 
@@ -186,8 +226,24 @@ function ReportBuilderInner() {
       rows = rows.filter((row) => normalizeText(row.__search || Object.values(row).join(" ")).includes(normalizedQuery));
     }
 
+    if ((activeConfig.customFilters || []).length > 0) {
+      rows = rows.filter((row) =>
+        activeConfig.customFilters.every((filter) => {
+          const filterValue = String(moduleFilters[filter.key] || "").trim();
+          if (!filterValue) return true;
+
+          const rowValue = String(row?.[filter.rowKey || filter.key] || "").trim();
+          if (filter.type === "text") {
+            return normalizeText(rowValue).includes(normalizeText(filterValue));
+          }
+
+          return rowValue === filterValue;
+        })
+      );
+    }
+
     return activeConfig.sortRows(rows);
-  }, [activeConfig, dateRange.from, dateRange.to, rawRows, searchQ]);
+  }, [activeConfig, dateRange.from, dateRange.to, moduleFilters, rawRows, searchQ]);
 
   const period = useMemo(
     () => getDateRange(filteredRows, activeConfig.dateField),
@@ -205,8 +261,15 @@ function ReportBuilderInner() {
       count: filteredRows.length,
       currencyFields,
       totals,
+      customSummary: activeConfig.buildSummary
+        ? activeConfig.buildSummary({
+            rows: filteredRows,
+            sourceData,
+            filters: moduleFilters,
+          })
+        : null,
     };
-  }, [activeConfig.fields, filteredRows]);
+  }, [activeConfig, filteredRows, moduleFilters, sourceData]);
 
   const previewRows = useMemo(() => filteredRows.slice(0, 80), [filteredRows]);
 
@@ -242,6 +305,8 @@ function ReportBuilderInner() {
 
   const activeFields = activeConfig.fields.filter((field) => selectedFields.includes(field.key));
   const ModuleIcon = activeConfig.icon || TableProperties;
+  const reportSpecificSummary = summary.customSummary;
+  const hasActiveModuleFilters = Object.values(moduleFilters).some((value) => String(value || "").trim());
 
   return (
     <div className={clsx("max-w-7xl mx-auto space-y-4 pb-20", T.text)} dir="rtl">
@@ -516,6 +581,59 @@ function ReportBuilderInner() {
               </div>
             )}
 
+            {reportSpecificSummary && (
+              <div className={clsx("rounded-2xl border shadow-sm p-4 space-y-4", T.card)}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Summary Box
+                    </div>
+                    <div className="text-sm font-black text-slate-800 dark:text-slate-100 mt-1">
+                      ملخص التقرير
+                    </div>
+                  </div>
+                  <div className="text-[10px] font-black text-teal-600 dark:text-teal-300">
+                    يتم تحديثه حسب الفلاتر الحالية
+                  </div>
+                </div>
+
+                {Array.isArray(reportSpecificSummary.cards) && reportSpecificSummary.cards.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {reportSpecificSummary.cards.map((card, index) => (
+                      <div key={`${card.label}-${index}`} className="rounded-2xl border border-teal-100 dark:border-teal-900/40 bg-teal-50/50 dark:bg-teal-900/10 p-4">
+                        <div className="text-[10px] font-black text-slate-500 dark:text-slate-400 mb-2">
+                          {card.label}
+                        </div>
+                        <div className="text-2xl font-black text-teal-700 dark:text-teal-300">
+                          {card.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {Array.isArray(reportSpecificSummary.sections) && reportSpecificSummary.sections.length > 0 && (
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                    {reportSpecificSummary.sections.map((section, index) => (
+                      <div key={`${section.title}-${index}`} className="rounded-2xl border border-slate-200 dark:border-slate-700 p-4 bg-slate-50/70 dark:bg-slate-900/20">
+                        <div className="text-[11px] font-black text-slate-700 dark:text-slate-200 mb-3">
+                          {section.title}
+                        </div>
+                        <div className="space-y-2">
+                          {(section.items || []).map((item, itemIndex) => (
+                            <div key={`${item.label}-${itemIndex}`} className="flex items-center justify-between gap-3 text-[11px] font-bold">
+                              <span className="text-slate-500 dark:text-slate-400">{item.label}</span>
+                              <span className="text-slate-800 dark:text-slate-100">{item.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className={clsx("rounded-2xl border shadow-sm p-4 space-y-3", T.card)}>
               <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto_auto] gap-3 items-end">
                 <div className="space-y-1">
@@ -563,12 +681,51 @@ function ReportBuilderInner() {
                 )}
               </div>
 
-              {(searchQ || dateRange.from || dateRange.to) && (
+              {(activeConfig.customFilters || []).length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 pt-1">
+                  {activeConfig.customFilters.map((filter) => (
+                    <div key={filter.key} className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase">
+                        {filter.label}
+                      </label>
+                      {filter.type === "select" ? (
+                        <select
+                          value={moduleFilters[filter.key] || ""}
+                          onChange={(event) =>
+                            setModuleFilters((prev) => ({ ...prev, [filter.key]: event.target.value }))
+                          }
+                          className={clsx("w-full px-3 py-2.5 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 focus:ring-teal-500", T.sel)}
+                        >
+                          <option value="">الكل</option>
+                          {(moduleFilterOptions[filter.key] || []).map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={moduleFilters[filter.key] || ""}
+                          onChange={(event) =>
+                            setModuleFilters((prev) => ({ ...prev, [filter.key]: event.target.value }))
+                          }
+                          placeholder={filter.placeholder || filter.label}
+                          className={clsx("w-full px-3 py-2.5 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 focus:ring-teal-500", T.inp)}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {(searchQ || dateRange.from || dateRange.to || hasActiveModuleFilters) && (
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => {
                       setSearchQ("");
                       setDateRange({ from: "", to: "" });
+                      setModuleFilters(getInitialModuleFilters(activeConfig));
                     }}
                     className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200 text-[10px] font-black"
                   >
@@ -640,7 +797,7 @@ function ReportBuilderInner() {
                         </tr>
                       ))}
                     </tbody>
-                    {summary.currencyFields.some((field) => selectedFields.includes(field.key)) && (
+                    {activeConfig.showTotals !== false && summary.currencyFields.some((field) => selectedFields.includes(field.key)) && (
                       <tfoot>
                         <tr className="bg-slate-100 dark:bg-slate-800/80 border-t-2 border-slate-300 dark:border-slate-700">
                           <td className="p-3 text-center font-black text-slate-500">#</td>

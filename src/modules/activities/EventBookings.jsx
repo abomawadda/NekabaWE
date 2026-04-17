@@ -89,10 +89,12 @@ const printManifest = (event, bookings) => {
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
     @page{size:A4 landscape;margin:10mm}
     *{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}
-    body{padding:25px;font-size:12px;color:#1e293b;}
-    table{width:100%;border-collapse:collapse;}
+    html,body{width:100%;height:auto;}
+    body{padding:16px;font-size:12px;color:#1e293b;}
+    table{width:100%;border-collapse:collapse;page-break-inside:auto;break-inside:auto;}
     th{background:#1e293b;color:#fff;padding:9px 6px;text-align:center;font-size:11px;}
     td{padding:8px 6px;border:1px solid #e2e8f0;vertical-align:top;}
+    @media print{body{padding:0}thead{display:table-header-group}tfoot{display:table-footer-group}tr,td,th{break-inside:avoid;page-break-inside:avoid}.brand-header{break-inside:avoid;page-break-inside:avoid}}
     ${getPrintBrandStyles()}
   </style></head><body>
   ${getPrintBrandHeader({ reportTitle: `كشف حضور فعالية: ${event.title}`, reportMeta: `${event.type} | التاريخ: ${event.date} | إجمالي الحضور: ${totalPax} فرد` })}

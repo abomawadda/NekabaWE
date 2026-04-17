@@ -31,7 +31,8 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
         @page { size:A4 portrait; margin:10mm; }
         * { font-family: 'Cairo', sans-serif; margin: 0; padding: 0; box-sizing: border-box; direction: rtl; }
-        body { padding: 30px; color: #1e293b; background: #fff; }
+        html, body { width: 100%; height: auto; }
+        body { padding: 18px; color: #1e293b; background: #fff; }
         .badge { display: inline-block; padding: 5px 15px; background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 20px; font-size: 12px; font-weight: 700; color: #0f766e; }
         
         .info-row { margin-bottom: 20px; padding: 15px; background: #f8fafc; border-right: 4px solid #0d9488; border-radius: 8px; font-size: 16px; font-weight: bold; }
@@ -41,7 +42,7 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
         .stat-label { font-size: 11px; color: #64748b; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
         .stat-value { font-size: 20px; font-weight: 900; }
         
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; page-break-inside: auto; break-inside: auto; }
         th { background: #f1f5f9; color: #0f766e; border: 1px solid #cbd5e1; padding: 12px; text-align: right; font-weight: 900; }
         td { border: 1px solid #cbd5e1; padding: 10px; text-align: right; font-weight: 700; }
         
@@ -50,7 +51,14 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
         .sigs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-top: 50px; text-align: center; }
         .sig-box { border-top: 2px dashed #cbd5e1; padding-top: 10px; font-size: 14px; font-weight: 900; color: #475569; }
         .sig-space { height: 60px; }
-        @media print { @page { margin: 10mm; } body { padding: 0; } }
+        @media print {
+          @page { margin: 10mm; }
+          body { padding: 0; }
+          .info-row, .stats-grid, .stat-box, .footer-note, .sigs, .brand-header { break-inside: avoid; page-break-inside: avoid; }
+          thead { display: table-header-group; }
+          tfoot { display: table-footer-group; }
+          tr, td, th { break-inside: avoid; page-break-inside: avoid; }
+        }
         ${getPrintBrandStyles()}
       </style>
     </head>
