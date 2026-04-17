@@ -48,6 +48,18 @@ const getMeetingAllowanceType = (category = "") => {
   return "";
 };
 const isMeetingAllowanceCategory = (category = "") => Boolean(getMeetingAllowanceType(category));
+const getLatestSettlementExpenseDate = (expenses = [], fallback = "") => {
+  const dates = (Array.isArray(expenses) ? expenses : [])
+    .map((expense) => expense?.date)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  return dates[dates.length - 1] || fallback || "";
+};
+const getSettlementApprovalDate = (settlement = {}) =>
+  getLatestSettlementExpenseDate(
+    settlement?.settlementExpenses,
+    settlement?.settlementDate || settlement?.date || ""
+  );
 
 // ── دالة الطباعة المدمجة لمنع خطأ المتصفح ──
 const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBalance = 0, collectedSubs = 0, returnedActually }) => {
@@ -65,9 +77,9 @@ const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBala
   win.document.write(`
     <!DOCTYPE html><html lang="ar">
     <head><meta charset="UTF-8"><title>تسوية ${advanceTxn?.settlement_mode === 'carry_forward' ? 'عهدة' : 'شيك'} - ${advanceTxn?.employeeName || advanceTxn?.party}</title>
-    <style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box;direction:rtl;}body{padding:30px;color:#1e293b;background:#fff;}.badge{display:inline-block;padding:5px 15px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;font-size:12px;font-weight:700;color:#0f766e;}.info-row{margin-bottom:20px;padding:15px;background:#f8fafc;border-right:4px solid #0d9488;border-radius:8px;font-size:16px;font-weight:bold;}.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}.stat-box{border:1px solid #e2e8f0;padding:15px;border-radius:10px;text-align:center;}.stat-label{font-size:11px;color:#64748b;font-weight:bold;margin-bottom:5px;text-transform:uppercase;}.stat-value{font-size:20px;font-weight:900;}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}th{background:#f1f5f9;color:#0f766e;border:1px solid #cbd5e1;padding:12px;text-align:right;font-weight:900;}td{border:1px solid #cbd5e1;padding:10px;text-align:right;font-weight:700;}.footer-note{margin-top:15px;padding:10px;background:#fefce8;border:1px solid #fef08a;border-radius:8px;font-size:13px;font-weight:bold;color:#854d0e;}.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:50px;text-align:center;}.sig-box{border-top:2px dashed #cbd5e1;padding-top:10px;font-size:14px;font-weight:900;color:#475569;}.sig-space{height:60px;}@media print{@page{margin:10mm;}body{padding:0;}}${getPrintBrandStyles()}</style>
+    <style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box;direction:rtl;}body{padding:30px;color:#1e293b;background:#fff;}.badge{display:inline-block;padding:5px 15px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;font-size:12px;font-weight:700;color:#0f766e;}.info-row{margin-bottom:20px;padding:15px;background:#f8fafc;border-right:4px solid #0d9488;border-radius:8px;font-size:16px;font-weight:bold;}.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}.stat-box{border:1px solid #e2e8f0;padding:15px;border-radius:10px;text-align:center;}.stat-label{font-size:11px;color:#64748b;font-weight:bold;margin-bottom:5px;text-transform:uppercase;}.stat-value{font-size:20px;font-weight:900;}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}th{background:#f1f5f9;color:#0f766e;border:1px solid #cbd5e1;padding:12px;text-align:right;font-weight:900;}td{border:1px solid #cbd5e1;padding:10px;text-align:right;font-weight:700;}.footer-note{margin-top:15px;padding:10px;background:#fefce8;border:1px solid #fef08a;border-radius:8px;font-size:13px;font-weight:bold;color:#854d0e;}.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:50px;text-align:center;}.sig-box{border-top:2px dashed #cbd5e1;padding-top:10px;font-size:14px;font-weight:900;color:#475569;}.sig-space{height:60px;}@media print{@page{size:A4 portrait;margin:10mm;}body{padding:0;}}${getPrintBrandStyles()}</style>
     </head><body>
-      ${getPrintBrandHeader({ reportTitle: `كشف تسوية ${advanceTxn?.settlement_mode === 'carry_forward' ? 'عهدة مالية' : 'شيك مصروف'}`, reportMeta: `تاريخ الاعتماد: ${advanceTxn?.settlementDate || '—'}` })}
+      ${getPrintBrandHeader({ reportTitle: `كشف تسوية ${advanceTxn?.settlement_mode === 'carry_forward' ? 'عهدة مالية' : 'شيك مصروف'}`, reportMeta: `تاريخ الاعتماد: ${getLatestSettlementExpenseDate(expenses, advanceTxn?.settlementDate || advanceTxn?.date || '—') || '—'}` })}
       <div class="info-row">اسم مسؤول التسوية: <span style="font-size:20px; color:#0d9488; margin-right: 10px;">${advanceTxn?.employeeName || advanceTxn?.party || '—'}</span></div>
       <div class="stats-grid">
         <div class="stat-box"> <div class="stat-label">قيمة الشيك المُنصرف</div> <div class="stat-value" style="color:#334155">${formatMoney(ADV_AMT)}</div> </div>
@@ -312,7 +324,7 @@ export default function SettlementTab() {
   const archivedSettlements = useMemo(() => sourceTransactions.filter(t => normalizeRequiresSettlement(t) && t.isSettled), [sourceTransactions]);
   const editingSettlement = useMemo(() => archivedSettlements.find(t => t.id === editingSettlementId) || null, [archivedSettlements, editingSettlementId]);
   const archiveYears = useMemo(
-    () => [...new Set(archivedSettlements.map(s => getYearValue(s.settlementDate || s.date)).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
+    () => [...new Set(archivedSettlements.map(s => getYearValue(getSettlementApprovalDate(s))).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
     [archivedSettlements]
   );
   const filteredArchivedSettlements = useMemo(() => {
@@ -320,18 +332,18 @@ export default function SettlementTab() {
       .filter((s) => {
         const person = s.employeeName || s.party || "";
         const checkNo = String(s.checkNo || "");
-        const refDate = s.settlementDate || s.date || "";
+        const refDate = getSettlementApprovalDate(s);
         const searchOk = !archiveSearch || person.includes(archiveSearch) || checkNo.includes(archiveSearch);
         const monthOk = archiveMonth === "all" || getMonthValue(refDate) === archiveMonth;
         const yearOk = archiveYear === "all" || getYearValue(refDate) === archiveYear;
         return searchOk && monthOk && yearOk;
       })
-      .sort((a, b) => String(b.settlementDate || b.date || "").localeCompare(String(a.settlementDate || a.date || "")));
+      .sort((a, b) => String(getSettlementApprovalDate(b)).localeCompare(String(getSettlementApprovalDate(a))));
   }, [archivedSettlements, archiveMonth, archiveSearch, archiveYear]);
   
   const getPrevBalance = (empId, currentTxnId) => {
     if (!empId) return 0;
-    const history = archivedSettlements.filter(s => s.employeeId === empId && s.id !== currentTxnId).sort((a, b) => (b.settlementDate || "").localeCompare(a.settlementDate || ""));
+    const history = archivedSettlements.filter(s => s.employeeId === empId && s.id !== currentTxnId).sort((a, b) => getSettlementApprovalDate(b).localeCompare(getSettlementApprovalDate(a)));
     return (history.length > 0 && !history[0].returnedActually) ? Number(history[0].settlementReturned || 0) : 0;
   };
 
@@ -453,7 +465,7 @@ export default function SettlementTab() {
     if (selectedTxn) {
       setExpenses(selectedTxn.settlementExpenses || []);
       setCollectedSubs(selectedTxn.collectedSubscriptions || selectedTxn.memberSubscriptions || "");
-      setSettlementDate(selectedTxn.settlementDate || getTodayISO());
+      setSettlementDate(getSettlementApprovalDate(selectedTxn) || getTodayISO());
       setReturnedActually(Boolean(selectedTxn.returnedActually));
       setExpAmt(""); setExpNotes(""); setExpFiles([]); setSelectedMembers([]); setExpMeetingId("");
     } else {
@@ -607,7 +619,7 @@ export default function SettlementTab() {
         doc(db, "issued_checks", confirmModalData.txnId),
         buildIssuedCheckRecord(selectedTxn, {
           isSettled: true,
-          settlementDate,
+      settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate),
           settlementExpenses: expenses,
           settlementSpent: confirmModalData.spent,
           settlementReturned: returnedActually ? 0 : confirmModalData.remaining,
@@ -624,7 +636,7 @@ export default function SettlementTab() {
       await logAuditEvent(editingSettlementId ? "settlement_updated" : "settlement_finalized", {
         transactionId: confirmModalData.txnId,
         party: confirmModalData.party || "",
-        settlementDate,
+      settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate),
         spent: confirmModalData.spent,
         returned: returnedActually ? 0 : confirmModalData.remaining,
         returnedActually,
@@ -991,7 +1003,7 @@ export default function SettlementTab() {
                   const sAvailable = sAdvance + sPrevBal + sSubs;
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors">
-                      <td className="p-3 font-bold text-slate-500 whitespace-nowrap">{s.settlementDate}</td>
+      <td className="p-3 font-bold text-slate-500 whitespace-nowrap">{getSettlementApprovalDate(s) || "—"}</td>
                       <td className="p-3 font-black text-slate-800 dark:text-slate-100">
                         {s.employeeName || s.party}
                         <span className="block text-[8px] text-slate-400 mt-0.5">

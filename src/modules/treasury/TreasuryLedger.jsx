@@ -38,6 +38,13 @@ const formatCheckReference = (checkNum) => {
   const numericValue = Number(normalized);
   return Number.isFinite(numericValue) ? formatMoney(numericValue) : checkNum;
 };
+const getDateRangeLabel = (dates = [], fallbackFrom = "", fallbackTo = "") => {
+  const sortedDates = dates.filter(Boolean).sort((a, b) => a.localeCompare(b));
+  return {
+    start: sortedDates[0] || fallbackFrom || "",
+    end: sortedDates[sortedDates.length - 1] || fallbackTo || "",
+  };
+};
 
 const getTypeLabel = (type, subType) => {
   switch (type) {
@@ -282,12 +289,20 @@ function TreasuryLedgerInner() {
       }
     });
 
+    const periodRange = getDateRangeLabel(
+      events.map((event) => event.date),
+      filterFrom || "",
+      filterTo || getTodayISO()
+    );
+
     return {
       events,
       finalBalance: running,
       periodOpeningBalance: periodOpening,
       periodCredit,
       periodDebit,
+      periodStartDate: periodRange.start,
+      periodEndDate: periodRange.end,
     };
   }, [transactions, filterFrom, filterTo, filterType, searchQ]);
 
@@ -330,10 +345,10 @@ function TreasuryLedgerInner() {
       <body>
         ${getPrintBrandHeader({
           reportTitle: "كشف حساب الخزينة العام (دفتر الأستاذ)",
-          reportMeta: `الرصيد الختامي: ${formatMoney(ledgerData.finalBalance)}`
+          reportMeta: `الفترة: ${ledgerData.periodStartDate || "—"} إلى ${ledgerData.periodEndDate || "—"} | الرصيد الختامي: ${formatMoney(ledgerData.finalBalance)}`
         })}
         <div class="info-bar">
-          <div>الفترة: ${filterFrom || "الافتتاح"} — ${filterTo || getTodayISO()}</div>
+          <div>الفترة: ${ledgerData.periodStartDate || "—"} — ${ledgerData.periodEndDate || "—"}</div>
           <div>تاريخ التقرير: ${getTodayISO()}</div>
         </div>
         <table>
@@ -385,7 +400,7 @@ function TreasuryLedgerInner() {
     ws["!cols"] = [{ wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 28 }, { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "كشف الخزينة");
-    XLSX.writeFile(wb, `كشف_الخزينة_${filterFrom || "كامل"}_${filterTo || getTodayISO()}.xlsx`);
+    XLSX.writeFile(wb, `كشف_الخزينة_${ledgerData.periodStartDate || "كامل"}_${ledgerData.periodEndDate || getTodayISO()}.xlsx`);
   };
 
   // ─── Render states ───────────────────────────

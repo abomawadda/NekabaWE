@@ -1,581 +1,533 @@
-/**
- * ReportBuilder — محرك التقارير الذكي (Smart Reporting Engine)
- * ✅ وحدات تقارير جديدة: الإعانات، الأنشطة، التفصيلي
- * ✅ إصلاح: حساب إجماليات الجدول (colspan bug)
- * ✅ تحسين: بطاقات ملخص قبل الجدول
- * ✅ تحسين: توافق كامل مع الموبايل
- * ✅ تحسين: تصميم احترافي
- * ✅ Error boundary — لا صفحات بيضاء
- */
-
-import React, { useState, useEffect, useMemo } from "react";
-import { collection, query, onSnapshot } from "firebase/firestore";
+﻿import React, { useEffect, useMemo, useState } from "react";
+import { collection, onSnapshot, query } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
-import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
-import { formatMoney } from "../../utils/numberFormat";
-import { openPrintWindow } from "../../utils/print";
 import * as XLSX from "xlsx";
 import {
-  FileText, Printer, Download, Filter, Columns, Calendar,
-  CheckCircle2, AlertCircle, RefreshCw, Layers, SlidersHorizontal,
-  TableProperties, TrendingUp, TrendingDown, Users, Activity,
-  Heart, DollarSign, Wallet, AlertTriangle, X, ChevronDown, ChevronUp
+  AlertTriangle,
+  Calendar,
+  Columns,
+  Download,
+  FileText,
+  Filter,
+  Layers,
+  Printer,
+  RefreshCw,
+  Search,
+  TableProperties,
+  Wallet,
 } from "lucide-react";
 import clsx from "clsx";
+import { REPORT_GROUPS, REPORT_MODULES } from "./reportModules";
+import { formatDisplayValue, getDateRange, getTodayISO, normalizeText, toNumber } from "./reportUtils";
+import { renderPrintReport } from "./reportPrint";
 
-// ════════════════════════════════════════════════════════════
-// ⚙️ وحدات التقارير (Modules)
-// ════════════════════════════════════════════════════════════
-const REPORT_MODULES = {
-  transactions: {
-    id:          "transactions",
-    title:       "حركات الخزينة (كاملة)",
-    icon:        Wallet,
-    collection:  "transactions",
-    dateField:   "date",
-    color:       "indigo",
-    fields: [
-      { key: "date",    label: "التاريخ" },
-      { key: "type",    label: "النوع",    format: v => ({ deposit:"إيداع", advance:"سلفة", aid:"إعانة", activity:"شيك نشاط" }[v] || v) },
-      { key: "checkNum",label: "رقم الشيك" },
-      { key: "amount",  label: "المبلغ",   isCurrency: true },
-      { key: "party",   label: "الجهة / المستفيد" },
-      { key: "notes",   label: "البيان" },
-      { key: "state",   label: "الحالة",   format: v => v === "posted" ? "مرحّل" : "مسودة" },
-    ],
-  },
-  aids: {
-    id:         "aids",
-    title:      "تقرير الإعانات",
-    icon:       Heart,
-    collection: "transactions",
-    dateField:  "date",
-    color:      "rose",
-    filter:     row => row.type === "aid",
-    fields: [
-      { key: "date",        label: "التاريخ" },
-      { key: "party",       label: "العضو المستفيد" },
-      { key: "employeeId",  label: "كود العضو" },
-      { key: "aidCategory", label: "نوع الإعانة" },
-      { key: "aidRel",      label: "صلة القرابة" },
-      { key: "amount",      label: "المبلغ", isCurrency: true },
-      { key: "checkNum",    label: "رقم الشيك" },
-      { key: "incidentDate",label: "تاريخ الواقعة" },
-    ],
-  },
-  activities: {
-    id:         "activities",
-    title:      "تقرير الأنشطة والفعاليات",
-    icon:       Activity,
-    collection: "transactions",
-    dateField:  "date",
-    color:      "amber",
-    filter:     row => row.type === "activity",
-    fields: [
-      { key: "date",              label: "تاريخ الصرف" },
-      { key: "activityName",      label: "اسم الفاعلية" },
-      { key: "activityType",      label: "نوع الفاعلية" },
-      { key: "activityDate",      label: "موعد الفاعلية" },
-      { key: "activityLocation",  label: "الموقع" },
-      { key: "party",             label: "المسؤول" },
-      { key: "participantsCount", label: "عدد المشاركين" },
-      { key: "amount",            label: "قيمة الشيك", isCurrency: true },
-      { key: "checkNum",          label: "رقم الشيك" },
-    ],
-  },
-  employees: {
-    id:         "employees",
-    title:      "سجل الأعضاء",
-    icon:       Users,
-    collection: "employees",
-    dateField:  null,
-    color:      "teal",
-    fields: [
-      { key: "jobId",            label: "كود العضو" },
-      { key: "name",             label: "الاسم الرباعي" },
-      { key: "phone",            label: "رقم الهاتف" },
-      { key: "nationalId",       label: "الرقم القومي" },
-      { key: "jobTitle",         label: "المسمى الوظيفي" },
-      { key: "workplace",        label: "مكان العمل" },
-      { key: "grade",            label: "الدرجة" },
-      { key: "membershipStatus", label: "الحالة" },
-      { key: "subscriptionStatus",label: "الاشتراك" },
-    ],
-  },
-  bookings: {
-    id:         "bookings",
-    title:      "حجوزات الفعاليات",
-    icon:       Calendar,
-    collection: "event_bookings",
-    dateField:  "eventDate",
-    color:      "purple",
-    fields: [
-      { key: "eventDate",      label: "تاريخ الفعالية" },
-      { key: "eventTitle",     label: "اسم الفعالية" },
-      { key: "memberName",     label: "المشترك الأساسي" },
-      { key: "totalPax",       label: "إجمالي الأفراد" },
-      { key: "totalCost",      label: "التكلفة الكلية", isCurrency: true },
-      { key: "paymentSummary", label: "طرق الدفع" },
-      { key: "status",         label: "حالة الحجز", format: v => v === "confirmed" ? "مؤكد" : v === "cancelled" ? "ملغي" : "معلق" },
-    ],
-  },
-};
-
-// ════════════════════════════════════════════════════════════
-// 🖨️ محرك الطباعة
-// ════════════════════════════════════════════════════════════
-const printReport = (data, config, selectedFieldKeys) => {
-  const win = openPrintWindow(`report-${config.id}`, "width=1200,height=900");
-  if (!win) return;
-
-  const fields = config.fields.filter(f => selectedFieldKeys.includes(f.key));
-  const printDate = new Date().toLocaleString("ar-EG");
-  const ModIcon = config.icon;
-
-  // إجماليات الأعمدة المالية
-  const currencyFields = fields.filter(f => f.isCurrency);
-  const totals = {};
-  currencyFields.forEach(f => {
-    totals[f.key] = data.reduce((s, r) => s + Number(r[f.key] || 0), 0);
-  });
-
-  const headers = fields.map(f => `<th>${f.label}</th>`).join("");
-  const rows = data.map((row, i) => {
-    const cells = fields.map(f => {
-      let val = row[f.key];
-      if (f.format) val = f.format(val);
-      if (f.isCurrency) val = `<span style="color:#059669; font-weight:900;">${formatMoney(val)}</span>`;
-      return `<td>${val ?? "—"}</td>`;
-    }).join("");
-    return `<tr${i % 2 === 0 ? "" : ' style="background:#f8fafc;"'}><td style="text-align:center; font-weight:bold;">${i + 1}</td>${cells}</tr>`;
-  }).join("");
-
-  const totalsRow = currencyFields.length > 0 ? `
-    <tr class="totals-row">
-      <td colspan="${fields.length - currencyFields.length + 1}" style="text-align:right; padding-left:20px;">إجمالي:</td>
-      ${currencyFields.map(f => `<td style="color:#059669; text-align:right;">${formatMoney(totals[f.key])}</td>`).join("")}
-    </tr>
-  ` : "";
-
-  win.document.write(`
-    <!DOCTYPE html><html lang="ar" dir="rtl">
-    <head><meta charset="UTF-8"><title>تقرير ${config.title}</title>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
-      @page { size:A4 landscape; margin:12mm; }
-      * { font-family:'Cairo',sans-serif; box-sizing:border-box; margin:0; padding:0; }
-      body { padding:15px; font-size:11px; color:#1e293b; background:#fff; position:relative; }
-      body::before { content:"${config.title}"; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-25deg); font-size:80px; font-weight:900; color:rgba(100,116,139,0.04); z-index:-1; white-space:nowrap; }
-      .info-bar { display:flex; justify-content:space-between; background:#f1f5f9; padding:6px 10px; border-radius:6px; margin-bottom:15px; font-size:10px; font-weight:700; }
-      table { width:100%; border-collapse:collapse; margin-bottom:25px; }
-      th { background:#1e293b; color:#fff; padding:8px 6px; text-align:right; font-size:11px; border:1px solid #334155; }
-      th:first-child { text-align:center; width:35px; }
-      td { padding:6px 8px; border:1px solid #cbd5e1; font-size:10px; vertical-align:middle; }
-      .totals-row td { background:#f1f5f9; font-weight:900; font-size:12px; border-top:3px solid #1e293b; }
-      .signatures { display:grid; grid-template-columns:repeat(4,1fr); gap:20px; margin-top:50px; page-break-inside:avoid; }
-      .sig-block { text-align:center; }
-      .sig-line  { border-bottom:1px dashed #94a3b8; height:40px; margin-bottom:8px; width:80%; margin-inline:auto; }
-      .sig-title { font-size:11px; font-weight:900; color:#334155; }
-      ${getPrintBrandStyles()}
-    </style></head>
-    <body>
-      ${getPrintBrandHeader({ reportTitle: config.title, reportMeta: `إجمالي السجلات: ${data.length} | تاريخ التقرير: ${printDate}` })}
-      <table>
-        <thead><tr><th>#</th>${headers}</tr></thead>
-        <tbody>${rows}${totalsRow}</tbody>
-      </table>
-      <div class="signatures">
-        ${["مُدخل البيانات","المراجعة المالية","أمين الصندوق","رئيس النقابة"].map(s => `
-          <div class="sig-block"><div class="sig-line"></div><div class="sig-title">${s}</div></div>
-        `).join("")}
-      </div>
-      <script>window.onload=()=>{setTimeout(()=>window.print(),500);}</script>
-    </body></html>
-  `);
-  win.document.close();
-};
-
-// ════════════════════════════════════════════════════════════
-// Error Boundary
-// ════════════════════════════════════════════════════════════
 class ErrorBoundary extends React.Component {
   state = { error: null };
-  static getDerivedStateFromError(e) { return { error: e }; }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
   render() {
-    if (this.state.error) return (
-      <div className="flex flex-col items-center justify-center p-20 gap-3 text-rose-500">
-        <AlertTriangle size={36}/>
-        <p className="font-black text-sm">حدث خطأ في تحميل محرك التقارير</p>
-        <p className="text-[10px] font-bold opacity-70">{this.state.error.message}</p>
-        <button onClick={() => this.setState({ error: null })} className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl font-black text-xs mt-2">
-          إعادة المحاولة
-        </button>
-      </div>
-    );
+    if (this.state.error) {
+      return (
+        <div className="flex flex-col items-center justify-center p-20 gap-3 text-rose-500">
+          <AlertTriangle size={36} />
+          <p className="font-black text-sm">حدث خطأ في شاشة التقارير</p>
+          <p className="text-[10px] font-bold opacity-70">{this.state.error.message}</p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl font-black text-xs"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      );
+    }
+
     return this.props.children;
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// المكوّن الرئيسي
-// ════════════════════════════════════════════════════════════
 function ReportBuilderInner() {
   const T = useT();
-
-  const [selectedModule, setSelectedModule] = useState("transactions");
-  const [data, setData]                     = useState([]);
-  const [loading, setLoading]               = useState(true);
-  const [dateRange, setDateRange]           = useState({ from: "", to: "" });
+  const [selectedModule, setSelectedModule] = useState("treasury_ledger");
   const [selectedFields, setSelectedFields] = useState([]);
-  const [showConfig, setShowConfig]         = useState(true);
+  const [sourceData, setSourceData] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [searchQ, setSearchQ] = useState("");
+  const [dateRange, setDateRange] = useState({ from: "", to: "" });
 
   const activeConfig = REPORT_MODULES[selectedModule];
 
-  // تهيئة الأعمدة عند تغيير الوحدة
   useEffect(() => {
-    setSelectedFields(activeConfig.fields.map(f => f.key));
+    setSelectedFields(activeConfig.fields.map((field) => field.key));
+    setSearchQ("");
     setDateRange({ from: "", to: "" });
-  }, [selectedModule]);
+  }, [selectedModule, activeConfig.fields]);
 
-  // جلب البيانات
   useEffect(() => {
     setLoading(true);
-    try {
-      const q = query(collection(db, activeConfig.collection));
-      const unsub = onSnapshot(q, snap => {
-        setData(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      }, err => {
-        console.error(err);
-        setLoading(false);
-      });
-      return () => unsub();
-    } catch (e) {
-      console.error(e);
+    setSourceData({});
+
+    const sourceNames = activeConfig.sources || [];
+    if (sourceNames.length === 0) {
       setLoading(false);
-    }
-  }, [activeConfig.collection]);
-
-  // فلترة البيانات
-  const filteredData = useMemo(() => {
-    let rows = [...data];
-
-    // فلتر نوع محدد (للإعانات، الأنشطة)
-    if (activeConfig.filter) {
-      rows = rows.filter(activeConfig.filter);
+      return undefined;
     }
 
-    // فلتر التاريخ
+    const firstLoadState = new Set(sourceNames);
+    const markReady = (sourceName) => {
+      firstLoadState.delete(sourceName);
+      if (firstLoadState.size === 0) setLoading(false);
+    };
+
+    const unsubscribers = sourceNames.map((sourceName) => {
+      try {
+        return onSnapshot(
+          query(collection(db, sourceName)),
+          (snapshot) => {
+            setSourceData((prev) => ({
+              ...prev,
+              [sourceName]: snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })),
+            }));
+            markReady(sourceName);
+          },
+          (error) => {
+            console.error(`${sourceName}:`, error);
+            setSourceData((prev) => ({ ...prev, [sourceName]: [] }));
+            markReady(sourceName);
+          }
+        );
+      } catch (error) {
+        console.error(`${sourceName}:`, error);
+        setSourceData((prev) => ({ ...prev, [sourceName]: [] }));
+        markReady(sourceName);
+        return () => {};
+      }
+    });
+
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe && unsubscribe());
+  }, [activeConfig]);
+
+  const rawRows = useMemo(() => activeConfig.buildRows(sourceData), [activeConfig, sourceData]);
+
+  const filteredRows = useMemo(() => {
+    let rows = [...rawRows];
+
     if (activeConfig.dateField && dateRange.from) {
-      rows = rows.filter(r => r[activeConfig.dateField] >= dateRange.from);
+      rows = rows.filter((row) => String(row[activeConfig.dateField] || "").slice(0, 10) >= dateRange.from);
     }
     if (activeConfig.dateField && dateRange.to) {
-      rows = rows.filter(r => r[activeConfig.dateField] <= dateRange.to);
+      rows = rows.filter((row) => String(row[activeConfig.dateField] || "").slice(0, 10) <= dateRange.to);
+    }
+    if (searchQ.trim()) {
+      const normalizedQuery = normalizeText(searchQ);
+      rows = rows.filter((row) => normalizeText(row.__search || Object.values(row).join(" ")).includes(normalizedQuery));
     }
 
-    return rows;
-  }, [data, dateRange, activeConfig]);
+    return activeConfig.sortRows(rows);
+  }, [activeConfig, dateRange.from, dateRange.to, rawRows, searchQ]);
 
-  // إجماليات سريعة
+  const period = useMemo(
+    () => getDateRange(filteredRows, activeConfig.dateField),
+    [activeConfig.dateField, filteredRows]
+  );
+
   const summary = useMemo(() => {
-    const currencyFields = activeConfig.fields.filter(f => f.isCurrency);
-    const totals = {};
-    currencyFields.forEach(f => {
-      totals[f.key] = filteredData.reduce((s, r) => s + Number(r[f.key] || 0), 0);
-    });
-    return { count: filteredData.length, totals, currencyFields };
-  }, [filteredData, activeConfig]);
+    const currencyFields = activeConfig.fields.filter((field) => field.currency);
+    const totals = currencyFields.reduce((acc, field) => {
+      acc[field.key] = filteredRows.reduce((sum, row) => sum + toNumber(row[field.key]), 0);
+      return acc;
+    }, {});
 
-  const toggleField = key => {
-    setSelectedFields(prev =>
-      prev.includes(key) ? (prev.length > 1 ? prev.filter(k => k !== key) : prev) : [...prev, key]
+    return {
+      count: filteredRows.length,
+      currencyFields,
+      totals,
+    };
+  }, [activeConfig.fields, filteredRows]);
+
+  const previewRows = useMemo(() => filteredRows.slice(0, 80), [filteredRows]);
+
+  const toggleField = (key) => {
+    setSelectedFields((prev) =>
+      prev.includes(key)
+        ? prev.length > 1
+          ? prev.filter((fieldKey) => fieldKey !== key)
+          : prev
+        : [...prev, key]
     );
   };
 
   const exportToExcel = () => {
-    const fields = activeConfig.fields.filter(f => selectedFields.includes(f.key));
-    const rows = filteredData.map((row, i) => {
-      const obj = { "#": i + 1 };
-      fields.forEach(f => {
-        let val = row[f.key];
-        if (f.format) val = f.format(val);
-        obj[f.label] = val ?? "";
+    const fields = activeConfig.fields.filter((field) => selectedFields.includes(field.key));
+    const rows = filteredRows.map((row, index) => {
+      const exportedRow = { "#": index + 1 };
+      fields.forEach((field) => {
+        exportedRow[field.label] = formatDisplayValue(field, row[field.key]);
       });
-      return obj;
+      return exportedRow;
     });
 
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const colWidths = [{ wch: 5 }, ...fields.map(() => ({ wch: 20 }))];
-    ws["!cols"] = colWidths;
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, activeConfig.title.substring(0, 30));
-    XLSX.writeFile(wb, `${activeConfig.title}_${new Date().toLocaleDateString("en")}.xlsx`);
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    sheet["!cols"] = [{ wch: 6 }, ...fields.map(() => ({ wch: 22 }))];
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, activeConfig.title.slice(0, 28));
+    XLSX.writeFile(
+      book,
+      `${activeConfig.id}_${period.from || "all"}_${period.to || getTodayISO()}.xlsx`
+    );
   };
 
-  const ModIcon = activeConfig.icon || TableProperties;
-  const accentColor = activeConfig.color || "indigo";
+  const activeFields = activeConfig.fields.filter((field) => selectedFields.includes(field.key));
+  const ModuleIcon = activeConfig.icon || TableProperties;
 
-  // ─── Render ──────────────────────────────────
   return (
-    <div className={clsx("max-w-7xl mx-auto space-y-4 pb-20 animate-in fade-in duration-500", T.text)} dir="rtl">
-      <BrandHeader sectionTitle="محرك التقارير المخصصة" sectionHint="فلترة متقدمة وتخصيص أعمدة وتصدير" />
+    <div className={clsx("max-w-7xl mx-auto space-y-4 pb-20", T.text)} dir="rtl">
+      <BrandHeader sectionTitle="مركز التقارير المخصصة" sectionHint="تجميع وطباعة وتحليل شامل لكل وحدات المنظومة" />
 
-      {/* ── رأس الصفحة ── */}
-      <div className={clsx(
-        "p-5 rounded-2xl border shadow-sm text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4",
-        `bg-gradient-to-l from-${accentColor}-700 to-${accentColor}-900`
-      )}>
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-white/10 backdrop-blur-md rounded-2xl">
-            <ModIcon size={24}/>
-          </div>
-          <div>
-            <h1 className="text-xl font-black tracking-tight">محرك التقارير المخصصة</h1>
-            <p className="text-xs font-bold opacity-80 mt-0.5">فلترة متقدمة · تخصيص أعمدة · تصدير PDF / Excel</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={clsx(
-            "text-[10px] font-black px-3 py-1.5 rounded-xl",
-            "bg-white/20 backdrop-blur-sm"
-          )}>
-            {activeConfig.title}
-          </span>
-        </div>
-      </div>
+      <div className={clsx("rounded-[2rem] border shadow-sm overflow-hidden", T.card)}>
+        <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="border-l border-slate-100 dark:border-slate-800 p-4 space-y-4 bg-slate-50/50 dark:bg-slate-900/20">
+            <div className="rounded-2xl border border-teal-100 dark:border-teal-900/40 bg-white dark:bg-slate-900 p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-2xl bg-teal-500/10 text-teal-600">
+                  <Layers size={20} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-slate-800 dark:text-slate-100">وحدات التقارير</h2>
+                  <p className="text-[10px] font-bold text-slate-400 mt-1">
+                    تم توحيد الفرز والطباعة على A4 لكل تقرير داخل هذه الشاشة.
+                  </p>
+                </div>
+              </div>
+            </div>
 
-      {/* ── Grid الرئيسي ── */}
-      <div className="flex flex-col lg:flex-row gap-4">
-
-        {/* ── لوحة الإعدادات ── */}
-        <div className={clsx(
-          "lg:w-64 shrink-0 space-y-3 transition-all",
-          !showConfig && "lg:w-12"
-        )}>
-          {/* زر إخفاء الإعدادات */}
-          <button onClick={() => setShowConfig(p => !p)}
-            className={clsx("hidden lg:flex items-center gap-2 text-[10px] font-black text-slate-500 hover:text-teal-600 transition-all w-full", !showConfig && "justify-center")}>
-            <SlidersHorizontal size={14}/>
-            {showConfig && "إخفاء الإعدادات"}
-          </button>
-
-          {showConfig && (
-            <>
-              {/* اختيار الوحدة */}
-              <div className={clsx("p-4 rounded-2xl border shadow-sm space-y-2", T.card)}>
-                <h3 className="text-[10px] font-black flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
-                  <Layers size={13} className={`text-${accentColor}-500`}/> مصدر البيانات
-                </h3>
-                <div className="flex flex-col gap-1.5 pt-1">
-                  {Object.values(REPORT_MODULES).map(mod => {
-                    const Icon = mod.icon;
-                    const active = selectedModule === mod.id;
+            {REPORT_GROUPS.map((group) => (
+              <div key={group.id} className={clsx("rounded-2xl border p-3 shadow-sm", T.card)}>
+                <div className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">
+                  {group.label}
+                </div>
+                <div className="space-y-2">
+                  {group.moduleIds.map((moduleId) => {
+                    const moduleConfig = REPORT_MODULES[moduleId];
+                    const Icon = moduleConfig.icon || TableProperties;
+                    const isActive = selectedModule === moduleId;
                     return (
-                      <button key={mod.id} onClick={() => setSelectedModule(mod.id)}
+                      <button
+                        key={moduleId}
+                        onClick={() => setSelectedModule(moduleId)}
                         className={clsx(
-                          "p-2.5 rounded-xl text-right text-[10px] font-black transition-all border flex items-center gap-2",
-                          active
-                            ? `bg-${mod.color}-50 border-${mod.color}-400 text-${mod.color}-700 dark:bg-${mod.color}-900/20 dark:text-${mod.color}-400`
-                            : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700"
-                        )}>
-                        <Icon size={13} className={active ? `text-${mod.color}-600` : "text-slate-400"}/>
-                        <span className="truncate">{mod.title}</span>
+                          "w-full text-right px-3 py-3 rounded-xl border transition-all flex items-start gap-3",
+                          isActive
+                            ? "bg-teal-500/10 border-teal-400 text-teal-700 dark:text-teal-300"
+                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-teal-300"
+                        )}
+                      >
+                        <div className={clsx("p-2 rounded-xl shrink-0", isActive ? "bg-teal-500 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-500")}>
+                          <Icon size={14} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-black">{moduleConfig.title}</div>
+                          <div className="text-[10px] font-bold opacity-75 mt-1 line-clamp-2">
+                            {moduleConfig.subtitle}
+                          </div>
+                        </div>
                       </button>
                     );
                   })}
                 </div>
               </div>
+            ))}
 
-              {/* فلتر التاريخ */}
-              {activeConfig.dateField && (
-                <div className={clsx("p-4 rounded-2xl border shadow-sm space-y-3", T.card)}>
-                  <h3 className="text-[10px] font-black flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
-                    <Calendar size={13} className={`text-${accentColor}-500`}/> النطاق الزمني
-                  </h3>
-                  <div className="space-y-2 pt-1">
-                    <div>
-                      <label className="text-[9px] font-bold text-slate-500 block mb-1">من تاريخ:</label>
-                      <ArabicDatePicker label="" value={dateRange.from}
-                        onChange={v => setDateRange(p => ({ ...p, from: v }))}
-                        maxVal={dateRange.to || undefined}/>
+            <div className={clsx("rounded-2xl border p-3 shadow-sm", T.card)}>
+              <div className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">
+                الأعمدة الظاهرة
+              </div>
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {activeConfig.fields.map((field) => (
+                  <label key={field.key} className="flex items-center gap-2 text-[11px] font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedFields.includes(field.key)}
+                      onChange={() => toggleField(field.key)}
+                      className="accent-teal-600 w-4 h-4"
+                    />
+                    <span className={selectedFields.includes(field.key) ? "text-slate-700 dark:text-slate-200" : "text-slate-400"}>
+                      {field.label}
+                      {field.currency ? <span className="text-emerald-500 mr-1">قيمة</span> : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </aside>
+
+          <section className="p-4 md:p-5 space-y-4">
+            <div className="rounded-[2rem] border border-slate-100 dark:border-slate-800 overflow-hidden">
+              <div className="p-5 bg-[radial-gradient(circle_at_top_right,_rgba(20,184,166,0.18),_transparent_32%),linear-gradient(135deg,rgba(15,23,42,0.02),rgba(255,255,255,0.92))] dark:bg-[radial-gradient(circle_at_top_right,_rgba(20,184,166,0.14),_transparent_32%),linear-gradient(135deg,rgba(15,23,42,0.75),rgba(15,23,42,0.92))]">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-start gap-4">
+                    <div className="p-3 rounded-2xl bg-white/80 dark:bg-slate-900/50 text-teal-600 shadow-sm">
+                      <ModuleIcon size={24} />
                     </div>
                     <div>
-                      <label className="text-[9px] font-bold text-slate-500 block mb-1">إلى تاريخ:</label>
-                      <ArabicDatePicker label="" value={dateRange.to}
-                        onChange={v => setDateRange(p => ({ ...p, to: v }))}
-                        minVal={dateRange.from || undefined}/>
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <span className="px-2.5 py-1 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 text-[10px] font-black border border-teal-200 dark:border-teal-800/50">
+                          شاشة التقارير
+                        </span>
+                        <span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 text-[10px] font-black border border-slate-200 dark:border-slate-700">
+                          A4 {activeConfig.orientation === "portrait" ? "عمودي" : "أفقي"}
+                        </span>
+                      </div>
+                      <h1 className="text-xl md:text-2xl font-black text-slate-800 dark:text-slate-100">
+                        {activeConfig.title}
+                      </h1>
+                      <p className="text-[11px] md:text-xs font-bold text-slate-500 dark:text-slate-400 mt-2 max-w-3xl">
+                        {activeConfig.subtitle}
+                      </p>
+                      <p className="text-[10px] font-black text-teal-700 dark:text-teal-300 mt-3">
+                        ترتيب الفرز المعتمد: {activeConfig.sortLabel}
+                      </p>
                     </div>
-                    {(dateRange.from || dateRange.to) && (
-                      <button onClick={() => setDateRange({ from: "", to: "" })}
-                        className="flex items-center gap-1 text-[9px] font-black text-rose-500 hover:text-rose-600">
-                        <X size={10}/> مسح الفترة
-                      </button>
-                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={exportToExcel}
+                      disabled={filteredRows.length === 0}
+                      className="px-4 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-black text-[11px] flex items-center gap-2 border border-emerald-200 disabled:opacity-50"
+                    >
+                      <Download size={14} />
+                      Excel
+                    </button>
+                    <button
+                      onClick={() =>
+                        renderPrintReport({
+                          config: activeConfig,
+                          rows: filteredRows,
+                          selectedFields,
+                          period,
+                          summary,
+                        })
+                      }
+                      disabled={filteredRows.length === 0}
+                      className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl font-black text-[11px] flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <Printer size={14} />
+                      طباعة التقرير
+                    </button>
                   </div>
                 </div>
-              )}
+              </div>
+            </div>
 
-              {/* الأعمدة */}
-              <div className={clsx("p-4 rounded-2xl border shadow-sm space-y-2", T.card)}>
-                <h3 className="text-[10px] font-black flex items-center gap-1.5 border-b pb-2 border-slate-100 dark:border-slate-800">
-                  <Columns size={13} className={`text-${accentColor}-500`}/> الأعمدة المعروضة
-                </h3>
-                <div className="space-y-1.5 pt-1">
-                  {activeConfig.fields.map(f => (
-                    <label key={f.key} className="flex items-center gap-2 cursor-pointer group">
-                      <input type="checkbox" checked={selectedFields.includes(f.key)} onChange={() => toggleField(f.key)}
-                        className={`accent-${accentColor}-600 w-3.5 h-3.5`}/>
-                      <span className={clsx("text-[10px] font-bold transition-colors", selectedFields.includes(f.key) ? "text-slate-700 dark:text-slate-300" : "text-slate-400")}>
-                        {f.label}
-                        {f.isCurrency && <span className="text-emerald-500 mr-1 text-[8px]">قيمة</span>}
-                      </span>
-                    </label>
-                  ))}
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className={clsx("rounded-2xl border p-4 shadow-sm", T.card)}>
+                <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black mb-2">
+                  <TableProperties size={14} />
+                  السجلات المطابقة
+                </div>
+                <div className="text-3xl font-black text-teal-600">{summary.count}</div>
+              </div>
+              <div className={clsx("rounded-2xl border p-4 shadow-sm", T.card)}>
+                <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black mb-2">
+                  <Calendar size={14} />
+                  الفترة الفعلية
+                </div>
+                <div className="text-sm font-black text-slate-800 dark:text-slate-100 leading-6">
+                  {period.from || "—"}<br />{period.to || "—"}
                 </div>
               </div>
-            </>
-          )}
-        </div>
-
-        {/* ── منطقة التقرير ── */}
-        <div className="flex-1 min-w-0 flex flex-col gap-3">
-
-          {/* بطاقات الملخص */}
-          {summary.currencyFields.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              <div className={clsx("flex items-center gap-2 p-3 rounded-xl border shadow-sm", T.card)}>
-                <div className={clsx("p-2 rounded-lg", `bg-${accentColor}-500/10`)}>
-                  <Filter size={14} className={`text-${accentColor}-500`}/>
+              <div className={clsx("rounded-2xl border p-4 shadow-sm", T.card)}>
+                <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black mb-2">
+                  <Columns size={14} />
+                  الأعمدة النشطة
                 </div>
-                <div>
-                  <p className="text-[9px] font-black text-slate-500">إجمالي السجلات</p>
-                  <p className={clsx("text-xl font-black", `text-${accentColor}-600 dark:text-${accentColor}-400`)}>{summary.count}</p>
+                <div className="text-3xl font-black text-sky-600">{activeFields.length}</div>
+              </div>
+              <div className={clsx("rounded-2xl border p-4 shadow-sm", T.card)}>
+                <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black mb-2">
+                  <Filter size={14} />
+                  الترتيب المعتمد
+                </div>
+                <div className="text-[11px] font-black text-slate-700 dark:text-slate-200 leading-5">
+                  {activeConfig.sortLabel}
                 </div>
               </div>
-              {summary.currencyFields.map(f => (
-                <div key={f.key} className={clsx("flex items-center gap-2 p-3 rounded-xl border shadow-sm", T.card)}>
-                  <div className="p-2 rounded-lg bg-emerald-500/10">
-                    <DollarSign size={14} className="text-emerald-500"/>
+            </div>
+
+            {summary.currencyFields.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                {summary.currencyFields.map((field) => (
+                  <div key={field.key} className={clsx("rounded-2xl border p-4 shadow-sm", T.card)}>
+                    <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black mb-2">
+                      <Wallet size={14} />
+                      {field.label}
+                    </div>
+                    <div className="text-xl font-black text-emerald-600">
+                      {formatDisplayValue(field, summary.totals[field.key] || 0)}
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-[9px] font-black text-slate-500 truncate">{f.label}</p>
-                    <p className="text-base font-black text-emerald-600">
-                      {formatMoney(summary.totals[f.key] || 0)}
-                    </p>
+                ))}
+              </div>
+            )}
+
+            <div className={clsx("rounded-2xl border shadow-sm p-4 space-y-3", T.card)}>
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto_auto] gap-3 items-end">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase">
+                    البحث داخل التقرير
+                  </label>
+                  <div className="relative">
+                    <Search size={15} className="absolute right-3 top-2.5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={searchQ}
+                      onChange={(event) => setSearchQ(event.target.value)}
+                      placeholder={activeConfig.searchPlaceholder}
+                      className={clsx("w-full pr-10 pl-4 py-2.5 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 focus:ring-teal-500", T.inp)}
+                    />
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
 
-          {/* شريط الإجراءات */}
-          <div className={clsx("p-3 rounded-2xl border shadow-sm flex flex-wrap justify-between items-center gap-3", T.card)}>
-            <div className="flex items-center gap-2">
-              <span className={clsx(
-                "text-[10px] font-black px-3 py-1.5 rounded-lg border",
-                `bg-${accentColor}-50 text-${accentColor}-700 border-${accentColor}-200`,
-                "dark:bg-opacity-20 dark:text-opacity-90"
-              )}>
-                {filteredData.length} سجل
-              </span>
-              {filteredData.length > 50 && (
-                <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
-                  معاينة أول 50 — الطباعة/التصدير: كاملة
-                </span>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <button onClick={exportToExcel} disabled={filteredData.length === 0}
-                className="px-4 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-black text-[10px] flex items-center gap-1.5 border border-emerald-200 transition-all active:scale-95 disabled:opacity-50 h-[36px]">
-                <Download size={13}/> Excel
-              </button>
-              <button onClick={() => printReport(filteredData, activeConfig, selectedFields)} disabled={filteredData.length === 0}
-                className={clsx(
-                  "px-5 py-2 text-white rounded-xl font-black text-[10px] shadow-md active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50 h-[36px]",
-                  `bg-${accentColor}-600 hover:bg-${accentColor}-700`
-                )}>
-                <Printer size={13}/> طباعة التقرير
-              </button>
-            </div>
-          </div>
-
-          {/* الجدول */}
-          <div className={clsx("flex-1 rounded-2xl border shadow-sm overflow-hidden", T.card)}>
-            {/* تلميح موبايل */}
-            <div className="md:hidden flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100">
-              <span className="text-[9px] font-bold text-amber-600">← اسحب يساراً للمزيد</span>
-            </div>
-
-            {loading ? (
-              <div className="flex flex-col items-center justify-center p-16 gap-3 text-slate-400">
-                <RefreshCw size={28} className={clsx("animate-spin", `text-${accentColor}-400`)}/>
-                <p className="text-xs font-black">جاري تجميع البيانات...</p>
-              </div>
-            ) : filteredData.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-16 text-slate-400 m-4 border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-2xl">
-                <Filter size={36} className="mb-3 opacity-30"/>
-                <p className="text-sm font-black">لا توجد بيانات</p>
-                <p className="text-[10px] font-bold mt-1 opacity-70">جرّب تغيير النطاق الزمني أو المصدر</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-right text-xs min-w-[500px]">
-                  <thead className={clsx("border-b", `bg-${accentColor}-900 dark:bg-${accentColor}-950`)}>
-                    <tr>
-                      <th className="p-3 font-black text-white w-10 text-center">#</th>
-                      {activeConfig.fields.filter(f => selectedFields.includes(f.key)).map(f => (
-                        <th key={f.key} className="p-3 font-black text-white whitespace-nowrap">{f.label}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
-                    {filteredData.slice(0, 50).map((row, i) => (
-                      <tr key={i} className={clsx("hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors", i % 2 !== 0 && "bg-slate-50/40 dark:bg-slate-900/10")}>
-                        <td className="p-3 font-bold text-slate-400 text-center">{i + 1}</td>
-                        {activeConfig.fields.filter(f => selectedFields.includes(f.key)).map(f => {
-                          let val = row[f.key];
-                          if (f.format) val = f.format(val);
-                          return (
-                            <td key={f.key} className={clsx(
-                              "p-3 font-bold whitespace-nowrap max-w-[200px] truncate",
-                              f.isCurrency ? "text-emerald-600 font-black" : "text-slate-700 dark:text-slate-300"
-                            )}>
-                              {f.isCurrency ? formatMoney(val) : (val ?? "—")}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                  {/* صف الإجماليات في الجدول */}
-                  {summary.currencyFields.length > 0 && (
-                    <tfoot>
-                      <tr className={clsx("font-black border-t-2", `border-${accentColor}-900 bg-${accentColor}-50 dark:bg-${accentColor}-900/10`)}>
-                        <td className="p-3 text-right text-[10px] font-black text-slate-600 dark:text-slate-400"
-                          colSpan={selectedFields.length - summary.currencyFields.filter(f => selectedFields.includes(f.key)).length + 1}>
-                          الإجمالي:
-                        </td>
-                        {activeConfig.fields.filter(f => f.isCurrency && selectedFields.includes(f.key)).map(f => (
-                          <td key={f.key} className="p-3 text-emerald-700 font-black whitespace-nowrap">
-                            {formatMoney(summary.totals[f.key] || 0)}
-                          </td>
-                        ))}
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-                {filteredData.length > 50 && (
-                  <div className="p-2.5 text-center text-[10px] font-black text-slate-400 bg-slate-50 dark:bg-slate-800/50 border-t">
-                    معاينة أول 50 سجل — الطباعة/التصدير يشمل جميع السجلات ({filteredData.length})
+                {activeConfig.dateField ? (
+                  <>
+                    <div className="w-full xl:w-44">
+                      <ArabicDatePicker
+                        label="من تاريخ"
+                        value={dateRange.from}
+                        onChange={(value) => setDateRange((prev) => ({ ...prev, from: value }))}
+                        maxVal={dateRange.to || undefined}
+                      />
+                    </div>
+                    <div className="w-full xl:w-44">
+                      <ArabicDatePicker
+                        label="إلى تاريخ"
+                        value={dateRange.to}
+                        onChange={(value) => setDateRange((prev) => ({ ...prev, to: value }))}
+                        minVal={dateRange.from || undefined}
+                        maxVal={getTodayISO()}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="xl:col-span-2 flex items-end">
+                    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-4 py-2.5 text-[11px] font-black text-slate-500">
+                      هذا التقرير لا يعتمد فترة زمنية مباشرة.
+                    </div>
                   </div>
                 )}
               </div>
-            )}
-          </div>
+
+              {(searchQ || dateRange.from || dateRange.to) && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSearchQ("");
+                      setDateRange({ from: "", to: "" });
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200 text-[10px] font-black"
+                  >
+                    مسح الفلاتر
+                  </button>
+                  <span className="text-[10px] font-bold text-slate-400">
+                    تم تطبيق فلاتر على بيانات التقرير الحالية.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className={clsx("rounded-2xl border shadow-sm overflow-hidden", T.card)}>
+              <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <FileText size={15} className="text-teal-600" />
+                  <span className="text-[11px] font-black">
+                    معاينة التقرير ({filteredRows.length})
+                  </span>
+                </div>
+                {filteredRows.length > previewRows.length && (
+                  <span className="text-[10px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
+                    المعاينة تعرض أول {previewRows.length} سجل فقط، والطباعة تشمل الكل
+                  </span>
+                )}
+              </div>
+
+              {loading ? (
+                <div className="flex flex-col items-center justify-center p-20 gap-3 text-slate-400">
+                  <RefreshCw size={30} className="animate-spin text-teal-500" />
+                  <p className="font-black text-sm">جاري تحميل بيانات التقرير...</p>
+                </div>
+              ) : filteredRows.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-20 gap-3 text-slate-400">
+                  <FileText size={32} className="opacity-30" />
+                  <p className="font-black text-sm">{activeConfig.emptyMessage}</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-[11px] min-w-[820px]">
+                    <thead className="bg-slate-900 text-white">
+                      <tr>
+                        <th className="p-3 w-12 text-center font-black">#</th>
+                        {activeFields.map((field) => (
+                          <th key={field.key} className="p-3 font-black whitespace-nowrap">
+                            {field.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                      {previewRows.map((row, index) => (
+                        <tr key={row.id || `${selectedModule}-${index}`} className={index % 2 === 0 ? "" : "bg-slate-50/60 dark:bg-slate-900/20"}>
+                          <td className="p-3 text-center font-black text-slate-400">{index + 1}</td>
+                          {activeFields.map((field) => (
+                            <td
+                              key={`${row.id || index}-${field.key}`}
+                              className={clsx(
+                                "p-3 font-bold whitespace-nowrap max-w-[280px] truncate",
+                                field.currency
+                                  ? "text-emerald-600 font-black text-left"
+                                  : "text-slate-700 dark:text-slate-200"
+                              )}
+                              title={formatDisplayValue(field, row[field.key])}
+                            >
+                              {formatDisplayValue(field, row[field.key])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                    {summary.currencyFields.some((field) => selectedFields.includes(field.key)) && (
+                      <tfoot>
+                        <tr className="bg-slate-100 dark:bg-slate-800/80 border-t-2 border-slate-300 dark:border-slate-700">
+                          <td className="p-3 text-center font-black text-slate-500">#</td>
+                          {activeFields.map((field, index) => (
+                            <td
+                              key={`total-${field.key}`}
+                              className={clsx(
+                                "p-3 font-black",
+                                field.currency ? "text-emerald-600 text-left" : "text-slate-500"
+                              )}
+                            >
+                              {index === 0
+                                ? "الإجمالي"
+                                : field.currency
+                                  ? formatDisplayValue(field, summary.totals[field.key] || 0)
+                                  : "—"}
+                            </td>
+                          ))}
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -585,7 +537,7 @@ function ReportBuilderInner() {
 export default function ReportBuilder() {
   return (
     <ErrorBoundary>
-      <ReportBuilderInner/>
+      <ReportBuilderInner />
     </ErrorBoundary>
   );
 }

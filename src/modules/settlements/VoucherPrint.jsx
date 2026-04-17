@@ -29,6 +29,7 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
       <title>تسوية عهدة - ${advanceTxn?.employeeName || advanceTxn?.party}</title>
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+        @page { size:A4 portrait; margin:10mm; }
         * { font-family: 'Cairo', sans-serif; margin: 0; padding: 0; box-sizing: border-box; direction: rtl; }
         body { padding: 30px; color: #1e293b; background: #fff; }
         .badge { display: inline-block; padding: 5px 15px; background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 20px; font-size: 12px; font-weight: 700; color: #0f766e; }

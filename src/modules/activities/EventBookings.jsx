@@ -87,6 +87,7 @@ const printManifest = (event, bookings) => {
   win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف حضور — ${event.title}</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+    @page{size:A4 landscape;margin:10mm}
     *{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}
     body{padding:25px;font-size:12px;color:#1e293b;}
     table{width:100%;border-collapse:collapse;}

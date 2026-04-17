@@ -18,6 +18,7 @@ const PRINT_FONT = `@import url('https://fonts.googleapis.com/css2?family=Cairo:
 const PRINT_BASE = (title) => `<!DOCTYPE html><html dir="rtl" lang="ar"><head>
 <meta charset="UTF-8"><title>${title}</title>
 <style>${PRINT_FONT}
+@page{size:A4 portrait;margin:12mm}
 *{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box}
 body{padding:32px 42px;color:#1e293b;font-size:14px;line-height:1.6}
 .wm{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:100px;color:rgba(13,148,136,.03);font-weight:800;pointer-events:none;white-space:nowrap;z-index:0}

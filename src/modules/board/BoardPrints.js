@@ -6,6 +6,7 @@ const printBase = (title) => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><me
 <title>${title}</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+@page{size:A4 landscape;margin:10mm}
 *{font-family:'Cairo',sans-serif;box-sizing:border-box}
 body{margin:0;padding:24px;color:#0f172a;font-size:12px}
 .meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:12px 14px;margin-bottom:16px}

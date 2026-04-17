@@ -62,6 +62,10 @@ const printFinancialReport = (events, bookingsMap) => {
   const win = openPrintWindow("events-financial-report", "width=1200,height=900");
   if (!win) return;
   const today = new Date().toLocaleDateString("ar-EG", { dateStyle: "full" });
+  const eventDates = events.map((event) => event?.date).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const periodMeta = eventDates.length > 0
+    ? `الفترة: ${eventDates[0]} إلى ${eventDates[eventDates.length - 1]}`
+    : "";
   let totalRevenue = 0, totalBookings = 0, totalPax = 0;
 
   const rows = events.map((ev) => {
@@ -84,6 +88,7 @@ const printFinancialReport = (events, bookingsMap) => {
   win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>التقرير المالي الشامل</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+    @page{size:A4 landscape;margin:10mm}
     * { font-family:'Cairo',sans-serif; box-sizing:border-box; margin:0; padding:0; }
     body { padding:30px; font-size:12px; background:#fff; color:#1e293b; }
     .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:20px; }
@@ -95,7 +100,7 @@ const printFinancialReport = (events, bookingsMap) => {
     tfoot td { background:#f8fafc; font-weight:900; }
     ${getPrintBrandStyles()}
   </style></head><body>
-  ${getPrintBrandHeader({ reportTitle: 'التقرير المالي الشامل للفعاليات', reportMeta: `تاريخ الإصدار: ${today}` })}
+  ${getPrintBrandHeader({ reportTitle: 'التقرير المالي الشامل للفعاليات', reportMeta: [periodMeta, `تاريخ الإصدار: ${today}`].filter(Boolean).join(' | ') })}
   <div class="kpis">
     <div class="kpi"><div class="val">${events.length}</div><div>إجمالي الفعاليات</div></div>
     <div class="kpi"><div class="val">${totalBookings.toLocaleString()}</div><div>حجوزات مؤكدة</div></div>
@@ -121,7 +126,7 @@ const printEventDetail = (event, bookings) => {
 
   const rows = confirmed.map((b, i) => `<tr><td style="text-align:center">${i + 1}</td><td><strong>${b.memberName}</strong><br><small>كود: ${b.memberId} | ${b.memberPhone || "—"}</small>${b.companionsList?.length ? `<div style="font-size:10px;color:#6366f1;margin-top:3px">${b.companionsList.map(c => `· ${c.name} (${c.relation})`).join(" ")}</div>` : ""}</td><td style="text-align:center">${b.totalPax}</td><td style="text-align:center; color:#059669; font-weight:900">${formatMoney(b.totalCost)}</td><td style="text-align:center; font-size:10px">${b.paymentSummary || "مجاني"}</td><td style="text-align:center"></td></tr>`).join("");
 
-  win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف الفعالية: ${event.title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}body{padding:25px;font-size:12px;}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:15px 0;}.m{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;text-align:center;}.m .v{font-size:18px;font-weight:900;color:#4f46e5;}.m .l{font-size:9px;color:#64748b;font-weight:700;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:9px;text-align:center;}td{padding:8px;border:1px solid #e2e8f0;vertical-align:top;}${getPrintBrandStyles()}</style></head><body>${getPrintBrandHeader({ reportTitle: `كشف فعالية: ${event.title}`, reportMeta: `${event.type} | التاريخ: ${event.date} | ${event.location || ""}` })}<div class="meta"><div class="m"><div class="v">${totalPax}</div><div class="l">إجمالي الأفراد</div></div><div class="m"><div class="v">${confirmed.length}</div><div class="l">حجوزات مؤكدة</div></div><div class="m"><div class="v">${pending.length}</div><div class="l">حجوزات معلقة</div></div><div class="m"><div class="v" style="color:#059669">${formatMoney(totalRev)}</div><div class="l">إجمالي الإيراد</div></div></div><table><thead><tr><th>#</th><th>المشترك والمرافقين</th><th>الأفراد</th><th>التكلفة</th><th>الدفع</th><th>توقيع حضور</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8">لا توجد حجوزات مؤكدة</td></tr>`}</tbody></table>${cancelled.length > 0 ? `<p style="margin-top:15px;font-size:10px;color:#ef4444;font-weight:700">⚠ الملغيون (${cancelled.length}): ${cancelled.map(b=>b.memberName).join("، ")}</p>` : ""}<div style="margin-top:25px;display:flex;justify-content:space-between;font-size:11px;color:#64748b;"><span>مشرف الفعالية: ${Array.isArray(event.supervisors) ? event.supervisors.join("، ") : (event.supervisors || "—")}</span><span>توقيع المشرف: .........................</span></div><script>window.onload=()=>setTimeout(()=>window.print(),600);</script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف الفعالية: ${event.title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');@page{size:A4 landscape;margin:10mm}*{font-family:'Cairo',sans-serif;box-sizing:border-box;margin:0;padding:0;}body{padding:25px;font-size:12px;}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:15px 0;}.m{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;text-align:center;}.m .v{font-size:18px;font-weight:900;color:#4f46e5;}.m .l{font-size:9px;color:#64748b;font-weight:700;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:9px;text-align:center;}td{padding:8px;border:1px solid #e2e8f0;vertical-align:top;}${getPrintBrandStyles()}</style></head><body>${getPrintBrandHeader({ reportTitle: `كشف فعالية: ${event.title}`, reportMeta: `${event.type} | التاريخ: ${event.date} | ${event.location || ""}` })}<div class="meta"><div class="m"><div class="v">${totalPax}</div><div class="l">إجمالي الأفراد</div></div><div class="m"><div class="v">${confirmed.length}</div><div class="l">حجوزات مؤكدة</div></div><div class="m"><div class="v">${pending.length}</div><div class="l">حجوزات معلقة</div></div><div class="m"><div class="v" style="color:#059669">${formatMoney(totalRev)}</div><div class="l">إجمالي الإيراد</div></div></div><table><thead><tr><th>#</th><th>المشترك والمرافقين</th><th>الأفراد</th><th>التكلفة</th><th>الدفع</th><th>توقيع حضور</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8">لا توجد حجوزات مؤكدة</td></tr>`}</tbody></table>${cancelled.length > 0 ? `<p style="margin-top:15px;font-size:10px;color:#ef4444;font-weight:700">⚠ الملغيون (${cancelled.length}): ${cancelled.map(b=>b.memberName).join("، ")}</p>` : ""}<div style="margin-top:25px;display:flex;justify-content:space-between;font-size:11px;color:#64748b;"><span>مشرف الفعالية: ${Array.isArray(event.supervisors) ? event.supervisors.join("، ") : (event.supervisors || "—")}</span><span>توقيع المشرف: .........................</span></div><script>window.onload=()=>setTimeout(()=>window.print(),600);</script></body></html>`);
   win.document.close();
 };
 
