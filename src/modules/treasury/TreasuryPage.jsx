@@ -37,7 +37,10 @@ import {
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
+import { useAuth } from "../../app/providers/AuthProvider";
 import { formatMoney } from "../../utils/numberFormat";
+import { logAuditEvent } from "../../utils/auditLog";
+import { filterDataByScope, PERMISSIONS } from "../../security/permissions";
 import clsx from "clsx";
 
 const TYPE_LABELS = {
@@ -122,10 +125,11 @@ function StatCard({ label, value, icon: Icon, color, sub }) {
   );
 }
 
-export default function TreasuryPage({ userRole = "treasurer" }) {
+export default function TreasuryPage() {
   const T = useT();
   const navigate = useNavigate();
   const location = useLocation();
+  const { userRole, can, user } = useAuth();
 
   const [transactions, setTransactions] = useState([]);
   const [issuedChecks, setIssuedChecks] = useState([]);
@@ -143,6 +147,11 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
 
   const { deleteTransaction, saveTransaction, migrateLegacyChecksToIssuedChecks } =
     useTreasuryService();
+  const canCreateFinancial = can(PERMISSIONS.treasuryCreate);
+  const canEditFinancial = can(PERMISSIONS.treasuryEdit);
+  const canDeleteFinancial = can(PERMISSIONS.treasuryDelete);
+  const canMigrateLegacy = can(PERMISSIONS.treasuryMigrate);
+  const canViewAttachments = can(PERMISSIONS.attachmentsView);
 
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
@@ -160,13 +169,13 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
       setFilterState("all");
     }
 
-    if (requestedType && TYPE_LABELS[requestedType]) {
+    if (requestedType && TYPE_LABELS[requestedType] && canCreateFinancial) {
       setShowForm(true);
       setSelectedTx(null);
     } else if (!selectedTx) {
       setShowForm(false);
     }
-  }, [location.search, selectedTx]);
+  }, [location.search, selectedTx, canCreateFinancial]);
 
   useEffect(() => {
     let checksReady = false;
@@ -278,8 +287,9 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
 
   const visible = useMemo(() => {
     const queryText = searchQ.trim().toLowerCase();
+    const scopedTransactions = filterDataByScope(transactions, "treasury", user);
 
-    return transactions
+    return scopedTransactions
       .filter((t) => filterType === "all" || t.type === filterType)
       .filter((t) => filterState === "all" || (t.state || "posted") === filterState)
       .filter((t) => {
@@ -308,7 +318,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
 
         return String(getTxCheckRef(a)).localeCompare(String(getTxCheckRef(b)), "ar");
       });
-  }, [transactions, filterType, filterState, searchQ]);
+  }, [transactions, filterType, filterState, searchQ, user]);
 
   const handleCloseForm = useCallback(() => {
     setShowForm(false);
@@ -317,11 +327,21 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   }, [navigate]);
 
   const handleSave = async (data, isEdit) => {
+    if ((isEdit && !canEditFinancial) || (!isEdit && !canCreateFinancial)) {
+      showToast("لا تملك صلاحية تنفيذ هذا الإجراء المالي", "error");
+      return;
+    }
     try {
-      const savedId = await saveTransaction(data);
+      const payload = {
+        ...data,
+        createdBy: data.createdBy || user?.displayName || user?.fullName || "",
+        createdById: data.createdById || user?.id || "",
+        userId: data.userId || user?.id || "",
+      };
+      const savedId = await saveTransaction(payload);
       const targetCollection = isDirectFinanceType(data.type) ? "transactions" : "issued_checks";
       const savedRecord = {
-        ...data,
+        ...payload,
         id: savedId,
         type: normalizeIssuedCheckType(data.type),
         sourceCollection: targetCollection,
@@ -341,6 +361,16 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
       }
 
       const savedLabel = data.type === "bank_charge" ? "الحركة المالية المباشرة" : "الشيك";
+      await logAuditEvent(isEdit ? "treasury.update" : "treasury.create", {
+        targetId: savedId,
+        after: {
+          type: payload.type,
+          amount: payload.amount,
+          party: payload.party || payload.beneficiaryName,
+        },
+        riskLevel: isEdit ? "medium" : "high",
+        page: "/treasury/admin",
+      });
       showToast(isEdit ? `تم تحديث ${savedLabel} بنجاح` : `تم حفظ ${savedLabel} بنجاح`);
 
       if (isEdit) {
@@ -356,12 +386,20 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   };
 
   const handleEdit = (tx) => {
+    if (!canEditFinancial) {
+      showToast("صلاحية التعديل غير متاحة لدورك الحالي", "error");
+      return;
+    }
     setSelectedTx(tx);
     setShowForm(true);
   };
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
+    if (!canDeleteFinancial) {
+      showToast("صلاحية الحذف المالي غير متاحة", "error");
+      return;
+    }
     try {
       const targetCollection = deleteTarget?.sourceCollection || (isDirectFinanceType(deleteTarget?.type) ? "transactions" : "issued_checks");
       await deleteTransaction(deleteTarget);
@@ -370,6 +408,16 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
       } else {
         setLegacyTransactions((prev) => prev.filter((item) => item.id !== deleteTarget.id));
       }
+      await logAuditEvent("treasury.delete", {
+        targetId: deleteTarget.id,
+        before: {
+          type: deleteTarget.type,
+          amount: deleteTarget.amount,
+          party: deleteTarget.party || deleteTarget.beneficiaryName,
+        },
+        riskLevel: "high",
+        page: "/treasury/admin",
+      });
       setDeleteTarget(null);
       showToast(deleteTarget?.type === "bank_charge" ? "تم حذف الحركة المباشرة بنجاح" : "تم حذف الشيك بنجاح");
     } catch (error) {
@@ -379,11 +427,20 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
   };
 
   const handleMigrateLegacyChecks = async () => {
+    if (!canMigrateLegacy) {
+      showToast("ترحيل السجلات القديمة محصور بأمين الصندوق", "error");
+      return;
+    }
     try {
       setIsMigratingLegacy(true);
       const result = await migrateLegacyChecksToIssuedChecks({
         legacyTransactions,
         issuedChecks,
+      });
+      await logAuditEvent("treasury.migrate_legacy_checks", {
+        migratedCount: result.migratedCount,
+        riskLevel: "high",
+        page: "/treasury/admin",
       });
 
       showToast(
@@ -486,26 +543,28 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
               <h1 className="text-xl font-black">الماليات</h1>
               <p className={clsx("text-xs font-bold mt-1", T.muted)}>إدارة الشيكات الصادرة والخصومات البنكية المباشرة داخل شاشة مالية موحدة مع التوافق مع البيانات السابقة</p>
             </div>
-            <div className="flex gap-2 flex-wrap">
-              <button onClick={() => navigate("/treasury/admin?type=aid")} className="px-4 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-black flex items-center gap-2 hover:bg-rose-700">
-                <Plus size={14} /> شيك إعانة
-              </button>
-              <button onClick={() => navigate("/treasury/admin?type=advance")} className="px-4 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-black flex items-center gap-2 hover:bg-purple-700">
-                <Plus size={14} /> شيك سلفة
-              </button>
-              <button onClick={() => navigate("/treasury/admin?type=trip")} className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-black flex items-center gap-2 hover:bg-indigo-700">
-                <Plus size={14} /> شيك رحلة
-              </button>
-              <button onClick={() => navigate("/treasury/admin?type=event")} className="px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black flex items-center gap-2 hover:bg-amber-700">
-                <Star size={14} /> شيك فاعلية
-              </button>
-              <button onClick={() => navigate("/treasury/admin?type=other")} className="px-4 py-2.5 rounded-xl bg-slate-700 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-800">
-                <Landmark size={14} /> شيك آخر
-              </button>
-              <button onClick={() => navigate("/treasury/admin?type=bank_charge")} className="px-4 py-2.5 rounded-xl bg-slate-500 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-600">
-                <ReceiptText size={14} /> خصم مباشر
-              </button>
-            </div>
+            {canCreateFinancial && (
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={() => navigate("/treasury/admin?type=aid")} className="px-4 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-black flex items-center gap-2 hover:bg-rose-700">
+                  <Plus size={14} /> شيك إعانة
+                </button>
+                <button onClick={() => navigate("/treasury/admin?type=advance")} className="px-4 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-black flex items-center gap-2 hover:bg-purple-700">
+                  <Plus size={14} /> شيك سلفة
+                </button>
+                <button onClick={() => navigate("/treasury/admin?type=trip")} className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-black flex items-center gap-2 hover:bg-indigo-700">
+                  <Plus size={14} /> شيك رحلة
+                </button>
+                <button onClick={() => navigate("/treasury/admin?type=event")} className="px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black flex items-center gap-2 hover:bg-amber-700">
+                  <Star size={14} /> شيك فاعلية
+                </button>
+                <button onClick={() => navigate("/treasury/admin?type=other")} className="px-4 py-2.5 rounded-xl bg-slate-700 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-800">
+                  <Landmark size={14} /> شيك آخر
+                </button>
+                <button onClick={() => navigate("/treasury/admin?type=bank_charge")} className="px-4 py-2.5 rounded-xl bg-slate-500 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-600">
+                  <ReceiptText size={14} /> خصم مباشر
+                </button>
+              </div>
+            )}
           </div>
 
           {migrationPreview.totalLegacy > 0 && (
@@ -537,26 +596,28 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                 </p>
               </div>
 
-              <button
-                onClick={handleMigrateLegacyChecks}
-                disabled={isMigratingLegacy || migrationPreview.pendingCount === 0}
-                className={clsx(
-                  "px-4 py-2.5 rounded-xl text-xs font-black text-white flex items-center justify-center gap-2 min-w-[220px]",
-                  isMigratingLegacy || migrationPreview.pendingCount === 0
-                    ? "bg-slate-400 cursor-not-allowed"
-                    : "bg-teal-600 hover:bg-teal-700"
-                )}
-              >
-                <RefreshCw
-                  size={14}
-                  className={clsx(isMigratingLegacy && "animate-spin")}
-                />
-                {isMigratingLegacy
-                  ? "جارٍ ترحيل السجلات..."
-                  : migrationPreview.pendingCount > 0
-                    ? `ترحيل ${migrationPreview.pendingCount} شيك قديم`
-                    : "كل السجلات القديمة مُرحّلة"}
-              </button>
+              {canMigrateLegacy && (
+                <button
+                  onClick={handleMigrateLegacyChecks}
+                  disabled={isMigratingLegacy || migrationPreview.pendingCount === 0}
+                  className={clsx(
+                    "px-4 py-2.5 rounded-xl text-xs font-black text-white flex items-center justify-center gap-2 min-w-[220px]",
+                    isMigratingLegacy || migrationPreview.pendingCount === 0
+                      ? "bg-slate-400 cursor-not-allowed"
+                      : "bg-teal-600 hover:bg-teal-700"
+                  )}
+                >
+                  <RefreshCw
+                    size={14}
+                    className={clsx(isMigratingLegacy && "animate-spin")}
+                  />
+                  {isMigratingLegacy
+                    ? "جارٍ ترحيل السجلات..."
+                    : migrationPreview.pendingCount > 0
+                      ? `ترحيل ${migrationPreview.pendingCount} شيك قديم`
+                      : "كل السجلات القديمة مُرحّلة"}
+                </button>
+              )}
             </div>
           )}
 
@@ -640,7 +701,7 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-center">
-                        {tx.attachments?.length > 0 ? (
+                        {tx.attachments?.length > 0 && canViewAttachments ? (
                           <button onClick={() => setViewAttachments(tx.attachments)} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-teal-50 hover:text-teal-600 rounded-lg transition-all text-[10px] font-bold">
                             <FileText size={11} /> {tx.attachments.length}
                           </button>
@@ -650,12 +711,16 @@ export default function TreasuryPage({ userRole = "treasurer" }) {
                       </td>
                       <td className="py-3 px-4 text-left">
                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => handleEdit(tx)} title="تعديل" className="p-1.5 text-sky-600 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 rounded-lg transition-colors">
-                            <Edit size={14} />
-                          </button>
-                          <button onClick={() => setDeleteTarget(tx)} title="حذف" className="p-1.5 text-rose-600 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 rounded-lg transition-colors">
-                            <Trash2 size={14} />
-                          </button>
+                          {canEditFinancial && (
+                            <button onClick={() => handleEdit(tx)} title="تعديل" className="p-1.5 text-sky-600 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 rounded-lg transition-colors">
+                              <Edit size={14} />
+                            </button>
+                          )}
+                          {canDeleteFinancial && (
+                            <button onClick={() => setDeleteTarget(tx)} title="حذف" className="p-1.5 text-rose-600 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 rounded-lg transition-colors">
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

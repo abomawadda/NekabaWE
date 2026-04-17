@@ -6,6 +6,8 @@ import React, { useState, useMemo } from "react";
 import { collection, writeBatch, doc, serverTimestamp, query, where, getDocs } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider"; 
 import { useT } from "../../app/providers/ThemeProvider";
+import { useAuth } from "../../app/providers/AuthProvider";
+import { PERMISSIONS } from "../../security/permissions";
 import * as XLSX from "xlsx";
 import { 
   UploadCloud, CheckCircle2, AlertTriangle, RefreshCw, 
@@ -147,6 +149,8 @@ const IMPORT_MODULES = {
 // ════════════════════════════════════════════════════════════
 export default function DataImporter() {
   const T = useT();
+  const { can } = useAuth();
+  const canImport = can(PERMISSIONS.settingsImport);
   const [file, setFile] = useState(null);
   const [dataPreview, setDataPreview] = useState([]);
   const [selectedModule, setSelectedModule] = useState(IMPORT_MODULES.employees.id);
@@ -268,6 +272,10 @@ export default function DataImporter() {
   };
 
   const handleRollback = async () => {
+    if (!canImport) {
+      showToast("لا تملك صلاحية التراجع عن دفعات الاستيراد.", "error");
+      return;
+    }
     if(!lastBatch) return;
     setIsImporting(true);
 
@@ -289,6 +297,10 @@ export default function DataImporter() {
   };
 
   const executeImport = async () => {
+    if (!canImport) {
+      showToast("صلاحية الاستيراد محصورة بإدارة النظام.", "error");
+      return;
+    }
     if (dataPreview.length === 0 || validationStatus.missingColumns.length > 0) return;
 
     setIsImporting(true);

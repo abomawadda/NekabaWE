@@ -2,7 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { collection, query, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
+import { useAuth } from "../../app/providers/AuthProvider";
 import { formatEmployeeDate, getDeathDate, getRetirementDate, isDeceasedMember, isRetiredMember, sortMembersByAgeThenJobId } from "../../utils/memberBenefits";
+import { logAuditEvent } from "../../utils/auditLog";
+import { filterDataByScope, PERMISSIONS } from "../../security/permissions";
 
 import { 
   UserPlus, Search, Eye, Edit3, Trash2, 
@@ -18,6 +21,10 @@ import EmployeeProfile from "./EmployeeProfileFund";
 
 export default function EmployeeDashboard() {
   const T = useT();
+  const { can, user } = useAuth();
+  const canCreateMember = can(PERMISSIONS.employeesCreate);
+  const canEditMember = can(PERMISSIONS.employeesEdit);
+  const canDeleteMember = can(PERMISSIONS.employeesDelete);
 
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -37,14 +44,15 @@ export default function EmployeeDashboard() {
 
   useEffect(() => {
     const unsubEmp = onSnapshot(query(collection(db, "employees")), (snap) => {
-      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const nextEmployees = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setEmployees(filterDataByScope(nextEmployees, "employees", user));
       setLoading(false);
     }, (err) => {
       console.error(err);
       setLoading(false);
     });
     return () => unsubEmp();
-  }, []);
+  }, [user]);
 
   const stats = useMemo(() => {
     let totalActiveCount = 0; 
@@ -200,15 +208,30 @@ export default function EmployeeDashboard() {
     );
   }, [searchQ, employees]);
 
-  const openAddForm = () => { setSelectedEmp(null); setCurrentView("form"); };
-  const openEditForm = (emp) => { setSelectedEmp(emp); setCurrentView("form"); };
+  const openAddForm = () => {
+    if (!canCreateMember) return showToast("ليس لديك صلاحية إضافة أعضاء جدد.", "error");
+    setSelectedEmp(null); setCurrentView("form");
+  };
+  const openEditForm = (emp) => {
+    if (!canEditMember) return showToast("ليس لديك صلاحية تعديل بيانات الأعضاء.", "error");
+    setSelectedEmp(emp); setCurrentView("form");
+  };
   const openProfile = (emp) => { setSelectedEmp(emp); setCurrentView("profile"); };
   const closeToDashboard = () => { setSelectedEmp(null); setCurrentView("dashboard"); };
 
   const handleDelete = async (emp) => {
+    if (!canDeleteMember) {
+      showToast("صلاحية حذف الأعضاء غير متاحة لدورك.", "error");
+      return;
+    }
     if(window.confirm(`هل أنت متأكد من حذف العضو "${emp.name}" نهائياً من قاعدة البيانات؟`)) {
       try {
         await deleteDoc(doc(db, "employees", emp.id));
+        await logAuditEvent("employees.delete", {
+          targetId: emp.id,
+          before: { name: emp.name, jobId: emp.jobId },
+          riskLevel: "high",
+        });
         showToast("تم حذف السجل بنجاح", "success");
       } catch (err) {
         showToast("حدث خطأ أثناء الحذف", "error");
@@ -217,13 +240,27 @@ export default function EmployeeDashboard() {
   };
 
   const handleSaveEmp = async (formData) => {
+    if ((!selectedEmp && !canCreateMember) || (selectedEmp && !canEditMember)) {
+      showToast("ليس لديك صلاحية حفظ هذا التعديل.", "error");
+      return;
+    }
     try {
       if (currentView === 'form' && !selectedEmp) {
         const newDocRef = doc(collection(db, "employees"));
         await setDoc(newDocRef, { ...formData, id: newDocRef.id, createdAt: serverTimestamp() });
+        await logAuditEvent("employees.create", {
+          targetId: newDocRef.id,
+          after: { name: formData.name, jobId: formData.jobId },
+          riskLevel: "medium",
+        });
         showToast("تم تسجيل العضو بنجاح!");
       } else {
         await setDoc(doc(db, "employees", formData.id || selectedEmp.id), { ...formData, updatedAt: serverTimestamp() }, { merge: true });
+        await logAuditEvent("employees.update", {
+          targetId: formData.id || selectedEmp.id,
+          after: { name: formData.name, jobId: formData.jobId },
+          riskLevel: "medium",
+        });
         showToast("تم تحديث السجل بنجاح!");
       }
       closeToDashboard();
