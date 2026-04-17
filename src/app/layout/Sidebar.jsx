@@ -48,6 +48,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
   ];
 
   const reportsLinks = [
+    { label: "التقارير التنفيذية", path: "/reports?mode=executive" },
     { label: "تقارير مخصصة", path: "/reports" },
   ];
 

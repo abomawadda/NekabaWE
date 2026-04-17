@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
+import { useSearchParams } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
@@ -16,6 +17,7 @@ import {
   Printer,
   RefreshCw,
   Search,
+  Sparkles,
   TableProperties,
   Wallet,
 } from "lucide-react";
@@ -52,8 +54,52 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+const EXECUTIVE_REPORTS = [
+  {
+    id: "treasury_ledger",
+    title: "كشف الحركة المالية",
+    description: "نظرة تنفيذية على كامل الوارد والمنصرف والرصيد النهائي.",
+  },
+  {
+    id: "issued_checks",
+    title: "الشيكات الصادرة",
+    description: "متابعة الشيكات حسب النوع والمستفيد وحالة التسوية.",
+  },
+  {
+    id: "settlements",
+    title: "التسويات المعتمدة",
+    description: "مراجعة الشيكات التي أغلقت فعليًا بفواتير وتسويات معتمدة.",
+  },
+  {
+    id: "aids",
+    title: "الإعانات المصروفة",
+    description: "تقرير إداري مباشر بالإعانات وأنواعها والمستفيدين منها.",
+  },
+  {
+    id: "board_allowances",
+    title: "بدلات المجلس",
+    description: "متابعة بدل الجلسات والانتقال والضيافة من التسويات المعتمدة.",
+  },
+  {
+    id: "member_benefits",
+    title: "مزايا الأعضاء",
+    description: "كل ما حصل عليه الأعضاء من دعم ومزايا وخدمات داخل المنظومة.",
+  },
+  {
+    id: "events",
+    title: "الفعاليات والأنشطة",
+    description: "متابعة السعات والحجوزات والتسعير والدعم لكل فعالية.",
+  },
+  {
+    id: "bookings",
+    title: "حجوزات الفعاليات",
+    description: "كشف سريع بالحجوزات والحالة والسداد والتكلفة.",
+  },
+];
+
 function ReportBuilderInner() {
   const T = useT();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedModule, setSelectedModule] = useState("treasury_ledger");
   const [selectedFields, setSelectedFields] = useState([]);
   const [sourceData, setSourceData] = useState({});
@@ -62,6 +108,17 @@ function ReportBuilderInner() {
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
 
   const activeConfig = REPORT_MODULES[selectedModule];
+  const isExecutiveMode = searchParams.get("mode") === "executive";
+
+  const openModule = (moduleId, preserveExecutive = false) => {
+    setSelectedModule(moduleId);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (preserveExecutive) next.set("mode", "executive");
+      else next.delete("mode");
+      return next;
+    });
+  };
 
   useEffect(() => {
     setSelectedFields(activeConfig.fields.map((field) => field.key));
@@ -220,7 +277,7 @@ function ReportBuilderInner() {
                     return (
                       <button
                         key={moduleId}
-                        onClick={() => setSelectedModule(moduleId)}
+                        onClick={() => openModule(moduleId)}
                         className={clsx(
                           "w-full text-right px-3 py-3 rounded-xl border transition-all flex items-start gap-3",
                           isActive
@@ -268,6 +325,88 @@ function ReportBuilderInner() {
           </aside>
 
           <section className="p-4 md:p-5 space-y-4">
+            {isExecutiveMode && (
+              <div className={clsx("rounded-[2rem] border shadow-sm overflow-hidden", T.card)}>
+                <div className="p-5 bg-[radial-gradient(circle_at_top_right,_rgba(245,158,11,0.18),_transparent_34%),linear-gradient(135deg,rgba(15,23,42,0.02),rgba(255,255,255,0.94))] dark:bg-[radial-gradient(circle_at_top_right,_rgba(245,158,11,0.14),_transparent_34%),linear-gradient(135deg,rgba(15,23,42,0.75),rgba(15,23,42,0.92))]">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-600 shadow-sm">
+                        <Sparkles size={22} />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <span className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[10px] font-black border border-amber-200 dark:border-amber-800/40">
+                            فهرس تنفيذي
+                          </span>
+                          <span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 text-[10px] font-black border border-slate-200 dark:border-slate-700">
+                            وصول سريع للإدارة العليا
+                          </span>
+                        </div>
+                        <h2 className="text-xl font-black text-slate-800 dark:text-slate-100">
+                          التقارير الجاهزة الأكثر استخدامًا
+                        </h2>
+                        <p className="text-[11px] md:text-xs font-bold text-slate-500 dark:text-slate-400 mt-2 max-w-3xl">
+                          هذه البطاقات تنقلك مباشرة إلى أهم التقارير التنفيذية قبل الدخول في الإعدادات التفصيلية أو التخصيص اليدوي.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() =>
+                        setSearchParams((prev) => {
+                          const next = new URLSearchParams(prev);
+                          next.delete("mode");
+                          return next;
+                        })
+                      }
+                      className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-black text-[11px]"
+                    >
+                      الانتقال للوضع المخصص
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-3">
+                  {EXECUTIVE_REPORTS.map((report) => {
+                    const reportConfig = REPORT_MODULES[report.id];
+                    const Icon = reportConfig.icon || TableProperties;
+                    const isActiveExecutive = selectedModule === report.id;
+                    return (
+                      <button
+                        key={report.id}
+                        onClick={() => openModule(report.id, true)}
+                        className={clsx(
+                          "text-right rounded-2xl border p-4 shadow-sm transition-all hover:-translate-y-0.5",
+                          isActiveExecutive
+                            ? "border-amber-400 bg-amber-50 dark:bg-amber-900/20"
+                            : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                        )}
+                      >
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className={clsx("p-2 rounded-xl", isActiveExecutive ? "bg-amber-500 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-500")}>
+                            <Icon size={16} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-black text-slate-800 dark:text-slate-100">
+                              {report.title}
+                            </div>
+                            <div className="text-[9px] font-black text-amber-600 dark:text-amber-300 mt-1">
+                              {reportConfig.orientation === "portrait" ? "A4 عمودي" : "A4 أفقي"}
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 leading-5">
+                          {report.description}
+                        </p>
+                        <div className="mt-3 text-[10px] font-black text-teal-600 dark:text-teal-300">
+                          ترتيب الفرز: {reportConfig.sortLabel}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="rounded-[2rem] border border-slate-100 dark:border-slate-800 overflow-hidden">
               <div className="p-5 bg-[radial-gradient(circle_at_top_right,_rgba(20,184,166,0.18),_transparent_32%),linear-gradient(135deg,rgba(15,23,42,0.02),rgba(255,255,255,0.92))] dark:bg-[radial-gradient(circle_at_top_right,_rgba(20,184,166,0.14),_transparent_32%),linear-gradient(135deg,rgba(15,23,42,0.75),rgba(15,23,42,0.92))]">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
