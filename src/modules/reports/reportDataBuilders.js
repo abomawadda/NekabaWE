@@ -10,7 +10,7 @@ import { formatMoney } from "../../utils/numberFormat";
 import {
   getIssuedCheckDisplayParty,
   getIssuedCheckTypeLabel,
-  mergeIssuedChecksSources,
+  mergeIssuedChecksSourcesNormalized,
   normalizeIssuedCheckType,
   normalizeRequiresSettlement,
 } from "../treasury/helpers/issuedChecks";
@@ -74,7 +74,7 @@ const buildDistributionItems = (rows = [], key, maxItems = 8) => {
 };
 
 const getMergedPostedFinanceRows = (sourceData = {}) =>
-  mergeIssuedChecksSources(sourceData.issued_checks || [], sourceData.transactions || []).filter(isPostedRecord);
+  mergeIssuedChecksSourcesNormalized(sourceData.issued_checks || [], sourceData.transactions || []).filter(isPostedRecord);
 
 const getDateParts = (value = "") => {
   const raw = String(value || "").trim();
@@ -136,7 +136,7 @@ export const getIssuedCheckStatusLabel = (doc = {}) => {
 };
 
 export const buildTreasuryRows = (sourceData = {}) => {
-  const merged = mergeIssuedChecksSources(
+  const merged = mergeIssuedChecksSourcesNormalized(
     sourceData.issued_checks || [],
     sourceData.transactions || []
   );
@@ -178,7 +178,7 @@ export const buildTreasuryRows = (sourceData = {}) => {
 };
 
 export const buildIssuedChecksRows = (sourceData = {}) => {
-  const merged = mergeIssuedChecksSources(
+  const merged = mergeIssuedChecksSourcesNormalized(
     sourceData.issued_checks || [],
     sourceData.transactions || []
   );
@@ -215,7 +215,7 @@ export const buildIssuedChecksRows = (sourceData = {}) => {
 };
 
 export const buildSettlementRows = (sourceData = {}) => {
-  const merged = mergeIssuedChecksSources(
+  const merged = mergeIssuedChecksSourcesNormalized(
     sourceData.issued_checks || [],
     sourceData.transactions || []
   );
@@ -272,7 +272,7 @@ export const buildBankChargesRows = (sourceData = {}) =>
     }));
 
 export const buildAidsRows = (sourceData = {}) => {
-  const merged = mergeIssuedChecksSources(
+  const merged = mergeIssuedChecksSourcesNormalized(
     sourceData.issued_checks || [],
     sourceData.transactions || []
   );
@@ -409,7 +409,7 @@ export const buildBoardMeetingsRows = (sourceData = {}) => {
 
 export const buildBoardAllowancesRows = (sourceData = {}, boardRoles = []) => {
   const boardMembers = (sourceData.employees || []).filter((member) => isBoardMember(member));
-  const merged = mergeIssuedChecksSources(
+  const merged = mergeIssuedChecksSourcesNormalized(
     sourceData.issued_checks || [],
     sourceData.transactions || []
   );

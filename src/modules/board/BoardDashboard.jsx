@@ -17,6 +17,7 @@ import {
   isBoardMemberEligible,
 } from "../../utils/memberBenefits";
 import { formatMoney } from "../../utils/numberFormat";
+import { mergeIssuedChecksSourcesNormalized } from "../treasury/helpers/issuedChecks";
 import ResponsiveTable from "../../ui/ResponsiveTable";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
@@ -128,7 +129,7 @@ const sortBoardMembers = (members = []) =>
 
 const getSettlementAllowanceTotal = (transactions = []) =>
   transactions
-    .filter((t) => ["advance", "activity"].includes(t.type) && t.isSettled)
+    .filter((t) => t.isSettled)
     .reduce((sum, tx) => {
       const txTotal = (tx.settlementExpenses || []).reduce((expenseSum, expense) => {
         if (!["بدل انتقال", "بدل جلسات", "ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category)) {
@@ -1148,7 +1149,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
   const settlementAllowanceMap = useMemo(() => {
     const result = {};
     settlementTransactions
-      .filter((t) => ["advance", "activity"].includes(t.type) && t.isSettled)
+      .filter((t) => t.isSettled)
       .forEach((tx) => {
         (tx.settlementExpenses || []).forEach((expense) => {
           if (!matchesPeriod(expense.date || tx.settlementDate || tx.date || "")) return;
@@ -1180,7 +1181,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
   }).sort((a, b) => b.total - a.total);
 
   const detailedRows = settlementTransactions
-    .filter((t) => ["advance", "activity"].includes(t.type) && t.isSettled)
+    .filter((t) => t.isSettled)
     .flatMap((tx) =>
       (tx.settlementExpenses || [])
         .filter((expense) => ["بدل انتقال", "بدل جلسات", "ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category))
@@ -1407,7 +1408,7 @@ function ReportsTab({ members, meetings, settlementTransactions, T }) {
   const allowanceRows = members.map((member) => {
     const totals = { sessions: 0, travel: 0, hospitality: 0 };
     settlementTransactions
-      .filter((transaction) => ["advance", "activity"].includes(transaction.type) && transaction.isSettled)
+      .filter((transaction) => transaction.isSettled)
       .forEach((transaction) => {
         (transaction.settlementExpenses || []).forEach((expense) => {
           if (!Array.isArray(expense.boardMembers) || !expense.boardMembers.includes(member.id)) return;
@@ -1546,12 +1547,13 @@ export default function BoardDashboard() {
 
   const [allEmployees,    setAllEmployees]    = useState([]);
   const [meetings,        setMeetings]        = useState([]);
+  const [issuedChecks,    setIssuedChecks]    = useState([]);
   const [transactions,    setTransactions]    = useState([]);
   const [loading,         setLoading]         = useState(true);
 
   useEffect(() => {
-    let empOk=false, meetOk=false, txOk=false;
-    const check = () => { if (empOk && meetOk && txOk) setLoading(false); };
+    let empOk=false, meetOk=false, checksOk=false, txOk=false;
+    const check = () => { if (empOk && meetOk && checksOk && txOk) setLoading(false); };
 
     const unsubEmp = onSnapshot(
       query(collection(db,"employees")),
@@ -1565,13 +1567,19 @@ export default function BoardDashboard() {
       err  => { console.error("board_meetings:",err); meetOk=true; check(); }
     );
 
+    const unsubChecks = onSnapshot(
+      query(collection(db,"issued_checks"), orderBy("date","desc")),
+      snap => { setIssuedChecks(snap.docs.map(d=>({id:d.id,...d.data()}))); checksOk=true; check(); },
+      err  => { console.error("issued_checks:",err); checksOk=true; check(); }
+    );
+
     const unsubTx = onSnapshot(
       query(collection(db,"transactions"), orderBy("date","desc")),
       snap => { setTransactions(snap.docs.map(d=>({id:d.id,...d.data()}))); txOk=true; check(); },
       err  => { console.error("transactions:",err); txOk=true; check(); }
     );
 
-    return () => { unsubEmp(); unsubMeet(); unsubTx(); };
+    return () => { unsubEmp(); unsubMeet(); unsubChecks(); unsubTx(); };
   }, []);
 
   useEffect(() => {
@@ -1589,6 +1597,11 @@ export default function BoardDashboard() {
       });
     });
   }, [allEmployees]);
+
+  const settlementTransactions = useMemo(
+    () => mergeIssuedChecksSourcesNormalized(issuedChecks, transactions),
+    [issuedChecks, transactions]
+  );
 
   const boardMembers = useMemo(
     () => sortBoardMembers(allEmployees.filter((employee) => BOARD_ROLES.includes(employee.membershipStatus))),
@@ -1649,7 +1662,7 @@ export default function BoardDashboard() {
               </div>
               <div className="rounded-2xl border border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/60 p-4 col-span-2">
                 <div className="text-[10px] font-black text-slate-400">بدلات معتمدة من التسويات</div>
-                <div className="text-2xl font-black text-emerald-600 mt-1">{formatMoney(getSettlementAllowanceTotal(transactions))}</div>
+                <div className="text-2xl font-black text-emerald-600 mt-1">{formatMoney(getSettlementAllowanceTotal(settlementTransactions))}</div>
               </div>
             </div>
           </div>
@@ -1692,11 +1705,11 @@ export default function BoardDashboard() {
 
       {/* ── محتوى التبويبات ── */}
       <div className="mt-2">
-        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} settlementTransactions={transactions} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
+        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} settlementTransactions={settlementTransactions} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="members"    && <MembersTab    members={boardMembers} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="meetings"   && <MeetingsTab   members={boardMembers} meetings={meetings} T={T}/>}
-        {activeTab==="allowances" && <AllowancesTab members={boardMembers} settlementTransactions={transactions} T={T}/>}
-        {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} settlementTransactions={transactions} T={T}/>}
+        {activeTab==="allowances" && <AllowancesTab members={boardMembers} settlementTransactions={settlementTransactions} T={T}/>}
+        {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} settlementTransactions={settlementTransactions} T={T}/>}
       </div>
     </div>
   );

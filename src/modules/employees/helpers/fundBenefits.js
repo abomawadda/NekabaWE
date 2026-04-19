@@ -1,7 +1,7 @@
 import {
   EMPLOYEE_LOOKUP_TYPES,
   getIssuedCheckTypeLabel,
-  mergeIssuedChecksSources,
+  mergeIssuedChecksSourcesNormalized,
   normalizeIssuedCheckType,
 } from "../../treasury/helpers/issuedChecks";
 import { formatEmployeeDate, parseEmployeeDate } from "../../../utils/memberBenefits";
@@ -120,7 +120,7 @@ export const buildMemberFundBenefitEntries = ({
   legacyTransactions = [],
   memberBenefits = [],
 } = {}) => {
-  const mergedChecks = mergeIssuedChecksSources(issuedChecks, legacyTransactions).filter((doc) =>
+  const mergedChecks = mergeIssuedChecksSourcesNormalized(issuedChecks, legacyTransactions).filter((doc) =>
     EMPLOYEE_LOOKUP_TYPES.includes(normalizeIssuedCheckType(doc.type))
   );
 

@@ -172,3 +172,58 @@ export const mergeIssuedChecksSources = (
 
   return [...pendingLegacyChecks, ...normalizedIssuedChecks];
 };
+
+export const getIssuedCheckSourceKey = (doc = {}) => {
+  const id = String(doc?.id || "");
+  if (doc?.legacySourceId) return String(doc.legacySourceId);
+  if (doc?.sourceTransactionId) return String(doc.sourceTransactionId);
+  if (id.startsWith(LEGACY_ISSUED_CHECK_PREFIX)) {
+    return id.slice(LEGACY_ISSUED_CHECK_PREFIX.length);
+  }
+  return id;
+};
+
+const getIssuedCheckSortStamp = (doc = {}) =>
+  String(doc?.updatedAt || doc?.settlementDate || doc?.date || "");
+
+export const mergeIssuedChecksSourcesNormalized = (
+  issuedChecks = [],
+  legacyTransactions = []
+) => {
+  const grouped = new Map();
+
+  mergeIssuedChecksSources(issuedChecks, legacyTransactions).forEach((doc) => {
+    const key = getIssuedCheckSourceKey(doc);
+    const current = grouped.get(key);
+
+    if (!current) {
+      grouped.set(key, doc);
+      return;
+    }
+
+    if (current?.isSettled && !doc?.isSettled) {
+      grouped.set(key, doc);
+      return;
+    }
+
+    if (Boolean(current?.isSettled) === Boolean(doc?.isSettled)) {
+      const currentStamp = getIssuedCheckSortStamp(current);
+      const nextStamp = getIssuedCheckSortStamp(doc);
+
+      if (nextStamp > currentStamp) {
+        grouped.set(key, doc);
+        return;
+      }
+
+      if (
+        nextStamp === currentStamp &&
+        current?.sourceCollection !== "issued_checks" &&
+        doc?.sourceCollection === "issued_checks"
+      ) {
+        grouped.set(key, doc);
+      }
+    }
+  });
+
+  return Array.from(grouped.values());
+};
