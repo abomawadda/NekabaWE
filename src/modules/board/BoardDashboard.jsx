@@ -7,12 +7,25 @@ import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
 import { logAuditEvent } from "../../utils/auditLog";
-import { getEmployeeAge } from "../../utils/memberBenefits";
+import {
+  BOARD_MEMBERSHIP_ROLES,
+  getAutomaticMemberLifecycleUpdates,
+  getBoardRoleLabel,
+  getEffectiveMemberState,
+  getEmployeeAge,
+  isActiveMember,
+  isBoardMemberEligible,
+} from "../../utils/memberBenefits";
 import { formatMoney } from "../../utils/numberFormat";
 import ResponsiveTable from "../../ui/ResponsiveTable";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
-import { printBoardAllowancesReport, printBoardMeetingsReport, printBoardOverview } from "./BoardPrints";
+import {
+  printBoardAllowancesReport,
+  printBoardMeetingAttendanceReport,
+  printBoardMeetingsReport,
+  printBoardOverview,
+} from "./BoardPrints";
 import clsx from "clsx";
 import {
   ShieldCheck, Users, CalendarDays, Coins, PieChart, Activity,
@@ -26,21 +39,24 @@ import {
 // §1  الثوابت
 // ═══════════════════════════════════════════════════════════════
 
-const BOARD_ROLES = ["رئيس المجلس", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة", "عضو مجلس"];
+const BOARD_ROLES = BOARD_MEMBERSHIP_ROLES;
+const TARGET_BOARD_SIZE = 11;
 const BOARD_TERM_START = "2022/06/01";
 const BOARD_TERM_END = "2027/05/31";
 const BOARD_ROLE_ORDER = {
   "رئيس المجلس": 1,
   "الأمين العام": 2,
   "أمين الصندوق": 3,
-  "عضو مجلس إدارة": 4,
-  "عضو مجلس": 5,
+  "نائب الرئيس": 4,
+  "عضو مجلس إدارة": 5,
+  "عضو مجلس": 6,
 };
 
 const ROLE_META = {
   "رئيس المجلس":    { icon: "👑", color: "amber",   meeting_rate: 75 },
   "الأمين العام":   { icon: "📝", color: "teal",    meeting_rate: 75 },
   "أمين الصندوق":   { icon: "💼", color: "emerald", meeting_rate: 75 },
+  "نائب الرئيس":    { icon: "⭐", color: "violet",  meeting_rate: 75 },
   "عضو مجلس إدارة": { icon: "👤", color: "slate",   meeting_rate: 75 },
   "عضو مجلس":       { icon: "👤", color: "slate",   meeting_rate: 75 },
 };
@@ -103,7 +119,7 @@ const AVATAR_BG = ["bg-teal-600","bg-sky-600","bg-violet-600","bg-amber-600","bg
 const avatarBg = (id, idx = 0) => AVATAR_BG[(String(id || idx).charCodeAt(0) || idx) % AVATAR_BG.length];
 const sortBoardMembers = (members = []) =>
   [...members].sort((a, b) => {
-    const roleDiff = (BOARD_ROLE_ORDER[a.membershipStatus] || 99) - (BOARD_ROLE_ORDER[b.membershipStatus] || 99);
+    const roleDiff = (BOARD_ROLE_ORDER[getBoardRoleLabel(a)] || 99) - (BOARD_ROLE_ORDER[getBoardRoleLabel(b)] || 99);
     if (roleDiff !== 0) return roleDiff;
     const ageDiff = getEmployeeAge(b) - getEmployeeAge(a);
     if (ageDiff !== 0) return ageDiff;
@@ -177,11 +193,12 @@ function FormField({ label, required, children, hint }) {
 const inputCls = "w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600";
 
 /** Stat card */
-function BoardStatCard({ label, value, sub, icon: Icon, color, T }) {
+function BoardStatCard({ label, value, sub, icon, color, T }) {
+  const IconComponent = icon;
   return (
     <div className={clsx("p-5 rounded-2xl border shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 relative overflow-hidden group", T.card)}>
       <div className={clsx("w-11 h-11 rounded-xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110", `bg-${color}-500/10`)}>
-        <Icon size={22} className={`text-${color}-500`} />
+        <IconComponent size={22} className={`text-${color}-500`} />
       </div>
       <p className={clsx("text-[10px] font-black uppercase tracking-widest mb-1", T.muted)}>{label}</p>
       <p className={clsx("text-3xl font-black leading-none", `text-${color}-600`)}>{value}</p>
@@ -234,15 +251,15 @@ function ConfirmDelete({ open, onClose, onConfirm, label }) {
 // ═══════════════════════════════════════════════════════════════
 
 function DashboardTab({ members, meetings, settlementTransactions, T, setActiveTab, openEmployeeModal }) {
-  const activeMembers = members.filter(m => !["وفاة","استقالة"].includes(m.memberState)).length;
+  const activeMembers = members.filter((member) => isActiveMember(member)).length;
   const heldMeetings  = meetings.filter(m => m.status === "held").length;
   const decisionsCount = meetings.reduce((acc, m) => acc + (m.decisions?.length || 0), 0);
   const settlementAllowanceTotal = getSettlementAllowanceTotal(settlementTransactions);
   const totalAllowances = members.reduce((sum, m) => {
-    const monthly = Object.values(MONTHLY_ALLOWANCES[m.membershipStatus] || {}).reduce((a,b)=>a+b,0) * 12;
+    const monthly = Object.values(MONTHLY_ALLOWANCES[getBoardRoleLabel(m)] || {}).reduce((a,b)=>a+b,0) * 12;
     return sum + monthly;
   }, 0) + settlementAllowanceTotal;
-  const executiveMembers = members.filter((m) => ["رئيس المجلس", "الأمين العام", "أمين الصندوق"].includes(m.membershipStatus)).length;
+  const executiveMembers = members.filter((m) => ["رئيس المجلس", "الأمين العام", "أمين الصندوق"].includes(getBoardRoleLabel(m))).length;
   const termStart = parseBoardDate(BOARD_TERM_START);
   const termEnd = parseBoardDate(BOARD_TERM_END);
   const termTotalDays = termStart && termEnd ? Math.max(1, Math.ceil((termEnd - termStart) / (1000 * 60 * 60 * 24))) : 1;
@@ -315,7 +332,7 @@ function DashboardTab({ members, meetings, settlementTransactions, T, setActiveT
               const pct = heldMeetings === 0 ? 0 : Math.round((attended / heldMeetings) * 100);
               return (
                 <div key={m.id} className="flex items-center gap-3">
-                  <span className="text-[11px] font-black text-slate-600 dark:text-slate-300 w-20 truncate">{m.name?.split(" ").slice(0,2).join(" ")}</span>
+                  <span className="text-[11px] font-black text-slate-600 dark:text-slate-300">{m.name || "—"}</span>
                   <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                     <div className={clsx("h-full rounded-full transition-all duration-1000", pct>=85?"bg-emerald-500":pct>=70?"bg-amber-500":"bg-rose-500")} style={{width:`${pct}%`}}/>
                   </div>
@@ -356,7 +373,7 @@ function DashboardTab({ members, meetings, settlementTransactions, T, setActiveT
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {BOARD_ROLES.map(role => {
-            const ms = members.filter(m=>m.membershipStatus===role);
+            const ms = members.filter((member) => getBoardRoleLabel(member) === role);
             const meta = ROLE_META[role]||{icon:"👤",color:"slate"};
             return (
               <div key={role} className="p-4 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-center">
@@ -431,17 +448,21 @@ function DashboardTab({ members, meetings, settlementTransactions, T, setActiveT
 // §4  تبويب الأعضاء (Members) — محافظ على الربط الأصلي
 // ═══════════════════════════════════════════════════════════════
 
-function MembersTab({ members, T, openEmployeeModal }) {
+function MembersTab({
+  members,
+  T,
+  openEmployeeModal,
+}) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
 
   const filtered = members.filter(m => {
     const matchFilter =
       filter === "all" ? true :
-      filter === "active" ? !["وفاة","استقالة","موقوف"].includes(m.memberState) :
-      filter === "inactive" ? ["وفاة","استقالة","موقوف"].includes(m.memberState) :
-      m.membershipStatus === filter;
-    const matchSearch = !search || (m.name||"").includes(search) || (m.membershipStatus||"").includes(search);
+      filter === "active" ? isActiveMember(m) :
+      filter === "inactive" ? !isActiveMember(m) :
+      getBoardRoleLabel(m) === filter;
+    const matchSearch = !search || (m.name||"").includes(search) || (getBoardRoleLabel(m)||"").includes(search);
     return matchFilter && matchSearch;
   });
 
@@ -462,11 +483,11 @@ function MembersTab({ members, T, openEmployeeModal }) {
             </div>
             <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
               <div className="text-[10px] font-black text-slate-400">الرئاسة والأمانات</div>
-              <div className="text-lg font-black text-amber-600">{members.filter((m) => ["رئيس المجلس", "الأمين العام", "أمين الصندوق"].includes(m.membershipStatus)).length}</div>
+              <div className="text-lg font-black text-amber-600">{members.filter((m) => ["رئيس المجلس", "الأمين العام", "أمين الصندوق"].includes(getBoardRoleLabel(m))).length}</div>
             </div>
             <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
               <div className="text-[10px] font-black text-slate-400">الأعضاء</div>
-              <div className="text-lg font-black text-sky-600">{members.filter((m) => ["عضو مجلس إدارة", "عضو مجلس"].includes(m.membershipStatus)).length}</div>
+              <div className="text-lg font-black text-sky-600">{members.filter((m) => ["عضو مجلس إدارة", "عضو مجلس"].includes(getBoardRoleLabel(m))).length}</div>
             </div>
             <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
               <div className="text-[10px] font-black text-slate-400">مدة الدورة</div>
@@ -512,18 +533,22 @@ function MembersTab({ members, T, openEmployeeModal }) {
           {label:"العضو والصفة"},
           {label:"جهة العمل / التخصص"},
           {label:"الهاتف"},
+          {label:"انتهاء العضوية"},
           {label:"الحالة",className:"text-center"},
           {label:"ملف",className:"text-left"},
         ]}
-        renderDesktopRow={(emp,i)=>(
+        renderDesktopRow={(emp,i)=>{
+          const effectiveState = getEffectiveMemberState(emp);
+          const inactive = !isActiveMember(emp);
+          return (
           <tr onClick={()=>openEmployeeModal(emp)} className={clsx("group transition-all cursor-pointer",
-            ["وفاة","استقالة"].includes(emp.memberState)?"bg-rose-50/20 dark:bg-rose-900/10 hover:bg-rose-50/40":"hover:bg-teal-500/5")}>
+            inactive ? "bg-rose-50/20 dark:bg-rose-900/10 hover:bg-rose-50/40" : "hover:bg-teal-500/5")}>
             <td className="p-3.5">
               <div className="flex items-center gap-3">
                 <Avatar member={emp} size="md" idx={i}/>
                 <div>
-                  <p className={clsx("font-black text-sm",["وفاة","استقالة"].includes(emp.memberState)&&"line-through opacity-60")}>{emp.name}</p>
-                  <p className="text-[10px] font-bold text-amber-600 mt-0.5">{emp.membershipStatus}</p>
+                  <p className={clsx("font-black text-sm", inactive && "line-through opacity-60")}>{emp.name}</p>
+                  <p className="text-[10px] font-bold text-amber-600 mt-0.5">{getBoardRoleLabel(emp)}</p>
                 </div>
               </div>
             </td>
@@ -532,25 +557,30 @@ function MembersTab({ members, T, openEmployeeModal }) {
               <p className="text-[10px] font-bold text-slate-400 mt-0.5">{emp.specialization||"—"}</p>
             </td>
             <td className="p-3.5 font-bold text-xs text-slate-500">{emp.phone||"—"}</td>
-            <td className="p-3.5 text-center"><StateBadge state={emp.memberState||"نشط"}/></td>
+            <td className="p-3.5 font-bold text-xs text-slate-500">{emp.membershipExpiry || emp.retirementDate || "—"}</td>
+            <td className="p-3.5 text-center"><StateBadge state={effectiveState}/></td>
             <td className="p-3.5 text-left">
               <button className="p-1.5 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-teal-600 rounded-lg transition-all"><Eye size={15}/></button>
             </td>
           </tr>
-        )}
-        renderMobileCard={(emp,i)=>(
+        );}}
+        renderMobileCard={(emp,i)=>{
+          const effectiveState = getEffectiveMemberState(emp);
+          const inactive = !isActiveMember(emp);
+          return (
           <div onClick={()=>openEmployeeModal(emp)} className={clsx("p-4 rounded-2xl border shadow-sm flex gap-3 cursor-pointer hover:shadow-md transition-all",T.card,
-            ["وفاة","استقالة"].includes(emp.memberState)&&"border-rose-200 bg-rose-50/20 dark:border-rose-900/50")}>
+            inactive && "border-rose-200 bg-rose-50/20 dark:border-rose-900/50")}>
             <Avatar member={emp} size="lg" idx={i}/>
             <div className="flex-1 min-w-0">
-              <h3 className={clsx("font-black text-sm leading-tight",["وفاة","استقالة"].includes(emp.memberState)&&"line-through opacity-60")}>{emp.name}</h3>
-              <p className="text-[10px] font-bold text-amber-600 mt-0.5">{emp.membershipStatus}</p>
+              <h3 className={clsx("font-black text-sm leading-tight", inactive && "line-through opacity-60")}>{emp.name}</h3>
+              <p className="text-[10px] font-bold text-amber-600 mt-0.5">{getBoardRoleLabel(emp)}</p>
               {emp.workplace && <p className="text-[10px] text-slate-400 font-bold mt-1">{emp.workplace}</p>}
-              <div className="mt-2"><StateBadge state={emp.memberState||"نشط"}/></div>
+              <p className="text-[10px] text-slate-400 font-bold mt-1">انتهاء العضوية: {emp.membershipExpiry || emp.retirementDate || "—"}</p>
+              <div className="mt-2"><StateBadge state={effectiveState}/></div>
             </div>
             <Eye size={15} className="text-slate-300 mt-1 shrink-0"/>
           </div>
-        )}
+        );}}
       />
     </div>
   );
@@ -633,22 +663,58 @@ function MeetingForm({ initial, onSave, onCancel, saving }) {
   );
 }
 
-function MeetingDetail({ meeting, members, onClose, onUpdate, onDelete }) {
+function MeetingDetail({ meeting, members, onUpdate, onDelete }) {
   const [decisions, setDecisions] = useState(meeting.decisions||[]);
   const [newDecision, setNewDecision] = useState("");
   const [newDecisionVotes, setNewDecisionVotes] = useState({for:"",against:"",abstain:""});
   const [attendees, setAttendees] = useState(meeting.attendees||[]);
   const [saving, setSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const meetingDate = meeting?.date || "";
+  const eligibleMembers = useMemo(
+    () => members.filter((member) => isBoardMemberEligible(member, meetingDate || new Date())),
+    [members, meetingDate]
+  );
+  const visibleMembers = useMemo(
+    () => members.filter((member) => attendees.includes(member.id) || eligibleMembers.some((eligible) => eligible.id === member.id)),
+    [attendees, eligibleMembers, members]
+  );
+  const eligibleMemberIds = useMemo(() => eligibleMembers.map((member) => member.id), [eligibleMembers]);
   const presentCount = attendees.length;
+  const allSelected = eligibleMembers.length > 0 && eligibleMembers.every((member) => attendees.includes(member.id));
+
+  useEffect(() => {
+    setDecisions(meeting.decisions || []);
+    setAttendees(meeting.attendees || []);
+    setNewDecision("");
+    setNewDecisionVotes({ for: "", against: "", abstain: "" });
+  }, [meeting]);
+
+  const persistAttendees = async (updated) => {
+    setAttendees(updated);
+    try {
+      await updateDoc(doc(db,"board_meetings",meeting.id), { attendees: updated });
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   // Toggle attendance
   const toggleAttendee = async (memberId) => {
+    const isEligible = eligibleMemberIds.includes(memberId);
+    const isAlreadySelected = attendees.includes(memberId);
+    if (!isEligible && !isAlreadySelected) return;
+
     const updated = attendees.includes(memberId) ? attendees.filter(id=>id!==memberId) : [...attendees, memberId];
-    setAttendees(updated);
-    try {
-      await updateDoc(doc(db,"board_meetings",meeting.id),{attendees:updated});
-    } catch(e){console.error(e);}
+    await persistAttendees(updated);
+  };
+
+  const markAllAttendees = async () => {
+    await persistAttendees(eligibleMemberIds);
+  };
+
+  const clearAllAttendees = async () => {
+    await persistAttendees([]);
   };
 
   // Add decision
@@ -718,6 +784,12 @@ function MeetingDetail({ meeting, members, onClose, onUpdate, onDelete }) {
                 <CheckCircle2 size={12}/>{saving?"...":"تأكيد الانعقاد"}
               </button>
             )}
+            <button
+              onClick={() => printBoardMeetingAttendanceReport({ meeting, members, sessionAllowance: 75 })}
+              className="px-3 py-1.5 rounded-xl text-[10px] font-black bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 hover:bg-sky-200 transition-all flex items-center gap-1"
+            >
+              <Printer size={12}/> طباعة كشف الحضور
+            </button>
             <button onClick={onUpdate} className="px-3 py-1.5 rounded-xl text-[10px] font-black bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200 transition-all flex items-center gap-1"><Edit3 size={12}/> تعديل</button>
             <button onClick={()=>setDeleteOpen(true)} className="px-3 py-1.5 rounded-xl text-[10px] font-black bg-rose-100 dark:bg-rose-900/30 text-rose-600 hover:bg-rose-200 transition-all flex items-center gap-1"><Trash2 size={12}/> حذف</button>
           </div>
@@ -740,20 +812,50 @@ function MeetingDetail({ meeting, members, onClose, onUpdate, onDelete }) {
 
         {/* Attendance */}
         <div>
-          <h4 className="text-xs font-black text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-            <UserCheck size={13}/> الحضور والغياب
-            <span className="font-bold text-emerald-600 normal-case ml-1">{attendees.length}/{members.length} حضر</span>
-          </h4>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+            <h4 className="text-xs font-black text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+              <UserCheck size={13}/> الحضور والغياب
+              <span className="font-bold text-emerald-600 normal-case ml-1">{attendees.length}/{eligibleMembers.length} حضر</span>
+            </h4>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={markAllAttendees}
+                disabled={eligibleMembers.length === 0 || allSelected}
+                className={clsx(
+                  "px-3 py-1.5 rounded-xl text-[10px] font-black border transition-all flex items-center gap-1",
+                  eligibleMembers.length === 0 || allSelected
+                    ? "border-slate-200 text-slate-300 cursor-not-allowed"
+                    : "border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
+                )}
+              >
+                <CheckCircle2 size={12}/> تحديد كل المجلس
+              </button>
+              <button
+                onClick={clearAllAttendees}
+                disabled={attendees.length === 0}
+                className={clsx(
+                  "px-3 py-1.5 rounded-xl text-[10px] font-black border transition-all flex items-center gap-1",
+                  attendees.length === 0
+                    ? "border-slate-200 text-slate-300 cursor-not-allowed"
+                    : "border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100"
+                )}
+              >
+                <UserX size={12}/> إلغاء الكل
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {members.map((m,i)=>{
+            {visibleMembers.map((m,i)=>{
               const present = attendees.includes(m.id);
+              const selectable = eligibleMemberIds.includes(m.id) || present;
               return (
-                <div key={m.id} onClick={()=>toggleAttendee(m.id)} className={clsx("flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all select-none",
+                <div key={m.id} onClick={()=>selectable && toggleAttendee(m.id)} className={clsx("flex items-center gap-3 p-2.5 rounded-xl border transition-all select-none",
+                  selectable ? "cursor-pointer" : "opacity-60 cursor-not-allowed",
                   present?"bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800/40 hover:bg-emerald-100":"bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-800")}>
                   <Avatar member={m} size="sm" idx={i}/>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-black text-slate-800 dark:text-slate-200 truncate">{m.name?.split(" ").slice(0,3).join(" ")}</p>
-                    <p className="text-[9px] font-bold text-slate-400">{m.membershipStatus}</p>
+                    <p className="text-[11px] font-black text-slate-800 dark:text-slate-200 leading-5">{m.name || "—"}</p>
+                    <p className="text-[9px] font-bold text-slate-400">{getBoardRoleLabel(m)}</p>
                   </div>
                   <div className={clsx("w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
                     present?"bg-emerald-500 border-emerald-500":"border-slate-300 dark:border-slate-600")}>
@@ -942,16 +1044,17 @@ function MeetingsTab({ members, meetings, T }) {
       <div className="space-y-3">
         {filtered.map(m=>{
           const {day,month,year} = getMeetingDay(m.date);
+          const eligibleMembersCount = members.filter((member) => isBoardMemberEligible(member, m.date || new Date())).length;
           const presentCount = m.attendees?.length||0;
           return (
             <div key={m.id} className={clsx("rounded-2xl border shadow-sm hover:shadow-md transition-all overflow-hidden group cursor-pointer",T.card)}
               onClick={()=>setDetailMeeting(m)}>
               <div className="flex gap-4 p-4">
                 {/* Date box */}
-                <div className={clsx("rounded-2xl p-3 text-center shrink-0 flex flex-col items-center justify-center min-w-[60px]",
+                <div className={clsx("rounded-2xl p-3 text-center shrink-0 flex flex-col items-center justify-center min-w-[84px]",
                   m.status==="held"?"bg-emerald-500":m.status==="cancelled"?"bg-rose-500":m.status==="postponed"?"bg-amber-500":"bg-sky-500")}>
                   <span className="text-white text-2xl font-black leading-none">{day}</span>
-                  <span className="text-white/80 text-[9px] font-black mt-0.5">{typeof month==="string"?month.substring(0,3):month}</span>
+                  <span className="text-white/90 text-[10px] font-black mt-1 leading-4 whitespace-normal">{month}</span>
                   <span className="text-white/60 text-[8px] font-bold">{year}</span>
                 </div>
 
@@ -970,7 +1073,7 @@ function MeetingsTab({ members, meetings, T }) {
                   <div className="flex flex-wrap gap-3 mt-1.5 text-[10px] font-bold text-slate-400">
                     {m.time && <span className="flex items-center gap-0.5"><Clock size={10}/>{m.time}</span>}
                     {m.venue && <span className="flex items-center gap-0.5 truncate max-w-[160px]"><MapPin size={10}/>{m.venue}</span>}
-                    {m.status==="held" && <span className="flex items-center gap-0.5 text-emerald-600"><UserCheck size={10}/>{presentCount}/{members.length} حضر</span>}
+                    {m.status==="held" && <span className="flex items-center gap-0.5 text-emerald-600"><UserCheck size={10}/>{presentCount}/{eligibleMembersCount} حضر</span>}
                   </div>
                 </div>
 
@@ -1115,7 +1218,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
         </select>
         <select className={clsx(inputCls,"w-auto py-1.5 text-xs min-w-[130px]")} value={filterMember} onChange={e=>setFilterMember(e.target.value)}>
           <option value="all">كل الأعضاء</option>
-          {members.map(m=><option key={m.id} value={m.id}>{m.name?.split(" ").slice(0,3).join(" ")}</option>)}
+          {members.map(m=><option key={m.id} value={m.id}>{m.name || "—"}</option>)}
         </select>
         <span className="px-2.5 py-1 rounded-lg bg-amber-100/80 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-[10px] font-black border border-amber-200 dark:border-amber-800/40">
           تعرض البدلات المعتمدة من التسويات فقط
@@ -1178,7 +1281,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
                         <Avatar member={r.member} size="sm" idx={i}/>
                         <div>
                           <p className="font-black text-xs text-slate-800 dark:text-slate-100">{r.member.name}</p>
-                          <p className="text-[9px] font-bold text-slate-400">{r.member.membershipStatus}</p>
+                          <p className="text-[9px] font-bold text-slate-400">{getBoardRoleLabel(r.member)}</p>
                         </div>
                       </div>
                     </td>
@@ -1225,7 +1328,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
                       <div className="flex flex-wrap gap-1.5">
                         {row.memberIds.map((id) => {
                           const member = members.find((m) => m.id === id);
-                          return <span key={id} className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-black text-slate-600 dark:text-slate-300">{member?.name?.split(" ").slice(0,2).join(" ") || "عضو"}</span>;
+                          return <span key={id} className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-black text-slate-600 dark:text-slate-300">{member?.name || "عضو"}</span>;
                         })}
                       </div>
                     </td>
@@ -1262,7 +1365,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
                   <Avatar member={m} size="md" idx={i}/>
                   <div className="flex-1 min-w-0">
                     <p className="font-black text-sm text-slate-800 dark:text-slate-100 truncate">{m.name}</p>
-                    <p className="text-[10px] font-bold text-amber-600">{m.membershipStatus}</p>
+                    <p className="text-[10px] font-bold text-amber-600">{getBoardRoleLabel(m)}</p>
                   </div>
                   <div className="text-left shrink-0">
                     <div className="text-xl font-black text-amber-600">{formatMoney(memberGrandTotal)}</div>
@@ -1416,7 +1519,7 @@ function ReportsTab({ members, meetings, settlementTransactions, T }) {
             {[
               {label:"متوسط القرارات لكل اجتماع", value:heldMeetings.length?(meetings.reduce((s,m)=>s+(m.decisions?.length||0),0)/heldMeetings.length).toFixed(1):0, color:"text-blue-500", icon:"📋"},
               {label:"نسبة تحقيق النصاب القانوني", value:"100%", color:"text-green-500", icon:"✅"},
-              {label:"الأعضاء النشطون", value:`${members.filter(m=>m.memberState==="نشط"||!m.memberState).length}/${members.length}`, color:"text-amber-500", icon:"👤"},
+              {label:"الأعضاء النشطون", value:`${members.filter((member) => isActiveMember(member)).length}/${members.length}`, color:"text-amber-500", icon:"👤"},
               {label:"إجمالي البدلات المصروفة", value:formatMoney(settlementAllowanceTotal), color:"text-violet-500", icon:"💰"},
             ].map((kpi,i)=>(
               <div key={i} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50">
@@ -1439,6 +1542,7 @@ export default function BoardDashboard() {
   const T = useT();
   const { openEmployeeModal } = useEmployeeModal();
   const [activeTab, setActiveTab] = useState("dashboard");
+  const lifecycleSyncRef = useRef(new Set());
 
   const [allEmployees,    setAllEmployees]    = useState([]);
   const [meetings,        setMeetings]        = useState([]);
@@ -1470,9 +1574,30 @@ export default function BoardDashboard() {
     return () => { unsubEmp(); unsubMeet(); unsubTx(); };
   }, []);
 
+  useEffect(() => {
+    allEmployees.forEach((employee) => {
+      const updates = getAutomaticMemberLifecycleUpdates(employee);
+      if (!updates) return;
+
+      const syncKey = `${employee.id}:${JSON.stringify(updates)}`;
+      if (lifecycleSyncRef.current.has(syncKey)) return;
+
+      lifecycleSyncRef.current.add(syncKey);
+      updateDoc(doc(db, "employees", employee.id), updates).catch((error) => {
+        console.error("employee_lifecycle_sync:", error);
+        lifecycleSyncRef.current.delete(syncKey);
+      });
+    });
+  }, [allEmployees]);
+
   const boardMembers = useMemo(
-    () => sortBoardMembers(allEmployees.filter(emp=>BOARD_ROLES.includes(emp.membershipStatus))),
+    () => sortBoardMembers(allEmployees.filter((employee) => BOARD_ROLES.includes(employee.membershipStatus))),
     [allEmployees]
+  );
+
+  const currentBoardMembers = useMemo(
+    () => boardMembers.filter((employee) => isBoardMemberEligible(employee)),
+    [boardMembers]
   );
 
   const navTabs = [
@@ -1516,7 +1641,7 @@ export default function BoardDashboard() {
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-2xl border border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/60 p-4">
                 <div className="text-[10px] font-black text-slate-400">أعضاء المجلس</div>
-                <div className="text-2xl font-black text-teal-600 mt-1">{boardMembers.length}</div>
+                <div className="text-2xl font-black text-teal-600 mt-1">{currentBoardMembers.length}/{TARGET_BOARD_SIZE}</div>
               </div>
               <div className="rounded-2xl border border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/60 p-4">
                 <div className="text-[10px] font-black text-slate-400">اجتماعات منعقدة</div>
@@ -1540,7 +1665,7 @@ export default function BoardDashboard() {
           <div>
             <h2 className="text-sm font-black text-slate-800 dark:text-slate-100">تنقلات شاشة مجلس الإدارة</h2>
             <p className={clsx("text-[10px] font-bold mt-0.5",T.muted)}>
-              اللجنة النقابية • {boardMembers.length} أعضاء • {meetings.filter(m=>m.status==="held").length} اجتماعات • ترتيب العضوية حسب الصفة ثم السن
+              اللجنة النقابية • {currentBoardMembers.length} من {TARGET_BOARD_SIZE} عضو حاليًا • {meetings.filter(m=>m.status==="held").length} اجتماعات • مع الاحتفاظ بالأعضاء المنتهية عضويتهم لأغراض التاريخ المالي والإداري
             </p>
           </div>
           <div className="flex items-center gap-2">

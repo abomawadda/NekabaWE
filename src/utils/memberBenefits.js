@@ -1,6 +1,5 @@
 export const BOARD_MEMBERSHIP_ROLES = [
   "رئيس المجلس",
-  "النقيب العام",
   "الأمين العام",
   "أمين الصندوق",
   "عضو مجلس إدارة",
@@ -23,6 +22,9 @@ export const isIndependentMember = (member) =>
 
 export const isBoardMember = (member) =>
   BOARD_MEMBERSHIP_ROLES.includes(String(member?.membershipStatus || "").trim());
+
+export const getBoardRoleLabel = (member) =>
+  String(member?.boardRoleTitle || member?.membershipStatus || "").trim();
 
 export const normalizeArabicDigits = (value = "") =>
   String(value)
@@ -142,6 +144,10 @@ export const getRetirementDate = (member) =>
   getLegalRetirementDate(member) ||
   parseEmployeeDate(member?.retirementDate || member?.retiredAt || member?.retireDate);
 
+export const getMembershipEndDate = (member) =>
+  getRetirementDate(member) ||
+  parseEmployeeDate(member?.membershipExpiry || member?.membershipEndDate || member?.unionEndDate);
+
 export const getDeathDate = (member) =>
   parseEmployeeDate(member?.deathDate || member?.dateOfDeath || member?.deceasedAt);
 
@@ -172,8 +178,55 @@ export const isRetiredMember = (member, onDate = new Date()) => {
   return state === "معاش";
 };
 
+export const isMembershipEnded = (member, onDate = new Date()) => {
+  const membershipEndDate = getMembershipEndDate(member);
+  if (!membershipEndDate) return false;
+  const effectiveDate = stripTime(parseEmployeeDate(onDate) || new Date(onDate));
+  return stripTime(membershipEndDate).getTime() <= effectiveDate.getTime();
+};
+
+export const getEffectiveMemberState = (member, onDate = new Date()) => {
+  const state = String(member?.memberState || "").trim();
+
+  if (isDeceasedMember(member, onDate)) return "وفاة";
+  if (state === "استقالة") return "استقالة";
+  if (state === "موقوف") return "موقوف";
+  if (isRetiredMember(member, onDate) || isMembershipEnded(member, onDate)) return "معاش";
+
+  return state || "نشط";
+};
+
+export const isActiveMember = (member, onDate = new Date()) =>
+  !["وفاة", "استقالة", "موقوف", "معاش"].includes(getEffectiveMemberState(member, onDate));
+
 export const isEligibleForBenefit = (member, onDate = new Date()) =>
   !isIndependentMember(member) && !isRetiredMember(member, onDate) && !isDeceasedMember(member, onDate);
+
+export const isBoardMemberEligible = (member, onDate = new Date()) =>
+  isBoardMember(member) && isActiveMember(member, onDate) && !isIndependentMember(member);
+
+export const getAutomaticMemberLifecycleUpdates = (member, onDate = new Date()) => {
+  const retirementDate = getRetirementDate(member);
+  if (!retirementDate) return null;
+
+  const updates = {};
+  const retirementDateText = formatEmployeeDate(retirementDate);
+  const effectiveDate = stripTime(parseEmployeeDate(onDate) || new Date(onDate));
+  const rawState = String(member?.memberState || "").trim();
+
+  if (retirementDateText && member?.membershipExpiry !== retirementDateText) {
+    updates.membershipExpiry = retirementDateText;
+  }
+
+  if (
+    stripTime(retirementDate).getTime() <= effectiveDate.getTime() &&
+    !["وفاة", "استقالة", "معاش"].includes(rawState)
+  ) {
+    updates.memberState = "معاش";
+  }
+
+  return Object.keys(updates).length ? updates : null;
+};
 
 export const parseEmployeeBirthDate = (birthDateStr) => parseEmployeeDate(birthDateStr);
 

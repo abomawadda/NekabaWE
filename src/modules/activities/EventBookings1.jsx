@@ -12,6 +12,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { collection, query, onSnapshot, doc, writeBatch, serverTimestamp, orderBy, where } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
+import { openPrintWindow } from "../../utils/print";
 import {
   Ticket, Users, CheckCircle2, AlertCircle, Search, 
   CreditCard, Printer, Copy, X, Banknote, Smartphone, Receipt, ShieldAlert, Trash2, 
@@ -52,7 +53,7 @@ const parseNationalID = (nid) => {
 
 // ── 2. محرك الطباعة الشامل لكشف الحضور ──
 const printManifestLocal = (event, bookings) => {
-  const win = window.open("", "_blank", "width=1000,height=800");
+  const win = openPrintWindow("event-manifest-legacy", "width=1000,height=800");
   if (!win) return;
   
   const validBookings = bookings.filter(b => b.status !== "cancelled");

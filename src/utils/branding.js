@@ -21,16 +21,15 @@ export const getPrintBrandStyles = () => `
 .print-footer-side{max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .print-footer-center{min-width:90px;text-align:center}
 @media print{
-  body{counter-reset:print-page}
   .brand-header{break-inside:avoid;page-break-inside:avoid}
   .brand-logo{print-color-adjust:exact;-webkit-print-color-adjust:exact}
   .print-footer,.print-watermark{print-color-adjust:exact;-webkit-print-color-adjust:exact}
-  .print-footer{counter-increment:print-page}
-  .page-counter::before{content:"صفحة " counter(print-page)}
+  .page-counter::before{content:"صفحة " counter(page)}
 }
 `;
 
 export const getPrintBrandHeader = ({ reportTitle = "", reportMeta = "" } = {}) => `
+  ${getPrintFrameHtml({ watermark: reportTitle || ORG_REPORT_TITLE })}
   <div class="brand-header">
     <div class="brand-logo-wrap"><img src="${ORG_RIGHT_LOGO_URL}" alt="logo-right" class="brand-logo"/></div>
     <div class="brand-center">

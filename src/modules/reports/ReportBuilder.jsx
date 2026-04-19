@@ -115,6 +115,20 @@ const EXECUTIVE_REPORTS = [
 const getInitialModuleFilters = (config) =>
   Object.fromEntries((config?.customFilters || []).map((filter) => [filter.key, filter.defaultValue || ""]));
 
+const getFilterRowKey = (filter) => filter.rowKey || filter.key;
+
+const doesRowMatchFilter = (row, filter, value) => {
+  const filterValue = String(value || "").trim();
+  if (!filterValue) return true;
+
+  const rowValue = String(row?.[getFilterRowKey(filter)] || "").trim();
+  if (filter.type === "text") {
+    return normalizeText(rowValue).includes(normalizeText(filterValue));
+  }
+
+  return rowValue === filterValue;
+};
+
 function ReportBuilderInner() {
   const T = useT();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -192,17 +206,42 @@ function ReportBuilderInner() {
 
   const rawRows = useMemo(() => activeConfig.buildRows(sourceData), [activeConfig, sourceData]);
 
+  const handleModuleFilterChange = (changedFilter, nextValue) => {
+    setModuleFilters((prev) => {
+      const next = { ...prev, [changedFilter.key]: nextValue };
+      const filters = activeConfig.customFilters || [];
+      const changedIndex = filters.findIndex((filter) => filter.key === changedFilter.key);
+
+      if (changedFilter.cascade && changedIndex >= 0) {
+        filters.slice(changedIndex + 1).forEach((filter) => {
+          if (filter.cascade) next[filter.key] = filter.defaultValue || "";
+        });
+      }
+
+      return next;
+    });
+  };
+
   const moduleFilterOptions = useMemo(() => {
-    return (activeConfig.customFilters || []).reduce((acc, filter) => {
+    return (activeConfig.customFilters || []).reduce((acc, filter, index, filters) => {
       if (filter.type !== "select") {
         acc[filter.key] = [];
         return acc;
       }
 
+      const scopedRows = filter.cascade
+        ? rawRows.filter((row) =>
+            filters.slice(0, index).every((previousFilter) => {
+              if (!previousFilter.cascade) return true;
+              return doesRowMatchFilter(row, previousFilter, moduleFilters[previousFilter.key]);
+            })
+          )
+        : rawRows;
+
       const options = Array.from(
         new Set(
-          rawRows
-            .map((row) => String(row?.[filter.rowKey || filter.key] || "").trim())
+          scopedRows
+            .map((row) => String(row?.[getFilterRowKey(filter)] || "").trim())
             .filter(Boolean)
         )
       ).sort(compareArabic);
@@ -210,7 +249,7 @@ function ReportBuilderInner() {
       acc[filter.key] = options;
       return acc;
     }, {});
-  }, [activeConfig.customFilters, rawRows]);
+  }, [activeConfig.customFilters, moduleFilters, rawRows]);
 
   const filteredRows = useMemo(() => {
     let rows = [...rawRows];
@@ -229,15 +268,7 @@ function ReportBuilderInner() {
     if ((activeConfig.customFilters || []).length > 0) {
       rows = rows.filter((row) =>
         activeConfig.customFilters.every((filter) => {
-          const filterValue = String(moduleFilters[filter.key] || "").trim();
-          if (!filterValue) return true;
-
-          const rowValue = String(row?.[filter.rowKey || filter.key] || "").trim();
-          if (filter.type === "text") {
-            return normalizeText(rowValue).includes(normalizeText(filterValue));
-          }
-
-          return rowValue === filterValue;
+          return doesRowMatchFilter(row, filter, moduleFilters[filter.key]);
         })
       );
     }
@@ -683,39 +714,51 @@ function ReportBuilderInner() {
 
               {(activeConfig.customFilters || []).length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 pt-1">
-                  {activeConfig.customFilters.map((filter) => (
-                    <div key={filter.key} className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase">
-                        {filter.label}
-                      </label>
-                      {filter.type === "select" ? (
-                        <select
-                          value={moduleFilters[filter.key] || ""}
-                          onChange={(event) =>
-                            setModuleFilters((prev) => ({ ...prev, [filter.key]: event.target.value }))
-                          }
-                          className={clsx("w-full px-3 py-2.5 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 focus:ring-teal-500", T.sel)}
-                        >
-                          <option value="">الكل</option>
-                          {(moduleFilterOptions[filter.key] || []).map((option) => (
-                            <option key={option} value={option}>
-                              {option}
+                  {activeConfig.customFilters.map((filter, filterIndex, filters) => {
+                    const isLocked = Boolean(
+                      filter.cascade &&
+                        filterIndex > 0 &&
+                        filters
+                          .slice(0, filterIndex)
+                          .some((previousFilter) => previousFilter.cascade && !String(moduleFilters[previousFilter.key] || "").trim())
+                    );
+
+                    return (
+                      <div key={filter.key} className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase">
+                          {filter.label}
+                        </label>
+                        {filter.type === "select" ? (
+                          <select
+                            value={moduleFilters[filter.key] || ""}
+                            onChange={(event) => handleModuleFilterChange(filter, event.target.value)}
+                            disabled={isLocked}
+                            className={clsx(
+                              "w-full px-3 py-2.5 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-60 disabled:cursor-not-allowed",
+                              T.sel
+                            )}
+                          >
+                            <option value="">
+                              {isLocked ? `اختر ${filters[filterIndex - 1]?.label || "القيمة السابقة"} أولًا` : "الكل"}
                             </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type="text"
-                          value={moduleFilters[filter.key] || ""}
-                          onChange={(event) =>
-                            setModuleFilters((prev) => ({ ...prev, [filter.key]: event.target.value }))
-                          }
-                          placeholder={filter.placeholder || filter.label}
-                          className={clsx("w-full px-3 py-2.5 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 focus:ring-teal-500", T.inp)}
-                        />
-                      )}
-                    </div>
-                  ))}
+                            {(moduleFilterOptions[filter.key] || []).map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            value={moduleFilters[filter.key] || ""}
+                            onChange={(event) => handleModuleFilterChange(filter, event.target.value)}
+                            placeholder={filter.placeholder || filter.label}
+                            className={clsx("w-full px-3 py-2.5 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 focus:ring-teal-500", T.inp)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

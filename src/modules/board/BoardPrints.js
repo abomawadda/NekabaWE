@@ -1,12 +1,13 @@
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { getBoardRoleLabel, getEffectiveMemberState } from "../../utils/memberBenefits";
 import { formatMoney } from "../../utils/numberFormat";
 import { openPrintWindow } from "../../utils/print";
 
-const printBase = (title) => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8" />
+const printBase = (title, orientation = "landscape") => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8" />
 <title>${title}</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
-@page{size:A4 landscape;margin:10mm}
+@page{size:A4 ${orientation};margin:10mm}
 *{font-family:'Cairo',sans-serif;box-sizing:border-box}
 body{margin:0;padding:24px;color:#0f172a;font-size:12px}
 .meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:12px 14px;margin-bottom:16px}
@@ -21,6 +22,8 @@ th{background:#0f172a;color:#fff;font-size:11px}
 tr:nth-child(even) td{background:#f8fafc}
 .section-title{margin:18px 0 10px;font-size:15px;font-weight:900;color:#0f766e}
 .empty{padding:24px;text-align:center;color:#94a3b8;font-weight:800;border:1px dashed #cbd5e1;border-radius:12px}
+.signature-cell{height:44px;min-width:120px}
+.total-row td{font-weight:900;background:#ecfeff !important}
 @media print{
 body{padding:0}
 .meta,.cards,.card,.section-title,.brand-header{break-inside:avoid;page-break-inside:avoid}
@@ -47,9 +50,9 @@ export const printBoardOverview = ({ members, meetings, allowances, termStart, t
         <tr>
           <td>${index + 1}</td>
           <td>${member.name || "—"}</td>
-          <td>${member.membershipStatus || "—"}</td>
+          <td>${getBoardRoleLabel(member) || "—"}</td>
           <td>${member.specialization || "—"}</td>
-          <td>${member.memberState || "نشط"}</td>
+          <td>${getEffectiveMemberState(member)}</td>
         </tr>
       `).join("")
     : `<tr><td colspan="5" class="empty">لا توجد بيانات أعضاء</td></tr>`;
@@ -116,7 +119,7 @@ export const printBoardAllowancesReport = ({ allowances, termStart, termEnd }) =
         <tr>
           <td>${index + 1}</td>
           <td>${row.member?.name || "—"}</td>
-          <td>${row.member?.membershipStatus || "—"}</td>
+          <td>${getBoardRoleLabel(row.member) || "—"}</td>
           <td>${formatMoney(row.allowances?.sessions || 0)}</td>
           <td>${formatMoney(row.allowances?.travel || 0)}</td>
           <td>${formatMoney(row.allowances?.hospitality || 0)}</td>
@@ -135,6 +138,64 @@ export const printBoardAllowancesReport = ({ allowances, termStart, termEnd }) =
         <thead><tr><th>#</th><th>الاسم الكامل</th><th>الصفة</th><th>بدل الجلسات</th><th>بدل الانتقال</th><th>بدل الضيافة</th><th>الإجمالي</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>` +
+      closePrint
+  );
+  win.document.close();
+};
+
+export const printBoardMeetingAttendanceReport = ({ meeting, members, sessionAllowance = 75 }) => {
+  const win = openPrintWindow(`board-meeting-attendance-${meeting?.id || "sheet"}`);
+  if (!win) return;
+
+  const attendees = (Array.isArray(members) ? members : []).filter((member) =>
+    (meeting?.attendees || []).includes(member.id)
+  );
+  const total = attendees.length * Number(sessionAllowance || 0);
+  const rows = attendees.length
+    ? attendees.map((member, index) => `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${member.name || "—"}</td>
+          <td>${getBoardRoleLabel(member) || "—"}</td>
+          <td>${getEffectiveMemberState(member)}</td>
+          <td>${formatMoney(sessionAllowance)}</td>
+          <td class="signature-cell"></td>
+        </tr>
+      `).join("")
+    : `<tr><td colspan="6" class="empty">لا يوجد أعضاء حضور مسجلون لهذا الاجتماع</td></tr>`;
+
+  win.document.write(
+    printBase("كشف حضور مجلس الإدارة", "portrait") +
+      getPrintBrandHeader({
+        reportTitle: "كشف حضور اجتماع مجلس الإدارة",
+        reportMeta: `${meeting?.title || "اجتماع مجلس الإدارة"} • ${meeting?.date || "—"}${meeting?.venue ? ` • ${meeting.venue}` : ""}`,
+      }) +
+      `<div class="cards">
+        <div class="card"><div class="card-label">عنوان الاجتماع</div><div class="card-value">${meeting?.title || "—"}</div></div>
+        <div class="card"><div class="card-label">تاريخ الاجتماع</div><div class="card-value">${meeting?.date || "—"}</div></div>
+        <div class="card"><div class="card-label">عدد الحضور</div><div class="card-value">${attendees.length}</div></div>
+        <div class="card"><div class="card-label">إجمالي الكشف</div><div class="card-value">${formatMoney(total)}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>#</th><th>الاسم</th><th>الصفة</th><th>الحالة</th><th>بدل الجلسة</th><th>التوقيع</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="total-row">
+            <td colspan="4">إجمالي كشف الحضور</td>
+            <td colspan="2">${formatMoney(total)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:32px;margin-top:42px">
+        <div style="text-align:center">
+          <div style="font-weight:900;color:#334155">توقيع رئيس المجلس</div>
+          <div style="height:56px;border-bottom:2px dashed #cbd5e1;margin-top:16px"></div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-weight:900;color:#334155">توقيع أمين الصندوق</div>
+          <div style="height:56px;border-bottom:2px dashed #cbd5e1;margin-top:16px"></div>
+        </div>
+      </div>` +
       closePrint
   );
   win.document.close();

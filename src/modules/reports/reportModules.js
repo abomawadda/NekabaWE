@@ -220,8 +220,9 @@ export const REPORT_MODULES = {
     searchPlaceholder: "ابحث بالكود أو الاسم أو الصفة أو جهة العمل...",
     emptyMessage: "لا توجد بيانات أعضاء مطابقة.",
     customFilters: [
-      { key: "membershipStatus", label: "صفة العضوية", type: "select", rowKey: "membershipStatus" },
-      { key: "gender", label: "النوع", type: "select", rowKey: "gender" },
+      { key: "membershipStatus", label: "صفة العضوية", type: "select", rowKey: "membershipStatus", cascade: true },
+      { key: "memberState", label: "الحالة", type: "select", rowKey: "memberState", cascade: true },
+      { key: "gender", label: "النوع", type: "select", rowKey: "gender", cascade: true },
     ],
     fields: [
       { key: "jobId", label: "الكود" },
