@@ -86,6 +86,30 @@ const getSettlementChequeNumber = (settlement = {}) => {
   const numeric = Number(settlement?.checkNum || settlement?.checkNo || 0);
   return Number.isFinite(numeric) ? numeric : 0;
 };
+const getSettlementReturnMode = (settlement = {}) => {
+  const explicitMode = String(settlement?.returnMode || "").trim();
+  if (explicitMode) return explicitMode;
+  if (settlement?.returnedActually) return "cash_return";
+  return Number(settlement?.settlementReturned || 0) > 0 ? "carry_forward" : "settled";
+};
+const getSettlementReturnedLabel = (settlement = {}) => {
+  const returnMode = getSettlementReturnMode(settlement);
+  if (returnMode === "bank_deposit") return "تم إيداعه بالبنك";
+  if (returnMode === "cash_return") return "تم الرد نقدًا";
+  if (returnMode === "carry_forward") return "مرحّل للقادم";
+  return "تمت التسوية";
+};
+const getSettlementEffectiveRemaining = (settlement = {}) => {
+  const returnMode = getSettlementReturnMode(settlement);
+  if (returnMode === "carry_forward") return Number(settlement?.settlementReturned || 0);
+  if (returnMode === "bank_deposit") {
+    return Number(settlement?.bankDepositedAmount || settlement?.settlementReturned || 0);
+  }
+  if (returnMode === "cash_return") {
+    return Number(settlement?.returnedCashAmount || settlement?.settlementReturned || 0);
+  }
+  return Number(settlement?.settlementReturned || 0);
+};
 const getSettlementSortTimestamp = (settlement = {}) =>
   getDateTimestamp(getSettlementApprovalDate(settlement)) ||
   getDateTimestamp(settlement?.updatedAt) ||
@@ -142,7 +166,17 @@ const getSettlementSourceKey = (tx = {}) => {
 };
 
 // ── دالة الطباعة المدمجة لمنع خطأ المتصفح ──
-const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBalance = 0, collectedSubs = 0, returnedActually }) => {
+const printSettlementLocal = ({
+  advanceTxn,
+  expenses,
+  spent,
+  remaining,
+  prevBalance = 0,
+  collectedSubs = 0,
+  returnMode = "settled",
+  bankDepositDate = "",
+  bankDepositReference = "",
+}) => {
   const win = openPrintWindow("settlement-local", "width=950,height=750");
   if (!win) return;
 
@@ -153,6 +187,19 @@ const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBala
   const rowsHtml = expenses?.length > 0 
     ? expenses.map((e, i) => `<tr><td style="text-align:center">${i + 1}</td><td style="text-align:center">${e.date}</td><td style="color:#0f766e">${e.category}</td><td>${e.notes || "—"}</td><td style="text-align:left; font-weight:900">${formatMoney(e.amount)}</td></tr>`).join("")
     : `<tr><td colspan="5" style="text-align:center; padding:30px; color:#94a3b8;">لم يتم إدراج فواتير</td></tr>`;
+
+  const settlementFooter =
+    remaining > 0
+      ? `يوجد مبلغ متبقٍ قدره (${formatMoney(remaining)}) — ${
+          returnMode === "bank_deposit"
+            ? `تم إيداعه بالبنك${bankDepositDate ? ` بتاريخ ${bankDepositDate}` : ""}${bankDepositReference ? ` بموجب المرجع ${bankDepositReference}` : ""}.`
+            : returnMode === "cash_return"
+              ? "تم توريده نقداً لخزينة النقابة بموجب إيصال."
+              : "تم ترحيله كـ 'رصيد دائن' ليُخصم من السلفة القادمة."
+        }`
+      : remaining < 0
+        ? `يوجد تجاوز في الصرف قدره (${formatMoney(Math.abs(remaining))}) — يُصرف للموظف.`
+        : `تم تسوية العهدة بالكامل (صفر).`;
 
   win.document.write(`
     <!DOCTYPE html><html lang="ar">
@@ -169,7 +216,7 @@ const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBala
       </div>
       <h3 style="margin-bottom:10px; color:#334155; font-size: 14px;">بيان الفواتير والمصروفات المدرجة:</h3>
       <table><thead><tr><th style="width:40px; text-align:center;">م</th><th style="width:100px; text-align:center;">التاريخ</th><th style="width:150px;">التصنيف المحاسبي</th><th>البيان والملاحظات</th><th style="width:120px;">المبلغ</th></tr></thead><tbody>${rowsHtml}</tbody></table>
-      <div class="footer-note">الحالة النهائية للتسوية: ${remaining > 0 ? `يوجد مبلغ متبقٍ قدره (${formatMoney(remaining)}) — ` + (returnedActually ? "تم توريده نقداً لخزينة النقابة بموجب إيصال." : "تم ترحيله كـ 'رصيد دائن' ليُخصم من السلفة القادمة.") : remaining < 0 ? `يوجد تجاوز في الصرف قدره (${formatMoney(Math.abs(remaining))}) — يُصرف للموظف.` : `تم تسوية العهدة بالكامل (صفر).`}</div>
+      <div class="footer-note">الحالة النهائية للتسوية: ${settlementFooter}</div>
       <div class="sigs"><div class="sig-box">توقيع المسؤول<div class="sig-space"></div></div><div class="sig-box">المراجعة والرقابة<div class="sig-space"></div></div><div class="sig-box">يعتمد، أمين الصندوق<div class="sig-space"></div></div></div>
       <script>window.onload=()=>{setTimeout(()=>window.print(), 500);}</script>
     </body></html>
@@ -232,6 +279,9 @@ export default function SettlementTab() {
   const [settlementDate,setSettlementDate]= useState(getTodayISO());
   const [expenses,      setExpenses]      = useState([]);
   const [returnedActually, setReturnedActually] = useState(false);
+  const [returnMode, setReturnMode] = useState("carry_forward");
+  const [returnDepositDate, setReturnDepositDate] = useState(getTodayISO());
+  const [returnDepositReference, setReturnDepositReference] = useState("");
   const [saving,        setSaving]        = useState(false);
   const [archiveSearch, setArchiveSearch] = useState("");
   const [archiveMonth,  setArchiveMonth]  = useState("all");
@@ -253,6 +303,13 @@ export default function SettlementTab() {
   const [expFiles,      setExpFiles]      = useState([]);
   const [expMeetingId,  setExpMeetingId]  = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
+
+  const resetSettlementReturnState = (mode = "carry_forward") => {
+    setReturnedActually(mode === "cash_return");
+    setReturnMode(mode);
+    setReturnDepositDate(getTodayISO());
+    setReturnDepositReference("");
+  };
 
   useEffect(() => {
     let checksReady = false;
@@ -510,7 +567,7 @@ export default function SettlementTab() {
       .sort(compareSettlementSequenceDesc);
 
     const latestSettlement = history[0];
-    return latestSettlement && !latestSettlement.returnedActually
+    return latestSettlement && getSettlementReturnMode(latestSettlement) === "carry_forward"
       ? Number(latestSettlement.settlementReturned || 0)
       : 0;
   };
@@ -647,13 +704,17 @@ export default function SettlementTab() {
       setExpenses(selectedTxn.settlementExpenses || []);
       setCollectedSubs(selectedTxn.collectedSubscriptions || selectedTxn.memberSubscriptions || "");
       setSettlementDate(getSettlementApprovalDate(selectedTxn) || getTodayISO());
-      setReturnedActually(Boolean(selectedTxn.returnedActually));
+      const nextReturnMode = getSettlementReturnMode(selectedTxn);
+      setReturnedActually(nextReturnMode === "cash_return");
+      setReturnMode(nextReturnMode === "settled" ? "carry_forward" : nextReturnMode);
+      setReturnDepositDate(selectedTxn.bankDepositDate || getTodayISO());
+      setReturnDepositReference(selectedTxn.bankDepositReference || "");
       resetExpenseForm();
     } else {
       setExpenses([]);
       setCollectedSubs("");
       setSettlementDate(getTodayISO());
-      setReturnedActually(false);
+      resetSettlementReturnState("carry_forward");
       resetExpenseForm();
     }
   }, [selectedTxn]);
@@ -749,7 +810,8 @@ export default function SettlementTab() {
     setSaving(true);
     try {
       const targetId = getIssuedCheckDocId(settlementToDelete);
-      await setDoc(
+      const batch = writeBatch(db);
+      batch.set(
         doc(db, "issued_checks", targetId),
         buildIssuedCheckRecord(settlementToDelete, {
           isSettled: false,
@@ -758,23 +820,34 @@ export default function SettlementTab() {
           settlementSpent: 0,
           settlementReturned: 0,
           returnedActually: false,
+          returnMode: "carry_forward",
+          returnedCashAmount: 0,
+          bankDepositedAmount: 0,
+          bankDepositDate: "",
+          bankDepositReference: "",
+          bankDepositTransactionId: "",
           prevBalanceUsed: 0,
           collectedSubscriptions: 0,
         }),
         { merge: true }
       );
+      if (settlementToDelete.bankDepositTransactionId) {
+        batch.delete(doc(db, "transactions", settlementToDelete.bankDepositTransactionId));
+      }
+      await batch.commit();
       await logAuditEvent("settlement_deleted", {
         transactionId: targetId,
         party: settlementToDelete.employeeName || settlementToDelete.party || "",
         settlementDate: settlementToDelete.settlementDate || "",
         type: settlementToDelete.type || "",
+        deletedDepositTransactionId: settlementToDelete.bankDepositTransactionId || "",
       });
       if (editingSettlementId === settlementToDelete.id || editingSettlementId === targetId) {
         setEditingSettlementId("");
         setSelAdvId("");
         setExpenses([]);
         setCollectedSubs("");
-        setReturnedActually(false);
+        resetSettlementReturnState("carry_forward");
         resetExpenseForm();
       }
       setSettlementToDelete(null);
@@ -821,6 +894,14 @@ export default function SettlementTab() {
     const validationError = validateMeetingAllowanceExpenses();
     if (validationError) return showToast(validationError, "error");
 
+    if (remaining > 0) {
+      const selectedReturnMode = getSettlementReturnMode(selectedTxn || {});
+      setReturnedActually(selectedReturnMode === "cash_return");
+      setReturnMode(selectedReturnMode === "settled" ? "carry_forward" : selectedReturnMode);
+      setReturnDepositDate(selectedTxn?.bankDepositDate || settlementDate || getTodayISO());
+      setReturnDepositReference(selectedTxn?.bankDepositReference || "");
+    }
+
     setConfirmModalData({
       txnId: getIssuedCheckDocId(selectedTxn),
       party: getIssuedCheckDisplayParty(selectedTxn),
@@ -841,20 +922,75 @@ export default function SettlementTab() {
       setConfirmModalData(null);
       return showToast(validationError, "error");
     }
+    if (confirmModalData.remaining > 0 && returnMode === "bank_deposit" && !returnDepositDate) {
+      return showToast("حدد تاريخ الإيداع البنكي قبل اعتماد التسوية", "error");
+    }
     
     setSaving(true);
     try {
       const batch = writeBatch(db);
+      const normalizedReturnMode =
+        confirmModalData.remaining > 0 ? returnMode : "settled";
+      const carryForwardAmount =
+        normalizedReturnMode === "carry_forward" ? Number(confirmModalData.remaining || 0) : 0;
+      const returnedCashAmount =
+        normalizedReturnMode === "cash_return" ? Number(confirmModalData.remaining || 0) : 0;
+      const bankDepositedAmount =
+        normalizedReturnMode === "bank_deposit" ? Number(confirmModalData.remaining || 0) : 0;
+      const depositTransactionId =
+        normalizedReturnMode === "bank_deposit"
+          ? (selectedTxn?.bankDepositTransactionId || confirmModalData.bankDepositTransactionId || doc(collection(db, "transactions")).id)
+          : "";
+
+      if (selectedTxn?.bankDepositTransactionId && normalizedReturnMode !== "bank_deposit") {
+        batch.delete(doc(db, "transactions", selectedTxn.bankDepositTransactionId));
+      }
+
+      if (normalizedReturnMode === "bank_deposit" && bankDepositedAmount > 0) {
+        batch.set(
+          doc(db, "transactions", depositTransactionId),
+          {
+            id: depositTransactionId,
+            type: "deposit",
+            amount: bankDepositedAmount,
+            date: returnDepositDate || settlementDate || getTodayISO(),
+            bankReference: returnDepositReference.trim(),
+            receiptNo: returnDepositReference.trim(),
+            party: confirmModalData.party || "رد متبقي تسوية",
+            employeeId: selectedTxn?.employeeId || "",
+            employeeName: confirmModalData.party || "",
+            state: "posted",
+            sourceCollection: "transactions",
+            settlementId: confirmModalData.txnId,
+            sourceAdvanceId: confirmModalData.txnId,
+            depositSource: "settlement_return",
+            linkedCheckId: confirmModalData.txnId,
+            notes: `إيداع متبقي تسوية ${confirmModalData.party || "عهدة"}${returnDepositReference.trim() ? ` - مرجع ${returnDepositReference.trim()}` : ""}`,
+            createdAt: selectedTxn?.bankDepositTransactionId ? (selectedTxn?.bankDepositCreatedAt || selectedTxn?.createdAt || new Date().toISOString()) : new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      }
 
       batch.set(
         doc(db, "issued_checks", confirmModalData.txnId),
         buildIssuedCheckRecord(selectedTxn, {
           isSettled: true,
-      settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate),
+          settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate),
           settlementExpenses: expenses,
           settlementSpent: confirmModalData.spent,
-          settlementReturned: returnedActually ? 0 : confirmModalData.remaining,
-          returnedActually,
+          settlementReturned: carryForwardAmount,
+          returnedActually: normalizedReturnMode === "cash_return",
+          returnMode: normalizedReturnMode,
+          returnedCashAmount,
+          bankDepositedAmount,
+          bankDepositDate: normalizedReturnMode === "bank_deposit" ? (returnDepositDate || settlementDate || getTodayISO()) : "",
+          bankDepositReference: normalizedReturnMode === "bank_deposit" ? returnDepositReference.trim() : "",
+          bankDepositTransactionId: normalizedReturnMode === "bank_deposit" ? depositTransactionId : "",
+          bankDepositCreatedAt: normalizedReturnMode === "bank_deposit"
+            ? (selectedTxn?.bankDepositCreatedAt || new Date().toISOString())
+            : "",
           prevBalanceUsed: confirmModalData.prevBalance,
           advanceAmountBase: confirmModalData.advanceAmountBase,
           collectedSubscriptions: confirmModalData.collectedSubs,
@@ -867,10 +1003,16 @@ export default function SettlementTab() {
       await logAuditEvent(editingSettlementId ? "settlement_updated" : "settlement_finalized", {
         transactionId: confirmModalData.txnId,
         party: confirmModalData.party || "",
-      settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate),
+        settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate),
         spent: confirmModalData.spent,
-        returned: returnedActually ? 0 : confirmModalData.remaining,
-        returnedActually,
+        returned: carryForwardAmount,
+        returnedActually: normalizedReturnMode === "cash_return",
+        returnMode: normalizedReturnMode,
+        returnedCashAmount,
+        bankDepositedAmount,
+        bankDepositDate: normalizedReturnMode === "bank_deposit" ? (returnDepositDate || settlementDate || getTodayISO()) : "",
+        bankDepositReference: normalizedReturnMode === "bank_deposit" ? returnDepositReference.trim() : "",
+        bankDepositTransactionId: normalizedReturnMode === "bank_deposit" ? depositTransactionId : "",
         expensesCount: expenses.length,
         type: confirmModalData.type || "",
       });
@@ -882,7 +1024,7 @@ export default function SettlementTab() {
       setSelAdvId("");
       setExpenses([]);
       setCollectedSubs("");
-      setReturnedActually(false);
+      resetSettlementReturnState("carry_forward");
       setActiveTab("archive");
 
     } catch (e) {
@@ -959,13 +1101,88 @@ export default function SettlementTab() {
             </div>
 
             {confirmModalData.remaining > 0 && (
-              <label className="flex items-start gap-2 p-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/20 cursor-pointer hover:bg-amber-100 transition-colors">
-                <input type="checkbox" checked={returnedActually} onChange={e => setReturnedActually(e.target.checked)} className="w-4 h-4 mt-0.5 accent-amber-600"/>
+              <div className="space-y-3 p-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/20">
                 <div>
-                  <span className="text-amber-900 dark:text-amber-400 text-xs font-black block">تم توريد المتبقي ({formatMoney(confirmModalData.remaining || 0)}) نقدًا</span>
-                  <span className="block text-[9px] font-bold text-amber-600 mt-1 leading-relaxed">عدم التفعيل يعني ترحيل المبلغ "كرصيد دائن" للسلفة القادمة.</span>
+                  <span className="text-amber-900 dark:text-amber-400 text-xs font-black block">
+                    معالجة المتبقي ({formatMoney(confirmModalData.remaining || 0)})
+                  </span>
+                  <span className="block text-[9px] font-bold text-amber-600 mt-1 leading-relaxed">
+                    اختر كيف سيتم إغلاق المتبقي داخل التسوية والمستندات المالية.
+                  </span>
                 </div>
-              </label>
+
+                <div className="grid gap-2">
+                  {[
+                    {
+                      id: "carry_forward",
+                      label: "ترحيل للسلفة التالية",
+                      hint: "يبقى المبلغ رصيدًا مرحلًا ويظهر في السلفة التالية.",
+                    },
+                    {
+                      id: "cash_return",
+                      label: "رد نقدي للخزينة",
+                      hint: "يغلق المتبقي كمبلغ مردود نقدًا بدون حركة إيداع بنكية.",
+                    },
+                    {
+                      id: "bank_deposit",
+                      label: "إيداع بالبنك",
+                      hint: "ينشئ حركة إيداع فعلية في كشف الحساب ويرتبط بمستند التسوية.",
+                    },
+                  ].map((option) => (
+                    <label
+                      key={option.id}
+                      className={clsx(
+                        "flex items-start gap-2 p-2.5 rounded-xl border cursor-pointer transition-colors",
+                        returnMode === option.id
+                          ? "border-teal-300 bg-white dark:bg-slate-900/40"
+                          : "border-amber-100 bg-white/70 dark:bg-slate-900/20"
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="settlement-return-mode"
+                        checked={returnMode === option.id}
+                        onChange={() => {
+                          setReturnMode(option.id);
+                          setReturnedActually(option.id === "cash_return");
+                          if (option.id !== "bank_deposit") {
+                            setReturnDepositReference("");
+                            setReturnDepositDate(settlementDate || getTodayISO());
+                          }
+                        }}
+                        className="w-4 h-4 mt-0.5 accent-teal-600"
+                      />
+                      <div>
+                        <span className="text-slate-800 dark:text-slate-100 text-xs font-black block">{option.label}</span>
+                        <span className="block text-[9px] font-bold text-slate-500 mt-1 leading-relaxed">{option.hint}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+
+                {returnMode === "bank_deposit" && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 pr-1">تاريخ الإيداع</label>
+                      <ArabicDatePicker
+                        value={returnDepositDate}
+                        onChange={setReturnDepositDate}
+                        placeholder="تاريخ الإيداع البنكي"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 pr-1">مرجع البنك / رقم الإيصال</label>
+                      <input
+                        type="text"
+                        value={returnDepositReference}
+                        onChange={(e) => setReturnDepositReference(e.target.value)}
+                        placeholder="مثال: 5412/بنك"
+                        className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-teal-500 h-[38px]", T.inp)}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -1233,7 +1450,7 @@ export default function SettlementTab() {
           <div className="overflow-x-auto min-h-[400px]">
             <table className="w-full text-right text-[11px]">
               <thead className="bg-slate-100/80 dark:bg-slate-800/50 border-b-2 border-slate-200 dark:border-slate-700">
-                <tr>{["الاعتماد","المسؤول (النوع)","التمويل","متاح","منصرف","الرصيد المرحل",""].map((h, i) => <th key={i} className="p-3 font-black text-slate-500 uppercase">{h}</th>)}</tr>
+                <tr>{["الاعتماد","المسؤول (النوع)","التمويل","متاح","منصرف","المتبقي / الإغلاق",""].map((h, i) => <th key={i} className="p-3 font-black text-slate-500 uppercase">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                 {filteredArchivedSettlements.map(s => {
@@ -1262,14 +1479,34 @@ export default function SettlementTab() {
                       <td className="p-3 font-black text-teal-600 bg-teal-50/50 dark:bg-transparent rounded-lg">{formatMoney(sAvailable)}</td>
                       <td className="p-3 font-black text-rose-600">{formatMoney(s.settlementSpent || 0)}</td>
                       <td className="p-3 font-black">
-                        <span className={clsx(s.returnedActually ? "text-slate-400 line-through opacity-70" : "text-emerald-600")}>{formatMoney(s.settlementReturned || 0)}</span>
-                        <span className="block text-[8px] mt-0.5 text-slate-400 font-bold">{s.returnedActually ? "تم الرد نقدًا" : "مرحّل للقادم"}</span>
+                        <span className={clsx(getSettlementReturnMode(s) === "carry_forward" ? "text-emerald-600" : "text-slate-500")}>
+                          {formatMoney(getSettlementEffectiveRemaining(s))}
+                        </span>
+                        <span className="block text-[8px] mt-0.5 text-slate-400 font-bold">{getSettlementReturnedLabel(s)}</span>
                       </td>
                       <td className="p-3 text-left">
                         <div className="flex items-center justify-end gap-1">
                           <button onClick={() => startEditSettlement(s)} className="p-2 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50 transition-colors" title="تعديل"><Edit3 size={16}/></button>
                           <button onClick={() => setSettlementToDelete(s)} className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors" title="حذف"><RotateCcw size={16}/></button>
-                          <button onClick={() => printSettlementLocal({ advanceTxn: s, expenses: s.settlementExpenses, spent: s.settlementSpent, remaining: s.settlementReturned, prevBalance: sPrevBal, collectedSubs: sSubs, returnedActually: s.returnedActually })} className="p-2 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50 transition-colors" title="طباعة"><Printer size={16}/></button>
+                          <button
+                            onClick={() =>
+                              printSettlementLocal({
+                                advanceTxn: s,
+                                expenses: s.settlementExpenses,
+                                spent: s.settlementSpent,
+                                remaining: getSettlementEffectiveRemaining(s),
+                                prevBalance: sPrevBal,
+                                collectedSubs: sSubs,
+                                returnMode: getSettlementReturnMode(s),
+                                bankDepositDate: s.bankDepositDate || "",
+                                bankDepositReference: s.bankDepositReference || "",
+                              })
+                            }
+                            className="p-2 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50 transition-colors"
+                            title="طباعة"
+                          >
+                            <Printer size={16}/>
+                          </button>
                         </div>
                       </td>
                     </tr>

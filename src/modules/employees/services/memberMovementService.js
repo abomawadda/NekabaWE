@@ -2,13 +2,21 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
+  query,
   serverTimestamp,
   setDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { useFirebase } from "../../../app/providers/FirebaseProvider";
 import { logAuditEvent } from "../../../utils/auditLog";
+import { parseEmployeeDate } from "../../../utils/memberBenefits";
+import {
+  BOARD_MEMBERSHIPS_COLLECTION,
+  normalizeBoardMembership,
+} from "../../board/boardLifecycle";
 import {
   buildEmployeeLifecyclePatch,
   buildMemberMovementTimeline,
@@ -18,6 +26,29 @@ import {
 
 const EMPLOYEES_COLLECTION = "employees";
 const MEMBER_MOVEMENTS_COLLECTION = "member_movements";
+const BOARD_END_REASON_BY_MOVEMENT = {
+  retirement: "retirement",
+  death: "death",
+  resignation: "resignation",
+  service_end: "membership_end",
+  board_exit: "board_restructure",
+};
+
+const toDateTimestamp = (value = "") => {
+  if (!value) return 0;
+  const parsed = parseEmployeeDate(value) || new Date(value);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+};
+
+const buildBoardMembershipClosureNote = (movement = {}) =>
+  [
+    "أغلقت عضوية المجلس تلقائيًا",
+    movement?.movementLabel ? `بسبب ${movement.movementLabel}` : "",
+    movement?.effectiveDate ? `بتاريخ ${movement.effectiveDate}` : "",
+    movement?.reason ? `(${movement.reason})` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
 export function useMemberMovementService() {
   const { app } = useFirebase();
@@ -27,6 +58,50 @@ export function useMemberMovementService() {
     if (!employeeId) return null;
     const employeeSnap = await getDoc(doc(db, EMPLOYEES_COLLECTION, employeeId));
     return employeeSnap.exists() ? { id: employeeSnap.id, ...employeeSnap.data() } : null;
+  };
+
+  const closeBoardMembershipsForMovement = async (batch, movement, member) => {
+    const endReason = BOARD_END_REASON_BY_MOVEMENT[movement?.movementType];
+    if (!endReason || !member?.id) return [];
+
+    const membershipsSnap = await getDocs(
+      query(collection(db, BOARD_MEMBERSHIPS_COLLECTION), where("memberId", "==", member.id))
+    );
+
+    const effectiveTimestamp = toDateTimestamp(movement?.effectiveDate);
+    const closureNote = buildBoardMembershipClosureNote(movement);
+    const updatedMembershipIds = [];
+
+    membershipsSnap.docs.forEach((membershipSnap) => {
+      const membership = normalizeBoardMembership({
+        id: membershipSnap.id,
+        ...membershipSnap.data(),
+      });
+
+      if (!["active", "suspended"].includes(membership.status)) return;
+
+      const membershipEndTimestamp = toDateTimestamp(membership.endDate);
+      if (membershipEndTimestamp && effectiveTimestamp && membershipEndTimestamp < effectiveTimestamp) return;
+
+      batch.set(
+        doc(db, BOARD_MEMBERSHIPS_COLLECTION, membership.id),
+        {
+          status: "ended",
+          endDate: movement.effectiveDate || membership.endDate || "",
+          endReason,
+          decisionDate: movement.decisionDate || movement.effectiveDate || membership.decisionDate || "",
+          decisionRef: movement.reason || membership.decisionRef || "",
+          notes: [membership.notes, closureNote].filter(Boolean).join(" | "),
+          updatedAt: new Date().toISOString(),
+          updatedAtServer: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      updatedMembershipIds.push(membership.id);
+    });
+
+    return updatedMembershipIds;
   };
 
   const saveMemberMovement = async (movement, member) => {
@@ -101,12 +176,21 @@ export function useMemberMovementService() {
       { merge: true }
     );
 
+    const closedBoardMembershipIds = await closeBoardMembershipsForMovement(
+      batch,
+      approvedMovement,
+      resolvedMember
+    );
+
     await batch.commit();
 
     await logAuditEvent("employees.movement.approve", {
       targetId: movementId,
       before: approvedMovement.beforeSnapshot || null,
       after: afterSnapshot,
+      metadata: {
+        closedBoardMembershipIds,
+      },
       riskLevel: "high",
       page: "/employees",
     });
@@ -114,6 +198,7 @@ export function useMemberMovementService() {
     return {
       movement: approvedMovement,
       employeePatch,
+      closedBoardMembershipIds,
     };
   };
 
