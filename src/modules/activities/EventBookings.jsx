@@ -17,6 +17,7 @@ import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { openPrintWindow } from "../../utils/print";
 import {
   BOARD_MEMBERSHIP_ROLES,
   createBenefitLabel,
@@ -60,7 +61,7 @@ const parseNationalID = (nid) => {
 
 // ── طباعة كشف الحضور ──
 const printManifest = (event, bookings) => {
-  const win = window.open("", "_blank", "width=1100,height=850");
+  const win = openPrintWindow("event-manifest", "width=1100,height=850");
   if (!win) return;
   const confirmed = bookings.filter(b => b.status === "confirmed");
   const totalPax = confirmed.reduce((s, b) => s + Number(b.totalPax || 1), 0);

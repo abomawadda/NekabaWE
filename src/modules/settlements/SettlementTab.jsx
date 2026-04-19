@@ -15,6 +15,12 @@ import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { logAuditEvent } from "../../utils/auditLog";
+import {
+  getDeathDate,
+  getMembershipEndDate,
+  isBoardMember,
+  parseEmployeeDate,
+} from "../../utils/memberBenefits";
 import { formatMoney } from "../../utils/numberFormat";
 import { openPrintWindow } from "../../utils/print";
 import {
@@ -23,6 +29,7 @@ import {
   getIssuedCheckDisplayParty,
   getSettlementMode,
   isLegacyCheckType,
+  LEGACY_ISSUED_CHECK_PREFIX,
   mergeIssuedChecksSources,
   normalizeIssuedCheckType,
   normalizeRequiresSettlement,
@@ -31,7 +38,6 @@ import { ReceiptText, Plus, Trash2, Printer, CheckCircle2, FileText, Tag, Dollar
 import clsx from "clsx";
 
 const INITIAL_CATS = ["بدل ضيافة", "أدوات مكتبية", "بدل انتقال", "صيانة", "مشتريات أخرى", "بدل جلسات"];
-const BOARD_ROLES = ["رئيس المجلس", "النقيب العام", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة", "عضو مجلس"];
 const SESSION_ALLOWANCE_CATEGORIES = ["بدل جلسات"];
 const HOSPITALITY_ALLOWANCE_CATEGORIES = ["بدل ضيافة", "ضيافة وبوفيه"];
 const ALLOWANCE_TYPE_LABELS = {
@@ -60,6 +66,42 @@ const getSettlementApprovalDate = (settlement = {}) =>
     settlement?.settlementExpenses,
     settlement?.settlementDate || settlement?.date || ""
   );
+
+const normalizeDateOnly = (value) => {
+  const parsed = parseEmployeeDate(value);
+  return parsed ? new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()) : null;
+};
+
+const getBoardSettlementEndDate = (member) => {
+  const membershipEndDate = getMembershipEndDate(member);
+  const deathDate = getDeathDate(member);
+
+  if (membershipEndDate && deathDate) {
+    return membershipEndDate.getTime() <= deathDate.getTime() ? membershipEndDate : deathDate;
+  }
+
+  return membershipEndDate || deathDate || null;
+};
+
+const isBoardMemberEligibleForSettlementDate = (member, onDate) => {
+  if (!isBoardMember(member)) return false;
+
+  const referenceDate = normalizeDateOnly(onDate) || normalizeDateOnly(new Date());
+  const boardEndDate = normalizeDateOnly(getBoardSettlementEndDate(member));
+
+  if (!boardEndDate) return true;
+  return referenceDate.getTime() <= boardEndDate.getTime();
+};
+
+const getSettlementSourceKey = (tx = {}) => {
+  const id = String(tx?.id || "");
+  if (tx?.legacySourceId) return String(tx.legacySourceId);
+  if (tx?.sourceTransactionId) return String(tx.sourceTransactionId);
+  if (id.startsWith(LEGACY_ISSUED_CHECK_PREFIX)) {
+    return id.slice(LEGACY_ISSUED_CHECK_PREFIX.length);
+  }
+  return id;
+};
 
 // ── دالة الطباعة المدمجة لمنع خطأ المتصفح ──
 const printSettlementLocal = ({ advanceTxn, expenses, spent, remaining, prevBalance = 0, collectedSubs = 0, returnedActually }) => {
@@ -162,6 +204,7 @@ export default function SettlementTab() {
   
   const [confirmModalData, setConfirmModalData] = useState(null);
   const [expenseToDelete,  setExpenseToDelete]  = useState(null); 
+  const [editingExpense, setEditingExpense] = useState(null);
   const [editingSettlementId, setEditingSettlementId] = useState("");
   const [settlementToDelete, setSettlementToDelete] = useState(null);
   
@@ -242,6 +285,32 @@ export default function SettlementTab() {
     [issuedChecks, legacyTransactions]
   );
 
+  const normalizedSourceTransactions = useMemo(() => {
+    const grouped = new Map();
+
+    sourceTransactions.forEach((tx) => {
+      const key = getSettlementSourceKey(tx);
+      const current = grouped.get(key);
+      if (!current) {
+        grouped.set(key, tx);
+        return;
+      }
+
+      if (current.isSettled && !tx.isSettled) {
+        grouped.set(key, tx);
+        return;
+      }
+
+      if (Boolean(current.isSettled) === Boolean(tx.isSettled)) {
+        const currentUpdatedAt = String(current.updatedAt || current.settlementDate || current.date || "");
+        const nextUpdatedAt = String(tx.updatedAt || tx.settlementDate || tx.date || "");
+        if (nextUpdatedAt >= currentUpdatedAt) grouped.set(key, tx);
+      }
+    });
+
+    return Array.from(grouped.values());
+  }, [sourceTransactions]);
+
   const getIssuedCheckDocId = (tx) => {
     if (!tx) return "";
     if (tx.legacySourceId) return tx.id;
@@ -286,9 +355,37 @@ export default function SettlementTab() {
 
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
-  const activeBoardMembers = useMemo(() => employees.filter(e => BOARD_ROLES.includes(e.membershipStatus) && !["وفاة", "استقالة"].includes(e.memberState)), [employees]);
-
   const selectedMeeting = useMemo(() => boardMeetings.find(m => m.id === expMeetingId) || null, [boardMeetings, expMeetingId]);
+
+  const allowanceReferenceDate = useMemo(() => {
+    if (expCat === "بدل انتقال") return expDate || getTodayISO();
+    if (expCat === "بدل جلسات" && selectedMeeting?.date) return selectedMeeting.date;
+    return getTodayISO();
+  }, [expCat, expDate, selectedMeeting]);
+
+  const historicalMeetingMembers = useMemo(() => {
+    if (!selectedMeeting?.attendees?.length) return [];
+    const employeesMap = new Map(employees.map((employee) => [employee.id, employee]));
+    return selectedMeeting.attendees
+      .map((memberId) => employeesMap.get(memberId))
+      .filter(Boolean);
+  }, [employees, selectedMeeting]);
+
+  const activeBoardMembers = useMemo(
+    () => employees.filter((employee) => isBoardMemberEligibleForSettlementDate(employee, allowanceReferenceDate)),
+    [employees, allowanceReferenceDate]
+  );
+
+  const selectableBoardMembers = useMemo(() => {
+    if (expCat !== "بدل جلسات") return activeBoardMembers;
+
+    const merged = [...historicalMeetingMembers, ...activeBoardMembers];
+    const uniqueMembers = new Map();
+    merged.forEach((member) => {
+      if (member?.id && !uniqueMembers.has(member.id)) uniqueMembers.set(member.id, member);
+    });
+    return Array.from(uniqueMembers.values());
+  }, [activeBoardMembers, expCat, historicalMeetingMembers]);
 
   useEffect(() => {
     if (expCat === "بدل انتقال") {
@@ -299,7 +396,8 @@ export default function SettlementTab() {
 
     if (expCat === "بدل جلسات") {
       if (selectedMeeting?.attendees?.length) {
-        setSelectedMembers(selectedMeeting.attendees);
+        const allowedIds = new Set(selectableBoardMembers.map((member) => member.id));
+        setSelectedMembers(selectedMeeting.attendees.filter((memberId) => allowedIds.has(memberId)));
       } else {
         setSelectedMembers([]);
       }
@@ -313,7 +411,7 @@ export default function SettlementTab() {
 
     setSelectedMembers([]);
     setExpMeetingId("");
-  }, [expCat, activeBoardMembers, selectedMeeting]);
+  }, [expCat, activeBoardMembers, selectableBoardMembers, selectedMeeting]);
 
   useEffect(() => {
     if (isMeetingAllowanceCategory(expCat) && selectedMeeting?.date) {
@@ -321,7 +419,10 @@ export default function SettlementTab() {
     }
   }, [expCat, selectedMeeting]);
 
-  const archivedSettlements = useMemo(() => sourceTransactions.filter(t => normalizeRequiresSettlement(t) && t.isSettled), [sourceTransactions]);
+  const archivedSettlements = useMemo(
+    () => normalizedSourceTransactions.filter((tx) => normalizeRequiresSettlement(tx) && Boolean(tx.isSettled)),
+    [normalizedSourceTransactions]
+  );
   const editingSettlement = useMemo(() => archivedSettlements.find(t => t.id === editingSettlementId) || null, [archivedSettlements, editingSettlementId]);
   const archiveYears = useMemo(
     () => [...new Set(archivedSettlements.map(s => getYearValue(getSettlementApprovalDate(s))).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
@@ -349,10 +450,10 @@ export default function SettlementTab() {
 
   const openAdvances = useMemo(
     () =>
-      sourceTransactions
+      normalizedSourceTransactions
         .filter((t) => normalizeRequiresSettlement(t) && !t.isSettled && (t.state === "posted" || t.state === "approved" || !t.state))
         .map((adv) => ({ ...adv, prevBalance: getPrevBalance(adv.employeeId, adv.id) })),
-    [sourceTransactions, archivedSettlements]
+    [normalizedSourceTransactions, archivedSettlements]
   );
   const currentTxnOptions = useMemo(() => {
     const txMap = new Map();
@@ -365,6 +466,7 @@ export default function SettlementTab() {
 
   const selectedTxn = useMemo(() => currentTxnOptions.find(a => a.id === selAdvId) || null, [currentTxnOptions, selAdvId]);
   const currentSettlementTxnId = selectedTxn?.id || editingSettlementId || "";
+  const editingExpenseAmount = Number(editingExpense?.amount || 0);
 
   const blockedMeetingIdsByType = useMemo(() => {
     const result = {
@@ -384,6 +486,7 @@ export default function SettlementTab() {
     });
 
     expenses.forEach((expense) => {
+      if (editingExpense?.id && expense.id === editingExpense.id) return;
       const allowanceType = getMeetingAllowanceType(expense.category);
       const meetingId = String(expense.meetingId || "").trim();
       if (!allowanceType || !meetingId) return;
@@ -391,7 +494,7 @@ export default function SettlementTab() {
     });
 
     return result;
-  }, [currentSettlementTxnId, expenses, sourceTransactions]);
+  }, [currentSettlementTxnId, editingExpense, expenses, sourceTransactions]);
 
   const availableMeetings = useMemo(() => {
     const allowanceType = getMeetingAllowanceType(expCat);
@@ -460,6 +563,17 @@ export default function SettlementTab() {
   
   const spent          = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const remaining      = TOTAL_AVAILABLE - spent;
+  const availableForExpense = remaining + editingExpenseAmount;
+  const resetExpenseForm = () => {
+    setEditingExpense(null);
+    setExpAmt("");
+    setExpCat(INITIAL_CATS[0]);
+    setExpNotes("");
+    setExpDate(getTodayISO());
+    setExpFiles([]);
+    setSelectedMembers([]);
+    setExpMeetingId("");
+  };
 
   useEffect(() => {
     if (selectedTxn) {
@@ -467,13 +581,59 @@ export default function SettlementTab() {
       setCollectedSubs(selectedTxn.collectedSubscriptions || selectedTxn.memberSubscriptions || "");
       setSettlementDate(getSettlementApprovalDate(selectedTxn) || getTodayISO());
       setReturnedActually(Boolean(selectedTxn.returnedActually));
-      setExpAmt(""); setExpNotes(""); setExpFiles([]); setSelectedMembers([]); setExpMeetingId("");
+      resetExpenseForm();
     } else {
-      setExpenses([]); setCollectedSubs(""); setSettlementDate(getTodayISO()); setReturnedActually(false); setExpMeetingId("");
+      setExpenses([]);
+      setCollectedSubs("");
+      setSettlementDate(getTodayISO());
+      setReturnedActually(false);
+      resetExpenseForm();
     }
   }, [selectedTxn]);
 
+  const startEditExpense = (expense) => {
+    setEditingExpense(expense);
+    setExpCat(expense.category || INITIAL_CATS[0]);
+    setExpAmt(String(expense.amount || ""));
+    setExpNotes(expense.notes || "");
+    setExpDate(expense.date || getTodayISO());
+    setExpFiles(Array.isArray(expense.files) ? expense.files : []);
+    setSelectedMembers(Array.isArray(expense.boardMembers) ? expense.boardMembers : []);
+    setExpMeetingId(expense.meetingId || "");
+  };
+
   const addExpense = () => {
+    if (editingExpense) {
+      if (!expAmt || Number(expAmt) <= 0) return showToast("ط£ط¯ط®ظ„ ظ…ط¨ظ„ط؛ط§ظ‹ طµط­ظٹط­ط§ظ‹", "error");
+      if (Number(expAmt) > availableForExpense) return showToast(`طھط¬ط§ظˆط²طھ ط§ظ„ظ…طھط§ط­! (${formatMoney(availableForExpense || 0)})`, "error");
+      if (isMeetingAllowanceCategory(expCat) && !selectedMeeting) return showToast("ط§ط®طھط± ط§ظ„ط§ط¬طھظ…ط§ط¹ ط£ظˆظ„ط§ظ‹", "error");
+      if (["ط¨ط¯ظ„ ط§ظ†طھظ‚ط§ظ„", "ط¨ط¯ظ„ ط¬ظ„ط³ط§طھ"].includes(expCat) && selectedMembers.length === 0) return showToast("ط§ط®طھط± ط¹ط¶ظˆ ظ…ط¬ظ„ط³ ظˆط§ط­ط¯ ط¹ظ„ظ‰ ط§ظ„ط£ظ‚ظ„", "error");
+      if (isMeetingAllowanceCategory(expCat) && blockedMeetingIdsByType[getMeetingAllowanceType(expCat)].has(String(selectedMeeting?.id || "").trim())) {
+        return showToast(`طھظ… طµط±ظپ ${expCat === "ط¨ط¯ظ„ ط¬ظ„ط³ط§طھ" ? "ط¨ط¯ظ„ ط§ظ„ط¬ظ„ط³ط§طھ" : "ط¨ط¯ظ„ ط§ظ„ط¶ظٹط§ظپط©"} ظ„ظ‡ط°ط§ ط§ظ„ط§ط¬طھظ…ط§ط¹ ط¨ط§ظ„ظپط¹ظ„`, "error");
+      }
+
+      setExpenses(prev => prev.map(expense => (
+        expense.id === editingExpense.id
+          ? {
+              ...expense,
+              date: isMeetingAllowanceCategory(expCat) ? (selectedMeeting?.date || expDate) : expDate,
+              amount: expAmt,
+              category: expCat,
+              notes: expNotes,
+              meetingId: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.id || "" : "",
+              meetingTitle: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.title || "" : "",
+              boardMembers: ["ط¨ط¯ظ„ ط§ظ†طھظ‚ط§ظ„", "ط¨ط¯ظ„ ط¬ظ„ط³ط§طھ"].includes(expCat) ? selectedMembers : [],
+              allowancePerMember: ["ط¨ط¯ظ„ ط§ظ†طھظ‚ط§ظ„", "ط¨ط¯ظ„ ط¬ظ„ط³ط§طھ"].includes(expCat) && selectedMembers.length > 0
+                ? Number(expAmt) / selectedMembers.length
+                : 0,
+              files: expFiles
+            }
+          : expense
+      )));
+      resetExpenseForm();
+      showToast("طھظ… ط­ظپط¸ طھط¹ط¯ظٹظ„ ط¨ظ†ط¯ ط§ظ„ظ…طµط±ظˆظپ", "success");
+      return;
+    }
     if (!expAmt || Number(expAmt) <= 0) return showToast("أدخل مبلغاً صحيحاً", "error");
     if (Number(expAmt) > remaining) return showToast(`تجاوزت المتاح! (${formatMoney(remaining || 0)})`, "error");
     if (isMeetingAllowanceCategory(expCat) && !selectedMeeting) return showToast("اختر الاجتماع أولاً", "error");
@@ -502,6 +662,9 @@ export default function SettlementTab() {
 
   const executeRemoveExpense = () => {
     if (!expenseToDelete) return;
+    if (editingExpense?.id === expenseToDelete.id) {
+      resetExpenseForm();
+    }
     setExpenses(prev => prev.filter(e => e.id !== expenseToDelete.id));
     setExpenseToDelete(null);
     showToast("تم حذف الفاتورة", "success");
@@ -545,6 +708,7 @@ export default function SettlementTab() {
         setExpenses([]);
         setCollectedSubs("");
         setReturnedActually(false);
+        resetExpenseForm();
       }
       setSettlementToDelete(null);
       setActiveTab("current");
@@ -854,7 +1018,7 @@ export default function SettlementTab() {
                     <Users size={14}/> {expCat === "بدل جلسات" ? "أعضاء الاجتماع المستحقون" : `تحديد أعضاء المجلس المستحقين لـ ${expCat}`}
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto p-2 bg-white dark:bg-slate-800 rounded-lg border border-indigo-100 dark:border-indigo-800">
-                    {activeBoardMembers.map(m => (
+                    {selectableBoardMembers.map(m => (
                       <label key={m.id} className="flex items-center gap-2 text-[10px] font-bold cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-1 rounded transition-colors">
                         <input 
                           type="checkbox" 
@@ -869,7 +1033,7 @@ export default function SettlementTab() {
                         {m.name.split(" ").slice(0,2).join(" ")}
                       </label>
                     ))}
-                    {activeBoardMembers.length === 0 && <p className="text-[9px] text-slate-400 p-1">لا يوجد أعضاء مجلس نشطين</p>}
+                    {selectableBoardMembers.length === 0 && <p className="text-[9px] text-slate-400 p-1">لا يوجد أعضاء مجلس مستحقون لهذا التاريخ</p>}
                   </div>
                   {expAmt && selectedMembers.length > 0 && (
                     <p className="text-[9px] font-black text-indigo-600 mt-1 flex gap-1 bg-indigo-100/50 dark:bg-indigo-900/50 p-1.5 rounded">
@@ -896,7 +1060,16 @@ export default function SettlementTab() {
 
               <FileUpload txId={`tmp_${selAdvId}`} existingFiles={expFiles} onChange={setExpFiles}/>
 
-              <button onClick={addExpense} disabled={!expAmt || Number(expAmt) <= 0 || Number(expAmt) > remaining} className="w-full py-2.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl font-black text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-40">
+              {editingExpense && (
+                <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40">
+                  <p className="text-[10px] font-black text-amber-700 dark:text-amber-400">جاري تعديل بند من كشف التسوية</p>
+                  <button onClick={resetExpenseForm} className="text-[10px] font-black text-amber-700 hover:text-rose-600 transition-colors">
+                    إلغاء التعديل
+                  </button>
+                </div>
+              )}
+
+              <button onClick={addExpense} disabled={!expAmt || Number(expAmt) <= 0 || Number(expAmt) > (editingExpense ? availableForExpense : remaining)} className="w-full py-2.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl font-black text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-40">
                 <Plus size={14}/> إدراج للكشف
               </button>
             </div>
@@ -923,8 +1096,8 @@ export default function SettlementTab() {
                 <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
                   {expenses.length === 0 ? (
                     <tr><td colSpan={4} className="p-16 text-center text-slate-400 font-bold text-xs border-2 border-dashed rounded-xl mt-4">الكشف فارغ — قم بإضافة فواتير</td></tr>
-                  ) : expenses.map((e, i) => (
-                    <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+                  ) : expenses.map((e) => (
+                    <tr key={e.id} onClick={() => startEditExpense(e)} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group cursor-pointer">
                       <td className="p-2.5 font-black text-teal-600">
                         {e.category}
                         {["بدل انتقال", "بدل جلسات"].includes(e.category) && <span className="block text-[8px] text-indigo-500 mt-0.5 font-bold">بدل مستقل داخل كشف التسوية</span>}

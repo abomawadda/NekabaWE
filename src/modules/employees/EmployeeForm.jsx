@@ -37,7 +37,7 @@ const WORKPLACE_GROUPS = [
   { groupName:"الدقهلية الثانية", options:["طلخا","نبروه","بلقاس","شربين","دكرنس","منية النصر","المنزلة"] },
 ];
 
-const MEMBERSHIP_TYPES  = ["عضو جمعية عمومية","رئيس المجلس","الأمين العام","أمين الصندوق","عضو مجلس إدارة","نقابة مستقلة"];
+const MEMBERSHIP_TYPES  = ["عضو جمعية عمومية","رئيس المجلس","الأمين العام","أمين الصندوق","نائب الرئيس","عضو مجلس إدارة","عضو مجلس","نقابة مستقلة"];
 const MEMBER_STATE       = ["نشط","موقوف","إجازة بدون أجر","معاش","استقالة","وفاة"];
 const SUBSCRIPTION_STATUS = ["مسدد","متأخر","معفي","موقوف"];
 const INSURANCE_TYPES    = ["تأمين صحي حكومي","تأمين خاص","كلاهما","لا يوجد"];
@@ -489,6 +489,7 @@ export default function EmployeeForm({
         ...actualData,
         birthDate:        actualData.birthDate || actualData.dateOfBirth || "",
         retirementDate:   actualData.retirementDate || actualData.retireDate || "",
+        membershipExpiry: actualData.membershipExpiry || actualData.retirementDate || actualData.retireDate || "",
         deathDate:        actualData.deathDate || actualData.dateOfDeath || "",
         membershipStatus: actualData.membershipStatus || "عضو جمعية عمومية",
         memberState:      actualData.memberState || "نشط",
@@ -534,6 +535,7 @@ export default function EmployeeForm({
       birthDate: formatEmployeeDate(derivedBirthDate) || prev.birthDate || "",
       placeOfBirth: gov,
       retirementDate: formatEmployeeDate(legalRetirementDate) || prev.retirementDate || "",
+      membershipExpiry: formatEmployeeDate(legalRetirementDate) || prev.membershipExpiry || "",
     }));
   }, [emp.nationalId]);
 
@@ -770,7 +772,7 @@ export default function EmployeeForm({
             <ERPInput label="إجمالي الاشتراكات المسددة" value={emp.totalPaidSubscriptions||""} onChange={e => upd({ totalPaidSubscriptions: e.target.value })} isNumeric icon={CheckCircle2}/>
             <ERPInput label="المتأخرات (جنيه)" value={emp.subscriptionArrears||""} onChange={e => upd({ subscriptionArrears: e.target.value })} isNumeric icon={AlertCircle}/>
             <ArabicDatePicker label="تاريخ آخر تجديد" value={emp.lastRenewalDate} onChange={v => upd({ lastRenewalDate: v })} maxDate={fmtDate(new Date())} T={T}/>
-            <ArabicDatePicker label="انتهاء كارنيه العضوية" value={emp.membershipExpiry} onChange={v => upd({ membershipExpiry: v })} T={T}/>
+            <ERPInput label="تاريخ انتهاء عضوية النقابة" value={emp.membershipExpiry || emp.retirementDate || "—"} isDerived icon={Calendar}/>
             <ERPInput label="ملاحظات العضوية" value={emp.membershipNotes||""} onChange={e => upd({ membershipNotes: e.target.value })} icon={Clipboard}/>
           </ERPSection>
         </div>

@@ -1,4 +1,4 @@
-import { getPrintBrandHeader, getPrintBrandStyles, getPrintFrameHtml } from "../../utils/branding";
+import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { openPrintWindow } from "../../utils/print";
 import { escapeHtml, formatDisplayValue } from "./reportUtils";
 
@@ -142,7 +142,6 @@ export const renderPrintReport = ({
         </style>
       </head>
       <body>
-        ${getPrintFrameHtml({ watermark: config.title })}
         <div class="sheet ${layoutClass}">
           ${getPrintBrandHeader({ reportTitle: config.title })}
           <div class="summary-grid">${summaryCards}</div>
