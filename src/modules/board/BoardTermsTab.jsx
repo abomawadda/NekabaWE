@@ -226,10 +226,31 @@ export default function BoardTermsTab({
     () => sortBoardMembers(buildBoardMemberViewsFromMemberships(membershipsForSelectedTerm, allEmployees, { termId: selectedTerm?.id })),
     [allEmployees, membershipsForSelectedTerm, selectedTerm?.id]
   );
+  const membershipsMap = useMemo(
+    () =>
+      new Map(
+        membershipsForSelectedTerm.map((membership) => {
+          const normalizedMembership = normalizeBoardMembership(membership);
+          return [normalizedMembership.id, normalizedMembership];
+        })
+      ),
+    [membershipsForSelectedTerm]
+  );
+  const employeesMap = useMemo(
+    () => new Map((allEmployees || []).map((employee) => [employee.id, employee])),
+    [allEmployees]
+  );
 
   const selectableEmployees = useMemo(
     () => [...allEmployees].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ar")),
     [allEmployees]
+  );
+  const replacementMembershipOptions = useMemo(
+    () =>
+      membershipsForSelectedTerm
+        .map((membership) => normalizeBoardMembership(membership))
+        .sort((a, b) => String(a.memberName || "").localeCompare(String(b.memberName || ""), "ar")),
+    [membershipsForSelectedTerm]
   );
 
   const activeMembershipCount = membershipsForSelectedTerm.filter((membership) => membership.status === "active").length;
@@ -281,6 +302,30 @@ export default function BoardTermsTab({
       replacementForMembershipId: membership.replacementForMembershipId || "",
       escalationSourceMemberId: membership.escalationSourceMemberId || "",
       notes: membership.notes || "",
+    });
+    setShowMembershipModal(true);
+  };
+
+  const openReplacementMembership = (membership) => {
+    if (!canManageMemberships || !membership?.id) return;
+    const normalizedMembership = normalizeBoardMembership(membership);
+    setEditingMembership(null);
+    setMembershipForm({
+      termId: normalizedMembership.termId || selectedTerm?.id || "",
+      memberId: "",
+      role: normalizedMembership.role || BOARD_MEMBERSHIP_ROLES[0] || "",
+      joinDate: normalizedMembership.endDate || selectedTerm?.startDate || "",
+      endDate: "",
+      status: "active",
+      joinMethod: "replacement",
+      endReason: "",
+      decisionDate: normalizedMembership.decisionDate || normalizedMembership.endDate || "",
+      decisionRef: normalizedMembership.decisionRef || "",
+      replacementForMembershipId: normalizedMembership.id,
+      escalationSourceMemberId: normalizedMembership.memberId || "",
+      notes: normalizedMembership.memberName
+        ? `حل محل ${normalizedMembership.memberName} في مقعد ${normalizedMembership.role || "عضوية مجلس"}`
+        : "",
     });
     setShowMembershipModal(true);
   };
@@ -360,11 +405,22 @@ export default function BoardTermsTab({
 
     setSavingMembership(true);
     try {
+      const linkedMembership = membershipsMap.get(membershipForm.replacementForMembershipId) || null;
       const payload = normalizeBoardMembership({
         ...membershipForm,
         memberId: employee.id,
         memberName: employee.name || "",
         memberJobId: employee.jobId || "",
+        replacementForMembershipId:
+          membershipForm.joinMethod === "replacement" || membershipForm.joinMethod === "escalated"
+            ? membershipForm.replacementForMembershipId
+            : "",
+        escalationSourceMemberId:
+          membershipForm.joinMethod === "escalated"
+            ? (membershipForm.escalationSourceMemberId || linkedMembership?.memberId || "")
+            : membershipForm.joinMethod === "replacement"
+              ? (linkedMembership?.memberId || membershipForm.escalationSourceMemberId || "")
+              : "",
         roleOrder: BOARD_ROLE_ORDER[membershipForm.role] || 99,
         snapshot: buildBoardMembershipSnapshot({
           ...employee,
@@ -372,6 +428,19 @@ export default function BoardTermsTab({
           boardRoleTitle: membershipForm.role,
         }),
       });
+
+      const conflictingActiveMembership = membershipsForSelectedTerm.find(
+        (membership) =>
+          membership.id !== editingMembership?.id &&
+          membership.memberId === payload.memberId &&
+          membership.status === "active" &&
+          payload.status === "active"
+      );
+      if (conflictingActiveMembership) {
+        alert("هذا العضو لديه بالفعل عضوية مجلس سارية داخل نفس الدورة.");
+        setSavingMembership(false);
+        return;
+      }
 
       if (editingMembership?.id) {
         await updateDoc(doc(db, BOARD_MEMBERSHIPS_COLLECTION, editingMembership.id), {
@@ -498,6 +567,40 @@ export default function BoardTermsTab({
               {JOIN_METHOD_OPTIONS.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </FormField>
+          {(membershipForm.joinMethod === "replacement" || membershipForm.joinMethod === "escalated") && (
+            <FormField label={membershipForm.joinMethod === "escalated" ? "العضوية التي نتج عنها التصعيد" : "بديل عن العضوية"}>
+              <select
+                className={inputCls}
+                value={membershipForm.replacementForMembershipId}
+                onChange={(e)=>setMembershipForm((v)=>({...v,replacementForMembershipId:e.target.value}))}
+              >
+                <option value="">اختر العضوية المرتبطة</option>
+                {replacementMembershipOptions
+                  .filter((membership) => membership.id !== editingMembership?.id)
+                  .map((membership) => (
+                    <option key={membership.id} value={membership.id}>
+                      {(membership.memberName || "بدون اسم")} - {(membership.role || "عضوية")} {membership.endDate ? `- حتى ${membership.endDate}` : ""}
+                    </option>
+                  ))}
+              </select>
+            </FormField>
+          )}
+          {membershipForm.joinMethod === "escalated" && (
+            <FormField label="صدر التصعيد بسبب خروج العضو">
+              <select
+                className={inputCls}
+                value={membershipForm.escalationSourceMemberId}
+                onChange={(e)=>setMembershipForm((v)=>({...v,escalationSourceMemberId:e.target.value}))}
+              >
+                <option value="">اختر العضو المرتبط</option>
+                {replacementMembershipOptions.map((membership) => (
+                  <option key={membership.id} value={membership.memberId}>
+                    {(membership.memberName || "بدون اسم")} - {(membership.role || "عضوية")}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
           <FormField label="تاريخ الالتحاق" required>
             <ArabicDatePicker value={membershipForm.joinDate} onChange={(value)=>setMembershipForm((v)=>({...v,joinDate:value}))} />
           </FormField>
@@ -609,6 +712,8 @@ export default function BoardTermsTab({
             <div className="space-y-3">
               {membershipViews.length > 0 ? membershipViews.map((member, index) => {
                 const membership = member.boardMembership || {};
+                const linkedMembership = membershipsMap.get(membership.replacementForMembershipId);
+                const linkedEmployee = employeesMap.get(membership.escalationSourceMemberId);
                 return (
                   <div key={membership.id || member.id || index} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/40">
                     <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -623,6 +728,11 @@ export default function BoardTermsTab({
                         <span className={clsx("px-2.5 py-1 rounded-lg text-[10px] font-black border", chipClass("sky"))}>{membership.role || "—"}</span>
                         <span className={clsx("px-2.5 py-1 rounded-lg text-[10px] font-black border", chipClass(membership.status === "active" ? "emerald" : membership.status === "vacated" ? "rose" : "amber"))}>{MEMBERSHIP_STATUS_LABELS[membership.status] || membership.status || "—"}</span>
                         <button onClick={() => openEditMembership(membership)} className="px-2.5 py-1 rounded-lg text-[10px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-300 transition-all flex items-center gap-1"><Edit3 size={11}/> تعديل</button>
+                        {membership.status !== "active" && canManageMemberships && (
+                          <button onClick={() => openReplacementMembership(membership)} className="px-2.5 py-1 rounded-lg text-[10px] font-black border border-teal-200 dark:border-teal-800 text-teal-600 hover:text-teal-700 hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-all flex items-center gap-1">
+                            <Plus size={11}/> بديل/تصعيد
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3 text-[10px] font-black">
@@ -632,6 +742,21 @@ export default function BoardTermsTab({
                       <div className="text-slate-500">السبب: <span className="text-slate-700 dark:text-slate-200">{END_REASON_LABELS[membership.endReason] || membership.endReason || "—"}</span></div>
                     </div>
                     {membership.decisionRef && <div className="text-[10px] font-bold text-slate-400 mt-3">مرجع القرار: {membership.decisionRef}</div>}
+                    {(linkedMembership || linkedEmployee) && (
+                      <div className="mt-3 text-[10px] font-bold text-slate-400 flex flex-wrap gap-4">
+                        {linkedMembership && (
+                          <span>
+                            {membership.joinMethod === "escalated" ? "التصعيد مرتبط بعضوية:" : "بديل عن:"}{" "}
+                            <span className="text-slate-600 dark:text-slate-300">{linkedMembership.memberName || "—"} - {linkedMembership.role || "عضوية"}</span>
+                          </span>
+                        )}
+                        {membership.joinMethod === "escalated" && linkedEmployee && (
+                          <span>
+                            بسبب خروج: <span className="text-slate-600 dark:text-slate-300">{linkedEmployee.name || "—"}</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               }) : <div className="p-5 rounded-2xl border border-dashed border-slate-300 text-center text-[11px] font-bold text-slate-400">{canManageMemberships ? "لا توجد عضويات مسجلة لهذه الدورة بعد." : "أنشئ دورة حقيقية أولًا ثم أضف العضويات."}</div>}

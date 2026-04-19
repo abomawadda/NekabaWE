@@ -140,6 +140,60 @@ const sortBoardMembers = (members = []) =>
     return String(a.name || "").localeCompare(String(b.name || ""), "ar");
   });
 
+const buildHistoricalBoardMembers = ({ memberships = [], allEmployees = [], termId = "" } = {}) =>
+  sortBoardMembers(
+    buildBoardMemberViewsFromMemberships(memberships, allEmployees, { termId })
+  );
+
+const mergeAllowanceSnapshotMembers = (members = [], settlementTransactions = []) => {
+  const merged = new Map((members || []).map((member) => [member.id, member]));
+
+  (settlementTransactions || []).forEach((transaction) => {
+    (transaction.settlementExpenses || []).forEach((expense) => {
+      (expense.boardMemberSnapshots || []).forEach((snapshot) => {
+        if (!snapshot?.memberId || merged.has(snapshot.memberId)) return;
+        merged.set(snapshot.memberId, {
+          id: snapshot.memberId,
+          name: snapshot.name || "—",
+          membershipStatus: snapshot.role || "—",
+          boardRoleTitle: snapshot.role || "—",
+          jobId: snapshot.jobId || "",
+          workplace: snapshot.workplace || "",
+          jobTitle: snapshot.jobTitle || "",
+          memberState: snapshot.memberState || "",
+          boardMembership: {
+            id: snapshot.membershipId || "",
+            termId: snapshot.termId || "",
+            role: snapshot.role || "",
+          },
+          isAllowanceSnapshot: true,
+        });
+      });
+    });
+  });
+
+  return sortBoardMembers(Array.from(merged.values()));
+};
+
+const getEligibleBoardMembersForDate = ({
+  memberships = [],
+  allEmployees = [],
+  members = [],
+  termId = "",
+  onDate = new Date(),
+} = {}) => {
+  const membershipMembers = getEligibleBoardMemberViews({
+    memberships,
+    employees: allEmployees,
+    termId,
+    onDate,
+  });
+  if (membershipMembers.length > 0) return sortBoardMembers(membershipMembers);
+  return sortBoardMembers(
+    (members || []).filter((member) => isBoardMemberEligible(member, onDate))
+  );
+};
+
 const getSettlementAllowanceTotal = (transactions = []) =>
   transactions
     .filter((t) => t.isSettled)
@@ -689,14 +743,13 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
   const meetingDate = meeting?.date || "";
   const resolvedTermId = meeting?.termId || activeTerm?.id || "";
   const eligibleMembers = useMemo(() => {
-    const membershipMembers = getEligibleBoardMemberViews({
+    const membershipMembers = getEligibleBoardMembersForDate({
       memberships,
-      employees: allEmployees,
+      allEmployees,
+      members,
       termId: resolvedTermId,
       onDate: meetingDate || new Date(),
     });
-    if (membershipMembers.length > 0) return membershipMembers;
-    return members.filter((member) => isBoardMemberEligible(member, meetingDate || new Date()));
   }, [allEmployees, meetingDate, members, memberships, resolvedTermId]);
   const visibleMembers = useMemo(() => {
     const membersMap = new Map((allEmployees || []).map((member) => [member.id, member]));
@@ -1125,7 +1178,13 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
       <div className="space-y-3">
         {filtered.map(m=>{
           const {day,month,year} = getMeetingDay(m.date);
-          const eligibleMembersCount = members.filter((member) => isBoardMemberEligible(member, m.date || new Date())).length;
+          const eligibleMembersCount = getEligibleBoardMembersForDate({
+            memberships,
+            allEmployees,
+            members,
+            termId: m.termId || activeTerm?.id || "",
+            onDate: m.date || new Date(),
+          }).length;
           const presentCount = m.attendees?.length||0;
           return (
             <div key={m.id} className={clsx("rounded-2xl border shadow-sm hover:shadow-md transition-all overflow-hidden group cursor-pointer",T.card)}
@@ -1203,11 +1262,28 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
 // §6  تبويب البدلات — مفعّل مع الإضافة والحذف
 // ═══════════════════════════════════════════════════════════════
 
-function AllowancesTab({ members, settlementTransactions, T }) {
+function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlementTransactions, T }) {
   const [subTab, setSubTab] = useState("members");
   const [filterMember, setFilterMember] = useState("all");
   const [filterMonth, setFilterMonth] = useState("all");
   const [filterYear, setFilterYear] = useState("all");
+  const historicalMembers = useMemo(
+    () =>
+      buildHistoricalBoardMembers({
+        memberships,
+        allEmployees,
+        termId: activeTerm?.id || "",
+      }),
+    [activeTerm?.id, allEmployees, memberships]
+  );
+  const rosterMembers = useMemo(() => {
+    const baseMembers = historicalMembers.length > 0 ? historicalMembers : members;
+    return mergeAllowanceSnapshotMembers(baseMembers, settlementTransactions);
+  }, [historicalMembers, members, settlementTransactions]);
+  const membersMap = useMemo(
+    () => new Map(rosterMembers.map((member) => [member.id, member])),
+    [rosterMembers]
+  );
 
   const matchesPeriod = useCallback((dateValue = "") => {
     const monthValue = String(dateValue || "").slice(5, 7);
@@ -1254,7 +1330,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
     return result;
   }, [matchesPeriod, settlementTransactions]);
 
-  const memberRows = members.map((m) => {
+  const memberRows = rosterMembers.map((m) => {
     const allowances = settlementAllowanceMap[m.id] || { travel: 0, sessions: 0, hospitality: 0 };
     const total = Number(allowances.sessions || 0) + Number(allowances.travel || 0) + Number(allowances.hospitality || 0);
     return { member: m, allowances, total };
@@ -1272,7 +1348,15 @@ function AllowancesTab({ members, settlementTransactions, T }) {
           amount: Number(expense.amount || 0),
           perMember: Number(expense.allowancePerMember || 0),
           memberIds: expense.boardMembers || [],
+          memberSnapshots: expense.boardMemberSnapshots || [],
           date: expense.date || tx.settlementDate || tx.date || "",
+          isMeetingLinked: Boolean(expense.meetingId),
+          meetingTitle: expense.meetingTitle || "",
+          sourceMode: expense.meetingId
+            ? "meeting"
+            : expense.category === "بدل انتقال"
+              ? "individual_travel"
+              : "direct",
           notes: expense.notes || "",
           sourceName: tx.employeeName || tx.party || "تسوية معتمدة",
         }))
@@ -1299,7 +1383,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
         </select>
         <select className={clsx(inputCls,"w-auto py-1.5 text-xs min-w-[130px]")} value={filterMember} onChange={e=>setFilterMember(e.target.value)}>
           <option value="all">كل الأعضاء</option>
-          {members.map(m=><option key={m.id} value={m.id}>{m.name || "—"}</option>)}
+          {rosterMembers.map(m=><option key={m.id} value={m.id}>{m.name || "—"}</option>)}
         </select>
         <span className="px-2.5 py-1 rounded-lg bg-amber-100/80 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-[10px] font-black border border-amber-200 dark:border-amber-800/40">
           تعرض البدلات المعتمدة من التسويات فقط
@@ -1318,6 +1402,13 @@ function AllowancesTab({ members, settlementTransactions, T }) {
             <div className="text-[10px] font-bold text-slate-400 mt-1">{s.label}</div>
           </div>
         ))}
+      </div>
+
+      <div className={clsx("p-3 rounded-2xl border flex flex-wrap items-center gap-2 text-[10px] font-black", T.card)}>
+        <span className="text-slate-400">تمييز مصدر البدل:</span>
+        <span className="px-2.5 py-1 rounded-lg bg-sky-50 text-sky-700 border border-sky-200">مرتبط باجتماع</span>
+        <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">انتقال فردي / مهمة مستقلة</span>
+        <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 border border-slate-200">بدل مباشر بدون اجتماع</span>
       </div>
 
       {/* Sub-tabs */}
@@ -1404,11 +1495,32 @@ function AllowancesTab({ members, settlementTransactions, T }) {
               <tbody>
                 {detailedRows.filter((row) => filterMember === "all" || row.memberIds.includes(filterMember)).map((row)=>(
                   <tr key={row.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/3 transition-colors">
-                    <td className="p-3.5 font-black text-xs text-slate-800 dark:text-slate-100">{row.category}</td>
+                    <td className="p-3.5">
+                      <div className="space-y-1">
+                        <div className="font-black text-xs text-slate-800 dark:text-slate-100">{row.category}</div>
+                        <div className="flex flex-wrap gap-1">
+                          {row.isMeetingLinked ? (
+                            <span className="px-2 py-0.5 rounded-lg bg-sky-50 text-[9px] font-black text-sky-700 border border-sky-200">
+                              مرتبط باجتماع
+                            </span>
+                          ) : row.sourceMode === "individual_travel" ? (
+                            <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-[9px] font-black text-indigo-700 border border-indigo-200">
+                              انتقال فردي
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-[9px] font-black text-slate-600 border border-slate-200">
+                              بدل مباشر
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
                     <td className="p-3.5">
                       <div className="flex flex-wrap gap-1.5">
                         {row.memberIds.map((id) => {
-                          const member = members.find((m) => m.id === id);
+                          const member =
+                            membersMap.get(id) ||
+                            row.memberSnapshots.find((snapshot) => snapshot.memberId === id);
                           return <span key={id} className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-black text-slate-600 dark:text-slate-300">{member?.name || "عضو"}</span>;
                         })}
                       </div>
@@ -1416,7 +1528,16 @@ function AllowancesTab({ members, settlementTransactions, T }) {
                     <td className="p-3.5 text-center text-xs font-bold text-slate-500">{formatDate(row.date)}</td>
                     <td className="p-3.5 text-center font-black text-base text-amber-600">{formatMoney(row.amount)}</td>
                     <td className="p-3.5 text-center text-xs font-bold text-slate-600 dark:text-slate-300">{formatMoney(row.perMember || 0)}</td>
-                    <td className="p-3.5 text-[11px] text-slate-400 font-bold max-w-[180px] truncate">{row.notes || row.sourceName}</td>
+                    <td className="p-3.5 text-[11px] text-slate-400 font-bold max-w-[220px]">
+                      <div className="space-y-1">
+                        <div className="truncate">{row.notes || row.sourceName}</div>
+                        {row.meetingTitle ? (
+                          <div className="text-[9px] text-sky-600 font-black truncate">الاجتماع: {row.meetingTitle}</div>
+                        ) : row.sourceMode === "individual_travel" ? (
+                          <div className="text-[9px] text-indigo-600 font-black truncate">مهمة أو انتقال مستقل لعضو/أعضاء محددين</div>
+                        ) : null}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1434,7 +1555,7 @@ function AllowancesTab({ members, settlementTransactions, T }) {
 
       {subTab==="summary" && (
         <div className="space-y-3">
-          {members.map((m,i)=>{
+          {rosterMembers.map((m,i)=>{
             const memberRow = memberRows.find(r => r.member.id === m.id);
             const meetTotal = memberRow?.allowances.sessions || 0;
             const travelTotal = memberRow?.allowances.travel || 0;
@@ -1478,14 +1599,23 @@ function AllowancesTab({ members, settlementTransactions, T }) {
 // §7  تبويب التقارير (محافظ على الربط الأصلي + تحسين)
 // ═══════════════════════════════════════════════════════════════
 
-function ReportsTab({ members, meetings, allEmployees, settlementTransactions, activeTerm, T }) {
+function ReportsTab({ members, meetings, memberships, allEmployees, settlementTransactions, activeTerm, T }) {
   const heldMeetings = meetings.filter(m=>m.status==="held");
   const termEnd = parseBoardDate(activeTerm?.endDate || BOARD_TERM_END);
   const termStart = parseBoardDate(activeTerm?.startDate || BOARD_TERM_START);
   const termDaysLeft = termEnd ? Math.max(0, Math.floor((termEnd - new Date())/(1000*60*60*24))) : 0;
   const termTotalDays = termStart && termEnd ? Math.max(1, Math.ceil((termEnd - termStart)/(1000*60*60*24))) : 1;
   const settlementAllowanceTotal = getSettlementAllowanceTotal(settlementTransactions);
-  const allowanceRows = members.map((member) => {
+  const historicalMembers = buildHistoricalBoardMembers({
+    memberships,
+    allEmployees,
+    termId: activeTerm?.id || "",
+  });
+  const rosterMembers = mergeAllowanceSnapshotMembers(
+    historicalMembers.length > 0 ? historicalMembers : members,
+    settlementTransactions
+  );
+  const allowanceRows = rosterMembers.map((member) => {
     const totals = { sessions: 0, travel: 0, hospitality: 0 };
     settlementTransactions
       .filter((transaction) => transaction.isSettled)
@@ -1508,9 +1638,18 @@ function ReportsTab({ members, meetings, allEmployees, settlementTransactions, a
     };
   });
   let totalAttendancePct = 0;
-  if (heldMeetings.length>0 && members.length>0) {
-    const total = heldMeetings.reduce((acc,m)=>acc+(m.attendees?.length||0),0);
-    totalAttendancePct = Math.round((total/(heldMeetings.length*members.length))*100);
+  if (heldMeetings.length > 0) {
+    const totalPresent = heldMeetings.reduce((acc,m)=>acc+(m.attendees?.length||0),0);
+    const totalEligible = heldMeetings.reduce((acc, meeting) => {
+      return acc + getEligibleBoardMembersForDate({
+        memberships,
+        allEmployees,
+        members: rosterMembers,
+        termId: meeting.termId || activeTerm?.id || "",
+        onDate: meeting.date || new Date(),
+      }).length;
+    }, 0);
+    totalAttendancePct = totalEligible > 0 ? Math.round((totalPresent / totalEligible) * 100) : 0;
   }
 
   return (
@@ -1518,7 +1657,7 @@ function ReportsTab({ members, meetings, allEmployees, settlementTransactions, a
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-lg font-black flex items-center gap-2"><BarChart3 size={20} className="text-purple-500"/> التقارير والإحصاءات</h2>
         <button
-          onClick={() => printBoardOverview({ members, meetings, allowances: allowanceRows, termStart: activeTerm?.startDate || BOARD_TERM_START, termEnd: activeTerm?.endDate || BOARD_TERM_END })}
+          onClick={() => printBoardOverview({ members: rosterMembers, meetings, allowances: allowanceRows, termStart: activeTerm?.startDate || BOARD_TERM_START, termEnd: activeTerm?.endDate || BOARD_TERM_END })}
           className="px-3 py-1.5 rounded-xl text-[11px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-all flex items-center gap-1"
         >
           <Printer size={13}/> طباعة
@@ -1530,7 +1669,7 @@ function ReportsTab({ members, meetings, allEmployees, settlementTransactions, a
           {
             title: "كشف التشكيل الرسمي",
             desc: "يتضمن الأسماء الكاملة والصفات والحالة الإدارية.",
-            action: () => printBoardOverview({ members, meetings, allowances: allowanceRows, termStart: activeTerm?.startDate || BOARD_TERM_START, termEnd: activeTerm?.endDate || BOARD_TERM_END }),
+            action: () => printBoardOverview({ members: rosterMembers, meetings, allowances: allowanceRows, termStart: activeTerm?.startDate || BOARD_TERM_START, termEnd: activeTerm?.endDate || BOARD_TERM_END }),
           },
           {
             title: "سجل الاجتماعات والقرارات",
@@ -1837,8 +1976,8 @@ export default function BoardDashboard() {
         {activeTab==="members"    && <MembersTab    members={boardMembers} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="terms"      && <BoardTermsTab boardTerms={boardTerms} memberships={boardMemberships} allEmployees={allEmployees} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="meetings"   && <MeetingsTab   members={boardMembers} allEmployees={allEmployees} memberships={effectiveBoardMemberships} activeTerm={activeTerm} meetings={meetings} T={T}/>}
-        {activeTab==="allowances" && <AllowancesTab members={boardMembers} settlementTransactions={settlementTransactions} T={T}/>}
-        {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} allEmployees={allEmployees} settlementTransactions={settlementTransactions} activeTerm={activeTerm} T={T}/>}
+        {activeTab==="allowances" && <AllowancesTab members={boardMembers} memberships={effectiveBoardMemberships} allEmployees={allEmployees} activeTerm={activeTerm} settlementTransactions={settlementTransactions} T={T}/>}
+        {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} memberships={effectiveBoardMemberships} allEmployees={allEmployees} settlementTransactions={settlementTransactions} activeTerm={activeTerm} T={T}/>}
       </div>
     </div>
   );

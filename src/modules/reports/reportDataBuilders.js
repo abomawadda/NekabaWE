@@ -240,7 +240,6 @@ export const buildIssuedChecksRows = (sourceData = {}) => {
     sourceData.issued_checks || [],
     sourceData.transactions || []
   );
-
   return merged
     .filter((record) => !["deposit", "refund", "subs", "bank_charge"].includes(record.type))
     .map((record) => ({
@@ -281,8 +280,11 @@ export const buildSettlementRows = (sourceData = {}) => {
   return merged
     .filter(
       (record) =>
-        Boolean(record?.isSettled) ||
-        (Array.isArray(record?.settlementExpenses) && record.settlementExpenses.length > 0)
+        !record?.settlementGroupFollower &&
+        (
+          Boolean(record?.isSettled) ||
+          (Array.isArray(record?.settlementExpenses) && record.settlementExpenses.length > 0)
+        )
     )
     .map((record) => ({
       id: record.id,
@@ -471,6 +473,18 @@ export const buildBoardAllowancesRows = (sourceData = {}, boardRoles = []) => {
     sourceData.issued_checks || [],
     sourceData.transactions || []
   );
+  const allowanceSnapshotMembers = new Map();
+
+  merged
+    .filter((record) => Boolean(record?.isSettled))
+    .forEach((record) => {
+      (record.settlementExpenses || []).forEach((expense) => {
+        (expense.boardMemberSnapshots || []).forEach((snapshot) => {
+          if (!snapshot?.memberId || allowanceSnapshotMembers.has(snapshot.memberId)) return;
+          allowanceSnapshotMembers.set(snapshot.memberId, snapshot);
+        });
+      });
+    });
 
   const rowsMap = new Map(
     boardMembers.map((member) => [
@@ -487,6 +501,20 @@ export const buildBoardAllowancesRows = (sourceData = {}, boardRoles = []) => {
       },
     ])
   );
+
+  allowanceSnapshotMembers.forEach((snapshot, memberId) => {
+    if (rowsMap.has(memberId)) return;
+    rowsMap.set(memberId, {
+      id: memberId,
+      role: snapshot.role || "â€”",
+      name: snapshot.name || "â€”",
+      sessionsAllowance: 0,
+      travelAllowance: 0,
+      hospitalityAllowance: 0,
+      totalAllowance: 0,
+      lastAllowanceDate: "",
+    });
+  });
 
   merged
     .filter((record) => Boolean(record?.isSettled))

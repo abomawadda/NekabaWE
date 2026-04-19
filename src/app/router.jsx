@@ -82,6 +82,14 @@ export default function Router() {
           }
         />
         <Route
+          path="/employees/:employeeId"
+          element={
+            <ProtectedRoute permission={PERMISSIONS.employeesView}>
+              <EmployeesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/board"
           element={
             <ProtectedRoute permission={PERMISSIONS.boardView}>

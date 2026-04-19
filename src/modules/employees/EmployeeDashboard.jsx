@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { collection, query, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
@@ -19,8 +20,9 @@ import clsx from "clsx";
 import EmployeeForm from "./EmployeeForm";
 import EmployeeProfile from "./EmployeeProfileFund";
 
-export default function EmployeeDashboard() {
+export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   const T = useT();
+  const navigate = useNavigate();
   const { can, user } = useAuth();
   const canCreateMember = can(PERMISSIONS.employeesCreate);
   const canEditMember = can(PERMISSIONS.employeesEdit);
@@ -34,7 +36,7 @@ export default function EmployeeDashboard() {
 
   const [toast, setToast] = useState(null);
   
-  const [currentView, setCurrentView] = useState("dashboard"); 
+  const [currentView, setCurrentView] = useState(forcedEmployeeId ? "profile" : "dashboard"); 
   const [selectedEmp, setSelectedEmp] = useState(null);
 
   const showToast = useCallback((msg, type = "success") => {
@@ -53,6 +55,13 @@ export default function EmployeeDashboard() {
     });
     return () => unsubEmp();
   }, [user]);
+
+  useEffect(() => {
+    if (!forcedEmployeeId || loading) return;
+    const matchedEmployee = employees.find((employee) => String(employee.id) === String(forcedEmployeeId)) || null;
+    setSelectedEmp(matchedEmployee);
+    setCurrentView("profile");
+  }, [employees, forcedEmployeeId, loading]);
 
   const stats = useMemo(() => {
     let totalActiveCount = 0; 
@@ -217,7 +226,14 @@ export default function EmployeeDashboard() {
     setSelectedEmp(emp); setCurrentView("form");
   };
   const openProfile = (emp) => { setSelectedEmp(emp); setCurrentView("profile"); };
-  const closeToDashboard = () => { setSelectedEmp(null); setCurrentView("dashboard"); };
+  const closeToDashboard = () => {
+    setSelectedEmp(null);
+    if (forcedEmployeeId) {
+      navigate("/employees");
+      return;
+    }
+    setCurrentView("dashboard");
+  };
 
   const handleDelete = async (emp) => {
     if (!canDeleteMember) {
@@ -307,6 +323,23 @@ export default function EmployeeDashboard() {
   // 🎯 شاشة البروفايل (كاملة)
   if (currentView === "profile") {
     const liveSelectedEmp = employees.find((emp) => emp.id === selectedEmp?.id) || selectedEmp;
+    if (!liveSelectedEmp) {
+      return (
+        <div className={clsx("max-w-4xl mx-auto space-y-4 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500", T.text)} dir="rtl">
+          <div className={clsx("p-4 rounded-2xl border shadow-sm flex items-center justify-between", T.card)}>
+            <div className="flex items-center gap-3">
+              <button onClick={closeToDashboard} className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-xl transition-all">
+                <ArrowRight size={20} className="text-slate-600 dark:text-slate-300" />
+              </button>
+              <div>
+                <h2 className="text-xl font-black">الملف الشخصي الشامل</h2>
+                <p className="text-[10px] font-bold text-slate-500 mt-0.5">تعذر العثور على العضو المطلوب أو ليس ضمن نطاق صلاحياتك.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className={clsx("max-w-7xl mx-auto space-y-4 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500", T.text)} dir="rtl">
         <div className={clsx("p-4 rounded-2xl border shadow-sm flex items-center justify-between", T.card)}>

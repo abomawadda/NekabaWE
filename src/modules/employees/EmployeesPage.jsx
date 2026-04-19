@@ -1,13 +1,19 @@
 import React, { useState } from "react";
+import { useParams } from "react-router-dom";
 import EmployeeDashboard from "./EmployeeDashboard";
 import EmployeeForm from "./EmployeeForm";
 import EmployeeCard from "./EmployeeCard"; // 👈 استدعاء شاشة العرض الجديدة
 
 export default function EmployeesPage() {
+  const { employeeId = "" } = useParams();
   // حالة التحكم في الشاشة: "dashboard" | "form" | "card"
   const [currentView, setCurrentView] = useState("dashboard");
   // تخزين الموظف المحدد عند التعديل أو العرض
   const [selectedEmp, setSelectedEmp] = useState(null);
+
+  if (employeeId) {
+    return <EmployeeDashboard forcedEmployeeId={employeeId} />;
+  }
 
   return (
     <div className="w-full">
