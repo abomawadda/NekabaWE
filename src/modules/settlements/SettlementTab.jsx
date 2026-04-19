@@ -474,7 +474,7 @@ export default function SettlementTab() {
       hospitality: new Set(),
     };
 
-    sourceTransactions.forEach((tx) => {
+    archivedSettlements.forEach((tx) => {
       if (!normalizeRequiresSettlement(tx) || tx.id === currentSettlementTxnId) return;
 
       (tx.settlementExpenses || []).forEach((expense) => {
@@ -494,7 +494,7 @@ export default function SettlementTab() {
     });
 
     return result;
-  }, [currentSettlementTxnId, editingExpense, expenses, sourceTransactions]);
+  }, [archivedSettlements, currentSettlementTxnId, editingExpense, expenses]);
 
   const availableMeetings = useMemo(() => {
     const allowanceType = getMeetingAllowanceType(expCat);
@@ -514,7 +514,7 @@ export default function SettlementTab() {
       hospitality: new Set(),
     };
 
-    sourceTransactions.forEach((tx) => {
+    archivedSettlements.forEach((tx) => {
       if (!normalizeRequiresSettlement(tx) || tx.id === currentSettlementTxnId) return;
 
       (tx.settlementExpenses || []).forEach((expense) => {

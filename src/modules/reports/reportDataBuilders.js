@@ -1,6 +1,7 @@
 import {
   getEmployeeAge,
   formatEmployeeDate,
+  parseEmployeeDate,
   getRetirementDate,
   isDeceasedMember,
   isBoardMember,
@@ -10,6 +11,7 @@ import { formatMoney } from "../../utils/numberFormat";
 import {
   getIssuedCheckDisplayParty,
   getIssuedCheckTypeLabel,
+  isLegacyCheckType,
   mergeIssuedChecksSourcesNormalized,
   normalizeIssuedCheckType,
   normalizeRequiresSettlement,
@@ -22,6 +24,11 @@ import {
   getSettlementModeLabel,
   toNumber,
 } from "./reportUtils";
+import {
+  buildMemberMovementTimeline,
+  MEMBER_MOVEMENT_STATUS_LABELS,
+  MEMBER_MOVEMENT_TYPE_LABELS,
+} from "../employees/helpers/memberMovements";
 
 const REPORT_OPENING_BALANCE = 42685.79;
 const INCOME_TRANSACTION_TYPES = new Set(["deposit", "refund", "subs"]);
@@ -73,8 +80,59 @@ const buildDistributionItems = (rows = [], key, maxItems = 8) => {
   return [...visible, { label: "أخرى", count: otherCount }];
 };
 
-const getMergedPostedFinanceRows = (sourceData = {}) =>
-  mergeIssuedChecksSourcesNormalized(sourceData.issued_checks || [], sourceData.transactions || []).filter(isPostedRecord);
+const getMergedPostedFinanceRows = (sourceData = {}) => {
+  const normalizedChecks = mergeIssuedChecksSourcesNormalized(
+    sourceData.issued_checks || [],
+    sourceData.transactions || []
+  );
+
+  const directTransactions = (sourceData.transactions || [])
+    .filter((record) => !isLegacyCheckType(record?.type))
+    .map((record) => ({
+      ...record,
+      sourceCollection: record?.sourceCollection || "transactions",
+    }));
+
+  return [...directTransactions, ...normalizedChecks].filter(isPostedRecord);
+};
+
+const getPostedFinanceImpactRows = (sourceData = {}) => {
+  const posted = getMergedPostedFinanceRows(sourceData);
+
+  return posted.flatMap((record) => {
+    const normalizedType = normalizeIssuedCheckType(record.type);
+    const amount = toNumber(record.advanceAmountBase || record.amount);
+    const impactRows = [
+      {
+        ...record,
+        type: normalizedType,
+        amount,
+        advanceAmountBase: amount,
+      },
+    ];
+
+    const collectedSubscriptions = toNumber(
+      record.collectedSubscriptions || record.memberSubscriptions
+    );
+
+    if (normalizedType === "trip" && record?.isSettled && collectedSubscriptions > 0) {
+      impactRows.push({
+        ...record,
+        id: `${record.id}__subs`,
+        type: "subs",
+        date: getLatestSettlementExpenseDate(
+          record.settlementExpenses,
+          record.settlementDate || record.date || ""
+        ),
+        amount: collectedSubscriptions,
+        advanceAmountBase: collectedSubscriptions,
+        notes: `توريد اشتراكات رحلة (${record.date || "—"})`,
+      });
+    }
+
+    return impactRows;
+  });
+};
 
 const getDateParts = (value = "") => {
   const raw = String(value || "").trim();
@@ -124,6 +182,12 @@ const groupAmountBy = (rows = [], labelGetter) => {
     .sort((a, b) => b.amount - a.amount || compareArabic(a.label, b.label));
 };
 
+const toIsoSortableDate = (value = "") => {
+  const parsed = parseEmployeeDate(value);
+  if (!parsed) return "";
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+};
+
 export const getBoardRoleWeight = (role = "", roles = []) => {
   const index = roles.indexOf(String(role || "").trim());
   return index >= 0 ? index : roles.length;
@@ -136,20 +200,14 @@ export const getIssuedCheckStatusLabel = (doc = {}) => {
 };
 
 export const buildTreasuryRows = (sourceData = {}) => {
-  const merged = mergeIssuedChecksSourcesNormalized(
-    sourceData.issued_checks || [],
-    sourceData.transactions || []
-  );
-
-  return merged
-    .filter((record) => !record?.state || record.state === "posted" || record.state === "approved")
+  return getPostedFinanceImpactRows(sourceData)
     .map((record) => {
       const normalizedType = normalizeIssuedCheckType(record.type);
       const amount = toNumber(record.advanceAmountBase || record.amount);
-      const isIncome = ["deposit", "refund", "subs"].includes(record.type);
+      const isIncome = INCOME_TRANSACTION_TYPES.has(normalizedType);
       return {
         id: record.id,
-        date: record.date || "",
+        date: record.date || record.settlementDate || "",
         typeLabel: getIssuedCheckTypeLabel(normalizedType),
         reference: record.checkNum || record.bankReference || record.receiptNo || "—",
         party: getIssuedCheckDisplayParty(record) || "—",
@@ -553,6 +611,110 @@ export const buildMemberBenefitsRows = (sourceData = {}) =>
     ].filter(Boolean).join(" "),
   }));
 
+export const buildMemberMovementsReportRows = (sourceData = {}) =>
+  buildMemberMovementTimeline(sourceData.member_movements || []).map((movement) => {
+    const beforeState = String(movement?.beforeSnapshot?.memberState || "").trim() || "—";
+    const afterState = String(movement?.afterSnapshot?.memberState || "").trim() || beforeState;
+    const workplace =
+      String(movement?.afterSnapshot?.workplace || movement?.beforeSnapshot?.workplace || "").trim() ||
+      "—";
+    const jobTitle =
+      String(movement?.afterSnapshot?.jobTitle || movement?.beforeSnapshot?.jobTitle || "").trim() ||
+      "—";
+    const memberCode = String(movement?.memberJobId || movement?.memberId || "").trim() || "—";
+    const movementCategory = movement.isFinal ? "حركة نهائية" : "حركة إدارية";
+
+    return {
+      id: movement.id,
+      effectiveDateRaw: toIsoSortableDate(movement.effectiveDate),
+      decisionDateRaw: toIsoSortableDate(movement.decisionDate),
+      effectiveDateLabel: movement.effectiveDate || "—",
+      decisionDateLabel: movement.decisionDate || "—",
+      memberName: movement.memberName || "—",
+      memberCode,
+      movementType: movement.movementType || "",
+      movementLabel:
+        MEMBER_MOVEMENT_TYPE_LABELS[movement.movementType] || movement.movementLabel || "—",
+      movementCategory,
+      status: movement.status || "",
+      statusLabel:
+        MEMBER_MOVEMENT_STATUS_LABELS[movement.status] || movement.statusLabel || "—",
+      fromState: beforeState,
+      toState: afterState,
+      workplace,
+      jobTitle,
+      sourceLabel: movement.sourceLabel || "—",
+      reason: movement.reason || "—",
+      notes: movement.notes || "—",
+      __search: [
+        movement.memberName,
+        memberCode,
+        movement.movementLabel,
+        movementCategory,
+        movement.statusLabel,
+        beforeState,
+        afterState,
+        workplace,
+        jobTitle,
+        movement.reason,
+        movement.notes,
+        movement.sourceLabel,
+        movement.effectiveDate,
+        movement.decisionDate,
+        toIsoSortableDate(movement.effectiveDate),
+        toIsoSortableDate(movement.decisionDate),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
+  });
+
+export const buildMemberMovementsSummary = ({ rows = [] } = {}) => {
+  const approvedCount = rows.filter((row) => row.status === "approved").length;
+  const finalCount = rows.filter((row) => row.movementCategory === "حركة نهائية").length;
+  const uniqueMembers = new Set(
+    rows
+      .map((row) => {
+        const memberCode = String(row.memberCode || "").trim();
+        if (memberCode && memberCode !== "—") return memberCode;
+        return String(row.memberName || "").trim();
+      })
+      .filter(Boolean)
+  ).size;
+
+  return {
+    cards: [
+      { label: "إجمالي الحركات", value: String(rows.length) },
+      { label: "الحركات المعتمدة", value: String(approvedCount) },
+      { label: "الحركات النهائية", value: String(finalCount) },
+      { label: "الأعضاء المتأثرون", value: String(uniqueMembers) },
+    ],
+    sections: [
+      {
+        title: "التوزيع حسب نوع الحركة",
+        items: buildDistributionItems(rows, "movementLabel", 8).map((item) => ({
+          label: item.label,
+          value: String(item.count),
+        })),
+      },
+      {
+        title: "التوزيع حسب حالة الاعتماد",
+        items: buildDistributionItems(rows, "statusLabel", 6).map((item) => ({
+          label: item.label,
+          value: String(item.count),
+        })),
+      },
+      {
+        title: "التوزيع حسب الحالة بعد الحركة",
+        items: buildDistributionItems(rows, "toState", 8).map((item) => ({
+          label: item.label,
+          value: String(item.count),
+        })),
+      },
+    ],
+  };
+};
+
 export const buildAssemblyMembersSummary = ({ rows = [] } = {}) => {
   const ages = rows
     .map((row) => Number(row?.age))
@@ -602,13 +764,14 @@ export const buildAssemblyMembersSummary = ({ rows = [] } = {}) => {
 
 export const buildSimplifiedBalanceSheetRows = (sourceData = {}) => {
   const posted = getMergedPostedFinanceRows(sourceData);
+  const postedFinanceImpactRows = getPostedFinanceImpactRows(sourceData);
 
-  const totalIncome = posted.reduce((sum, record) => {
+  const totalIncome = postedFinanceImpactRows.reduce((sum, record) => {
     const normalizedType = normalizeIssuedCheckType(record.type);
     return sum + (INCOME_TRANSACTION_TYPES.has(normalizedType) ? toNumber(record.advanceAmountBase || record.amount) : 0);
   }, 0);
 
-  const totalExpenses = posted.reduce((sum, record) => {
+  const totalExpenses = postedFinanceImpactRows.reduce((sum, record) => {
     const normalizedType = normalizeIssuedCheckType(record.type);
     return sum + (INCOME_TRANSACTION_TYPES.has(normalizedType) ? 0 : toNumber(record.advanceAmountBase || record.amount));
   }, 0);

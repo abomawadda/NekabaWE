@@ -3,7 +3,7 @@ import {
   CreditCard, Briefcase, Phone, Calendar, MapPin, Mail, Award,
   User, Building2, FileText, Landmark, Shield, Hash, Star,
   Download, Image as ImageIcon, File as FileIcon, Stethoscope, Heart,
-  DollarSign, PhoneCall, Users, AlertTriangle, Gift, Printer, ReceiptText
+  DollarSign, PhoneCall, Users, AlertTriangle, Gift, Printer, ReceiptText, GitBranch
 } from "lucide-react";
 import clsx from "clsx";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
@@ -25,6 +25,7 @@ import {
   formatFundBenefitDate,
 } from "./helpers/fundBenefits";
 import { printMemberFundBenefitsReport } from "./helpers/fundBenefitsPrint";
+import MemberMovementsTab from "./components/MemberMovementsTab";
 
 const colorMap = {
   teal: "bg-teal-50 text-teal-600 dark:bg-teal-900/20",
@@ -223,6 +224,7 @@ export default function EmployeeProfileFund({ data }) {
     { id: "health", label: "الصحة والطوارئ", icon: Heart },
     { id: "attachments", label: `المرفقات (${data.attachments?.length || 0})`, icon: FileText },
   ];
+  tabs.splice(3, 0, { id: "movements", label: "حركة العضو", icon: GitBranch });
 
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500" dir="rtl">
@@ -396,6 +398,10 @@ export default function EmployeeProfileFund({ data }) {
               </div>
             </div>
           </div>
+        )}
+
+        {activeTab === "movements" && (
+          <MemberMovementsTab member={data} T={T} />
         )}
 
         {activeTab === "fund" && (

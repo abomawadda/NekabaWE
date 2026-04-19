@@ -306,6 +306,7 @@ export default function EmployeeDashboard() {
 
   // 🎯 شاشة البروفايل (كاملة)
   if (currentView === "profile") {
+    const liveSelectedEmp = employees.find((emp) => emp.id === selectedEmp?.id) || selectedEmp;
     return (
       <div className={clsx("max-w-7xl mx-auto space-y-4 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500", T.text)} dir="rtl">
         <div className={clsx("p-4 rounded-2xl border shadow-sm flex items-center justify-between", T.card)}>
@@ -320,7 +321,7 @@ export default function EmployeeDashboard() {
           </div>
         </div>
         <div className={clsx("p-2 md:p-6 rounded-3xl border shadow-sm", T.card)}>
-          <EmployeeProfile data={selectedEmp} />
+          <EmployeeProfile data={liveSelectedEmp} />
         </div>
       </div>
     );
