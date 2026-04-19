@@ -2,6 +2,7 @@ import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { getBoardRoleLabel, getEffectiveMemberState } from "../../utils/memberBenefits";
 import { formatMoney } from "../../utils/numberFormat";
 import { openPrintWindow } from "../../utils/print";
+import { getMeetingAttendanceRecords } from "./boardLifecycle";
 
 const printBase = (title, orientation = "landscape") => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8" />
 <title>${title}</title>
@@ -37,6 +38,59 @@ ${getPrintBrandStyles()}
 
 const closePrint = `<script>window.onload=()=>{setTimeout(()=>window.print(),500);}</script></body></html>`;
 
+const dash = "—";
+
+const escapeHtml = (value = "") =>
+  String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+const buildLegacyAttendanceRows = (meeting = {}, members = [], sessionAllowance = 75) =>
+  (Array.isArray(members) ? members : [])
+    .filter((member) => (meeting?.attendees || []).includes(member.id))
+    .map((member) => ({
+      member,
+      role: getBoardRoleLabel(member) || dash,
+      memberState: getEffectiveMemberState(member),
+      allowance: Number(sessionAllowance || 0),
+    }));
+
+const getMeetingAttendeeRows = (meeting = {}, members = [], sessionAllowance = 75) => {
+  const attendanceRecords = getMeetingAttendanceRecords(meeting);
+  if (attendanceRecords.length === 0) {
+    return buildLegacyAttendanceRows(meeting, members, sessionAllowance);
+  }
+
+  const memberMap = new Map((members || []).map((member) => [member.id, member]));
+
+  return attendanceRecords.map((record) => {
+    const liveMember = memberMap.get(record.memberId) || {};
+    const mergedMember = {
+      ...liveMember,
+      id: record.memberId,
+      name: record.memberName || liveMember.name || dash,
+      boardRoleTitle: record.role || liveMember.boardRoleTitle || liveMember.membershipStatus || dash,
+      membershipStatus: record.role || liveMember.membershipStatus || dash,
+      memberState: record.memberStateAtMeeting || liveMember.memberState || dash,
+    };
+
+    return {
+      member: mergedMember,
+      role: record.role || getBoardRoleLabel(mergedMember) || dash,
+      memberState: record.memberStateAtMeeting || mergedMember.memberState || dash,
+      allowance: Number(sessionAllowance || 0),
+    };
+  });
+};
+
+const getMeetingAttendeeNames = (meeting = {}, members = []) =>
+  getMeetingAttendeeRows(meeting, members)
+    .map((row) => escapeHtml(row.member?.name || dash))
+    .join("، ");
+
 export const printBoardOverview = ({ members, meetings, allowances, termStart, termEnd }) => {
   const win = openPrintWindow("board-overview");
   if (!win) return;
@@ -46,22 +100,26 @@ export const printBoardOverview = ({ members, meetings, allowances, termStart, t
   const totalAllowances = allowances.reduce((sum, row) => sum + Number(row.total || 0), 0);
 
   const rows = members.length
-    ? members.map((member, index) => `
+    ? members
+        .map(
+          (member, index) => `
         <tr>
           <td>${index + 1}</td>
-          <td>${member.name || "—"}</td>
-          <td>${getBoardRoleLabel(member) || "—"}</td>
-          <td>${member.specialization || "—"}</td>
-          <td>${getEffectiveMemberState(member)}</td>
+          <td>${escapeHtml(member.name || dash)}</td>
+          <td>${escapeHtml(getBoardRoleLabel(member) || dash)}</td>
+          <td>${escapeHtml(member.specialization || dash)}</td>
+          <td>${escapeHtml(getEffectiveMemberState(member) || dash)}</td>
         </tr>
-      `).join("")
+      `
+        )
+        .join("")
     : `<tr><td colspan="5" class="empty">لا توجد بيانات أعضاء</td></tr>`;
 
   win.document.write(
     printBase("ملخص مجلس الإدارة") +
       getPrintBrandHeader({
         reportTitle: "ملخص مجلس الإدارة",
-        reportMeta: `الدورة النقابية: ${termStart} إلى ${termEnd}`,
+        reportMeta: `الدورة النقابية: ${escapeHtml(termStart)} إلى ${escapeHtml(termEnd)}`,
       }) +
       `<div class="cards">
         <div class="card"><div class="card-label">أعضاء المجلس</div><div class="card-value">${members.length}</div></div>
@@ -84,25 +142,28 @@ export const printBoardMeetingsReport = ({ meetings, members }) => {
   if (!win) return;
 
   const heldMeetings = meetings.filter((meeting) => meeting.status === "held");
-  const memberMap = new Map(members.map((member) => [member.id, member.name || "—"]));
   const rows = heldMeetings.length
-    ? heldMeetings.map((meeting, index) => `
+    ? heldMeetings
+        .map(
+          (meeting, index) => `
         <tr>
           <td>${index + 1}</td>
-          <td>${meeting.title || "—"}</td>
-          <td>${meeting.date || "—"}</td>
-          <td>${meeting.attendees?.length || 0}</td>
+          <td>${escapeHtml(meeting.title || dash)}</td>
+          <td>${escapeHtml(meeting.date || dash)}</td>
+          <td>${getMeetingAttendanceRecords(meeting).length || meeting.attendees?.length || 0}</td>
           <td>${meeting.decisions?.length || 0}</td>
-          <td>${(meeting.attendees || []).map((id) => memberMap.get(id) || "—").join("، ") || "—"}</td>
+          <td>${getMeetingAttendeeNames(meeting, members) || dash}</td>
         </tr>
-      `).join("")
+      `
+        )
+        .join("")
     : `<tr><td colspan="6" class="empty">لا توجد اجتماعات منعقدة</td></tr>`;
 
   win.document.write(
     printBase("سجل الاجتماعات والقرارات") +
       getPrintBrandHeader({ reportTitle: "سجل الاجتماعات والقرارات" }) +
       `<table>
-        <thead><tr><th>#</th><th>عنوان الاجتماع</th><th>التاريخ</th><th>الحاضرون</th><th>القرارات</th><th>الأعضاء الحاضرون</th></tr></thead>
+        <thead><tr><th>#</th><th>عنوان الاجتماع</th><th>التاريخ</th><th>الحاضرون</th><th>القرارات</th><th>أعضاء الحضور</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>` +
       closePrint
@@ -115,24 +176,28 @@ export const printBoardAllowancesReport = ({ allowances, termStart, termEnd }) =
   if (!win) return;
 
   const rows = allowances.length
-    ? allowances.map((row, index) => `
+    ? allowances
+        .map(
+          (row, index) => `
         <tr>
           <td>${index + 1}</td>
-          <td>${row.member?.name || "—"}</td>
-          <td>${getBoardRoleLabel(row.member) || "—"}</td>
+          <td>${escapeHtml(row.member?.name || dash)}</td>
+          <td>${escapeHtml(getBoardRoleLabel(row.member) || dash)}</td>
           <td>${formatMoney(row.allowances?.sessions || 0)}</td>
           <td>${formatMoney(row.allowances?.travel || 0)}</td>
           <td>${formatMoney(row.allowances?.hospitality || 0)}</td>
           <td>${formatMoney(row.total || 0)}</td>
         </tr>
-      `).join("")
+      `
+        )
+        .join("")
     : `<tr><td colspan="7" class="empty">لا توجد بدلات معتمدة</td></tr>`;
 
   win.document.write(
     printBase("تقرير البدلات المعتمدة") +
       getPrintBrandHeader({
         reportTitle: "تقرير البدلات المعتمدة",
-        reportMeta: `من التسويات المعتمدة خلال الدورة ${termStart} إلى ${termEnd}`,
+        reportMeta: `من التسويات المعتمدة خلال الدورة ${escapeHtml(termStart)} إلى ${escapeHtml(termEnd)}`,
       }) +
       `<table>
         <thead><tr><th>#</th><th>الاسم الكامل</th><th>الصفة</th><th>بدل الجلسات</th><th>بدل الانتقال</th><th>بدل الضيافة</th><th>الإجمالي</th></tr></thead>
@@ -147,33 +212,37 @@ export const printBoardMeetingAttendanceReport = ({ meeting, members, sessionAll
   const win = openPrintWindow(`board-meeting-attendance-${meeting?.id || "sheet"}`);
   if (!win) return;
 
-  const attendees = (Array.isArray(members) ? members : []).filter((member) =>
-    (meeting?.attendees || []).includes(member.id)
-  );
-  const total = attendees.length * Number(sessionAllowance || 0);
-  const rows = attendees.length
-    ? attendees.map((member, index) => `
+  const attendeeRows = getMeetingAttendeeRows(meeting, members, sessionAllowance);
+  const total = attendeeRows.reduce((sum, row) => sum + Number(row.allowance || 0), 0);
+  const rows = attendeeRows.length
+    ? attendeeRows
+        .map(
+          (row, index) => `
         <tr>
           <td>${index + 1}</td>
-          <td>${member.name || "—"}</td>
-          <td>${getBoardRoleLabel(member) || "—"}</td>
-          <td>${getEffectiveMemberState(member)}</td>
-          <td>${formatMoney(sessionAllowance)}</td>
+          <td>${escapeHtml(row.member?.name || dash)}</td>
+          <td>${escapeHtml(row.role || dash)}</td>
+          <td>${escapeHtml(row.memberState || dash)}</td>
+          <td>${formatMoney(row.allowance || 0)}</td>
           <td class="signature-cell"></td>
         </tr>
-      `).join("")
+      `
+        )
+        .join("")
     : `<tr><td colspan="6" class="empty">لا يوجد أعضاء حضور مسجلون لهذا الاجتماع</td></tr>`;
 
   win.document.write(
     printBase("كشف حضور مجلس الإدارة", "portrait") +
       getPrintBrandHeader({
         reportTitle: "كشف حضور اجتماع مجلس الإدارة",
-        reportMeta: `${meeting?.title || "اجتماع مجلس الإدارة"} • ${meeting?.date || "—"}${meeting?.venue ? ` • ${meeting.venue}` : ""}`,
+        reportMeta: `${escapeHtml(meeting?.title || "اجتماع مجلس الإدارة")} • ${escapeHtml(meeting?.date || dash)}${
+          meeting?.venue ? ` • ${escapeHtml(meeting.venue)}` : ""
+        }`,
       }) +
       `<div class="cards">
-        <div class="card"><div class="card-label">عنوان الاجتماع</div><div class="card-value">${meeting?.title || "—"}</div></div>
-        <div class="card"><div class="card-label">تاريخ الاجتماع</div><div class="card-value">${meeting?.date || "—"}</div></div>
-        <div class="card"><div class="card-label">عدد الحضور</div><div class="card-value">${attendees.length}</div></div>
+        <div class="card"><div class="card-label">عنوان الاجتماع</div><div class="card-value">${escapeHtml(meeting?.title || dash)}</div></div>
+        <div class="card"><div class="card-label">تاريخ الاجتماع</div><div class="card-value">${escapeHtml(meeting?.date || dash)}</div></div>
+        <div class="card"><div class="card-label">عدد الحضور</div><div class="card-value">${attendeeRows.length}</div></div>
         <div class="card"><div class="card-label">إجمالي الكشف</div><div class="card-value">${formatMoney(total)}</div></div>
       </div>
       <table>

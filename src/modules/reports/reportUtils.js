@@ -1,6 +1,20 @@
 import { formatMoney } from "../../utils/numberFormat";
+import { parseEmployeeDate } from "../../utils/memberBenefits";
 
 export const getTodayISO = () => new Date().toISOString().split("T")[0];
+
+const parseFlexibleDate = (value = "") => {
+  const parsed = parseEmployeeDate(value);
+  if (parsed) return parsed;
+  if (!value) return null;
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+};
+
+const getDateTimestamp = (value = "") => {
+  const parsed = parseFlexibleDate(value);
+  return parsed ? parsed.getTime() : 0;
+};
 
 export const escapeHtml = (value = "") =>
   String(value ?? "")
@@ -39,11 +53,17 @@ export const getDateRange = (rows = [], dateField = "") => {
 };
 
 export const getLatestSettlementExpenseDate = (expenses = [], fallback = "") => {
-  const dates = (Array.isArray(expenses) ? expenses : [])
-    .map((expense) => expense?.date)
-    .filter(Boolean)
-    .sort(compareArabic);
-  return dates[dates.length - 1] || fallback || "";
+  const datedExpenses = (Array.isArray(expenses) ? expenses : [])
+    .map((expense) => ({
+      raw: expense?.date || "",
+      timestamp: getDateTimestamp(expense?.date),
+    }))
+    .filter((entry) => entry.raw);
+
+  if (datedExpenses.length === 0) return fallback || "";
+
+  datedExpenses.sort((a, b) => (b.timestamp - a.timestamp) || compareArabic(b.raw, a.raw));
+  return datedExpenses[0]?.raw || fallback || "";
 };
 
 export const getSettlementModeLabel = (mode = "") => {

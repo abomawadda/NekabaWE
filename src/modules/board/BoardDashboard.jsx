@@ -27,6 +27,19 @@ import {
   printBoardMeetingsReport,
   printBoardOverview,
 } from "./BoardPrints";
+import {
+  BOARD_MEMBERSHIPS_COLLECTION,
+  BOARD_TERMS_COLLECTION,
+  buildBoardMemberViewsFromMemberships,
+  buildLegacyBoardMemberships,
+  buildMeetingAttendancePayload,
+  getActiveBoardTerm,
+  getEligibleBoardMemberViews,
+  getMeetingAttendanceRecords,
+  getMeetingAttendeeIds,
+  isBoardMembershipActiveOnDate,
+} from "./boardLifecycle";
+import BoardTermsTab from "./BoardTermsTab";
 import clsx from "clsx";
 import {
   ShieldCheck, Users, CalendarDays, Coins, PieChart, Activity,
@@ -251,7 +264,7 @@ function ConfirmDelete({ open, onClose, onConfirm, label }) {
 // §3  تبويب النظرة العامة (Dashboard)
 // ═══════════════════════════════════════════════════════════════
 
-function DashboardTab({ members, meetings, settlementTransactions, T, setActiveTab, openEmployeeModal }) {
+function DashboardTab({ members, meetings, allEmployees, settlementTransactions, activeTerm, T, setActiveTab, openEmployeeModal }) {
   const activeMembers = members.filter((member) => isActiveMember(member)).length;
   const heldMeetings  = meetings.filter(m => m.status === "held").length;
   const decisionsCount = meetings.reduce((acc, m) => acc + (m.decisions?.length || 0), 0);
@@ -261,8 +274,8 @@ function DashboardTab({ members, meetings, settlementTransactions, T, setActiveT
     return sum + monthly;
   }, 0) + settlementAllowanceTotal;
   const executiveMembers = members.filter((m) => ["رئيس المجلس", "الأمين العام", "أمين الصندوق"].includes(getBoardRoleLabel(m))).length;
-  const termStart = parseBoardDate(BOARD_TERM_START);
-  const termEnd = parseBoardDate(BOARD_TERM_END);
+  const termStart = parseBoardDate(activeTerm?.startDate || BOARD_TERM_START);
+  const termEnd = parseBoardDate(activeTerm?.endDate || BOARD_TERM_END);
   const termTotalDays = termStart && termEnd ? Math.max(1, Math.ceil((termEnd - termStart) / (1000 * 60 * 60 * 24))) : 1;
   const termRemainingDays = termEnd ? Math.max(0, Math.ceil((termEnd - new Date()) / (1000 * 60 * 60 * 24))) : 0;
   const termProgress = Math.min(100, Math.max(0, ((termTotalDays - termRemainingDays) / termTotalDays) * 100));
@@ -285,7 +298,7 @@ function DashboardTab({ members, meetings, settlementTransactions, T, setActiveT
                 الدورة النقابية الحالية
               </span>
               <span className="px-2.5 py-1 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 text-[10px] font-black border border-teal-200 dark:border-teal-800/40">
-                من {BOARD_TERM_START} إلى {BOARD_TERM_END}
+                من {activeTerm?.startDate || BOARD_TERM_START} إلى {activeTerm?.endDate || BOARD_TERM_END}
               </span>
             </div>
             <h3 className="text-lg font-black text-slate-800 dark:text-slate-100">لوحة قيادة مجلس الإدارة</h3>
@@ -297,8 +310,8 @@ function DashboardTab({ members, meetings, settlementTransactions, T, setActiveT
             </div>
             <div className="flex flex-wrap items-center gap-3 mt-3 text-[11px] font-black">
               <span className="text-amber-600 dark:text-amber-400">{termRemainingDays.toLocaleString("ar-EG")} يومًا حتى نهاية الدورة</span>
-              <span className="text-slate-400">بداية الدورة: {formatDate(BOARD_TERM_START)}</span>
-              <span className="text-slate-400">نهاية الدورة: {formatDate(BOARD_TERM_END)}</span>
+              <span className="text-slate-400">بداية الدورة: {formatDate(activeTerm?.startDate || BOARD_TERM_START)}</span>
+              <span className="text-slate-400">نهاية الدورة: {formatDate(activeTerm?.endDate || BOARD_TERM_END)}</span>
             </div>
           </div>
           <div className="p-5 border-t lg:border-t-0 lg:border-r border-slate-100 dark:border-slate-800">
@@ -400,11 +413,11 @@ function DashboardTab({ members, meetings, settlementTransactions, T, setActiveT
           <div className="w-14 h-14 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-2xl shadow-md shrink-0">⚖️</div>
           <div className="text-center sm:text-right">
             <h3 className="text-sm font-black text-amber-600 dark:text-amber-500">السجل الإلكتروني الرسمي — ERB</h3>
-            <p className="text-[10px] font-bold text-slate-400 mt-1">جميع القرارات الواردة أدناه معتمدة وموثقة رسمياً. الدورة النقابية من {BOARD_TERM_START} إلى {BOARD_TERM_END}</p>
+            <p className="text-[10px] font-bold text-slate-400 mt-1">جميع القرارات الواردة أدناه معتمدة وموثقة رسمياً. الدورة النقابية من {activeTerm?.startDate || BOARD_TERM_START} إلى {activeTerm?.endDate || BOARD_TERM_END}</p>
           </div>
           <div className="sm:mr-auto flex gap-2">
             <button
-              onClick={() => printBoardMeetingsReport({ meetings, members })}
+              onClick={() => printBoardMeetingsReport({ meetings, members: allEmployees })}
               className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 text-[10px] font-black hover:bg-amber-500/20 transition-all flex items-center gap-1"
             >
               <Printer size={12}/> طباعة
@@ -451,6 +464,7 @@ function DashboardTab({ members, meetings, settlementTransactions, T, setActiveT
 
 function MembersTab({
   members,
+  activeTerm,
   T,
   openEmployeeModal,
 }) {
@@ -492,8 +506,8 @@ function MembersTab({
             </div>
             <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
               <div className="text-[10px] font-black text-slate-400">مدة الدورة</div>
-              <div className="text-[11px] font-black text-slate-700 dark:text-slate-200">{BOARD_TERM_START}</div>
-              <div className="text-[11px] font-black text-slate-400">{BOARD_TERM_END}</div>
+              <div className="text-[11px] font-black text-slate-700 dark:text-slate-200">{activeTerm?.startDate || BOARD_TERM_START}</div>
+              <div className="text-[11px] font-black text-slate-400">{activeTerm?.endDate || BOARD_TERM_END}</div>
             </div>
           </div>
         </div>
@@ -664,37 +678,87 @@ function MeetingForm({ initial, onSave, onCancel, saving }) {
   );
 }
 
-function MeetingDetail({ meeting, members, onUpdate, onDelete }) {
+function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm, onUpdate, onDelete }) {
   const [decisions, setDecisions] = useState(meeting.decisions||[]);
+  const [attendanceRecords, setAttendanceRecords] = useState(getMeetingAttendanceRecords(meeting));
   const [newDecision, setNewDecision] = useState("");
   const [newDecisionVotes, setNewDecisionVotes] = useState({for:"",against:"",abstain:""});
-  const [attendees, setAttendees] = useState(meeting.attendees||[]);
+  const [attendees, setAttendees] = useState(getMeetingAttendeeIds(meeting));
   const [saving, setSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const meetingDate = meeting?.date || "";
-  const eligibleMembers = useMemo(
-    () => members.filter((member) => isBoardMemberEligible(member, meetingDate || new Date())),
-    [members, meetingDate]
-  );
-  const visibleMembers = useMemo(
-    () => members.filter((member) => attendees.includes(member.id) || eligibleMembers.some((eligible) => eligible.id === member.id)),
-    [attendees, eligibleMembers, members]
-  );
+  const resolvedTermId = meeting?.termId || activeTerm?.id || "";
+  const eligibleMembers = useMemo(() => {
+    const membershipMembers = getEligibleBoardMemberViews({
+      memberships,
+      employees: allEmployees,
+      termId: resolvedTermId,
+      onDate: meetingDate || new Date(),
+    });
+    if (membershipMembers.length > 0) return membershipMembers;
+    return members.filter((member) => isBoardMemberEligible(member, meetingDate || new Date()));
+  }, [allEmployees, meetingDate, members, memberships, resolvedTermId]);
+  const visibleMembers = useMemo(() => {
+    const membersMap = new Map((allEmployees || []).map((member) => [member.id, member]));
+    const visibleMap = new Map();
+
+    eligibleMembers.forEach((member) => {
+      if (member?.id) visibleMap.set(member.id, member);
+    });
+
+    attendanceRecords.forEach((record) => {
+      if (!record?.memberId || visibleMap.has(record.memberId)) return;
+      const employee = membersMap.get(record.memberId) || {};
+      visibleMap.set(record.memberId, {
+        ...employee,
+        id: record.memberId,
+        name: record.memberName || employee.name || "—",
+        boardRoleTitle: record.role || employee.boardRoleTitle || employee.membershipStatus || "—",
+        memberState: record.memberStateAtMeeting || employee.memberState || "—",
+        workplace: record.workplace || employee.workplace || "—",
+        jobTitle: record.jobTitle || employee.jobTitle || "—",
+        boardMembership: { id: record.membershipId, termId: resolvedTermId, role: record.role },
+        isHistoricalMember: true,
+      });
+    });
+
+    attendees.forEach((memberId) => {
+      if (visibleMap.has(memberId)) return;
+      const employee = membersMap.get(memberId);
+      if (!employee) return;
+      visibleMap.set(memberId, {
+        ...employee,
+        boardRoleTitle: employee.boardRoleTitle || employee.membershipStatus || "—",
+      });
+    });
+
+    return sortBoardMembers(Array.from(visibleMap.values()));
+  }, [allEmployees, attendees, attendanceRecords, eligibleMembers, resolvedTermId]);
   const eligibleMemberIds = useMemo(() => eligibleMembers.map((member) => member.id), [eligibleMembers]);
   const presentCount = attendees.length;
   const allSelected = eligibleMembers.length > 0 && eligibleMembers.every((member) => attendees.includes(member.id));
 
   useEffect(() => {
     setDecisions(meeting.decisions || []);
-    setAttendees(meeting.attendees || []);
+    setAttendanceRecords(getMeetingAttendanceRecords(meeting));
+    setAttendees(getMeetingAttendeeIds(meeting));
     setNewDecision("");
     setNewDecisionVotes({ for: "", against: "", abstain: "" });
   }, [meeting]);
 
   const persistAttendees = async (updated) => {
-    setAttendees(updated);
+    const attendancePayload = buildMeetingAttendancePayload({
+      selectedMemberIds: updated,
+      existingMeeting: meeting,
+      eligibleMembers,
+      allEmployees,
+      termId: resolvedTermId,
+      meetingDate: meetingDate || new Date(),
+    });
+    setAttendees(attendancePayload.attendees);
+    setAttendanceRecords(attendancePayload.attendanceRecords);
     try {
-      await updateDoc(doc(db,"board_meetings",meeting.id), { attendees: updated });
+      await updateDoc(doc(db,"board_meetings",meeting.id), attendancePayload);
     } catch (e) {
       console.error(e);
     }
@@ -750,7 +814,12 @@ function MeetingDetail({ meeting, members, onUpdate, onDelete }) {
   const markHeld = async () => {
     setSaving(true);
     try {
-      await updateDoc(doc(db,"board_meetings",meeting.id),{status:"held"});
+      await updateDoc(doc(db,"board_meetings",meeting.id),{
+        status:"held",
+        termId: resolvedTermId,
+        attendees,
+        attendanceRecords,
+      });
       await logAuditEvent("board_meeting_marked_held", {
         meetingId: meeting.id,
         title: meeting.title || "",
@@ -786,7 +855,7 @@ function MeetingDetail({ meeting, members, onUpdate, onDelete }) {
               </button>
             )}
             <button
-              onClick={() => printBoardMeetingAttendanceReport({ meeting, members, sessionAllowance: 75 })}
+              onClick={() => printBoardMeetingAttendanceReport({ meeting: { ...meeting, attendees, attendanceRecords }, members: allEmployees, sessionAllowance: 75 })}
               className="px-3 py-1.5 rounded-xl text-[10px] font-black bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 hover:bg-sky-200 transition-all flex items-center gap-1"
             >
               <Printer size={12}/> طباعة كشف الحضور
@@ -924,7 +993,7 @@ function MeetingDetail({ meeting, members, onUpdate, onDelete }) {
   );
 }
 
-function MeetingsTab({ members, meetings, T }) {
+function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings, T }) {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterType,   setFilterType]   = useState("all");
   const [search,       setSearch]       = useState("");
@@ -946,7 +1015,12 @@ function MeetingsTab({ members, meetings, T }) {
   const saveMeeting = async (form) => {
     setSaving(true);
     try {
-      const payload = { ...form, agenda: (form.agenda||[]).filter(Boolean), updatedAt: serverTimestamp() };
+      const payload = {
+        ...form,
+        termId: editMeeting?.termId || activeTerm?.id || "",
+        agenda: (form.agenda||[]).filter(Boolean),
+        updatedAt: serverTimestamp(),
+      };
       if (editMeeting) {
         await updateDoc(doc(db,"board_meetings",editMeeting.id), payload);
         await logAuditEvent("board_meeting_updated", {
@@ -956,7 +1030,13 @@ function MeetingsTab({ members, meetings, T }) {
           status: form.status || "",
         });
       } else {
-        await addDoc(collection(db,"board_meetings"), { ...payload, decisions:[], attendees:[], createdAt: serverTimestamp() });
+        await addDoc(collection(db,"board_meetings"), {
+          ...payload,
+          decisions:[],
+          attendees:[],
+          attendanceRecords: [],
+          createdAt: serverTimestamp(),
+        });
         await logAuditEvent("board_meeting_created", {
           title: form.title || "",
           date: form.date || "",
@@ -982,7 +1062,7 @@ function MeetingsTab({ members, meetings, T }) {
       {/* Detail Modal */}
       <Modal open={!!detailMeeting} onClose={()=>setDetailMeeting(null)} title="تفاصيل الاجتماع" size="lg">
         {detailMeeting && (
-          <MeetingDetail meeting={detailMeeting} members={members} onClose={()=>setDetailMeeting(null)}
+          <MeetingDetail meeting={detailMeeting} members={members} allEmployees={allEmployees} memberships={memberships} activeTerm={activeTerm} onClose={()=>setDetailMeeting(null)}
             onUpdate={()=>{setDetailMeeting(null); openEdit(detailMeeting);}}
             onDelete={()=>setDetailMeeting(null)}/>
         )}
@@ -1398,10 +1478,10 @@ function AllowancesTab({ members, settlementTransactions, T }) {
 // §7  تبويب التقارير (محافظ على الربط الأصلي + تحسين)
 // ═══════════════════════════════════════════════════════════════
 
-function ReportsTab({ members, meetings, settlementTransactions, T }) {
+function ReportsTab({ members, meetings, allEmployees, settlementTransactions, activeTerm, T }) {
   const heldMeetings = meetings.filter(m=>m.status==="held");
-  const termEnd = parseBoardDate(BOARD_TERM_END);
-  const termStart = parseBoardDate(BOARD_TERM_START);
+  const termEnd = parseBoardDate(activeTerm?.endDate || BOARD_TERM_END);
+  const termStart = parseBoardDate(activeTerm?.startDate || BOARD_TERM_START);
   const termDaysLeft = termEnd ? Math.max(0, Math.floor((termEnd - new Date())/(1000*60*60*24))) : 0;
   const termTotalDays = termStart && termEnd ? Math.max(1, Math.ceil((termEnd - termStart)/(1000*60*60*24))) : 1;
   const settlementAllowanceTotal = getSettlementAllowanceTotal(settlementTransactions);
@@ -1438,7 +1518,7 @@ function ReportsTab({ members, meetings, settlementTransactions, T }) {
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-lg font-black flex items-center gap-2"><BarChart3 size={20} className="text-purple-500"/> التقارير والإحصاءات</h2>
         <button
-          onClick={() => printBoardOverview({ members, meetings, allowances: allowanceRows, termStart: BOARD_TERM_START, termEnd: BOARD_TERM_END })}
+          onClick={() => printBoardOverview({ members, meetings, allowances: allowanceRows, termStart: activeTerm?.startDate || BOARD_TERM_START, termEnd: activeTerm?.endDate || BOARD_TERM_END })}
           className="px-3 py-1.5 rounded-xl text-[11px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-all flex items-center gap-1"
         >
           <Printer size={13}/> طباعة
@@ -1450,17 +1530,17 @@ function ReportsTab({ members, meetings, settlementTransactions, T }) {
           {
             title: "كشف التشكيل الرسمي",
             desc: "يتضمن الأسماء الكاملة والصفات والحالة الإدارية.",
-            action: () => printBoardOverview({ members, meetings, allowances: allowanceRows, termStart: BOARD_TERM_START, termEnd: BOARD_TERM_END }),
+            action: () => printBoardOverview({ members, meetings, allowances: allowanceRows, termStart: activeTerm?.startDate || BOARD_TERM_START, termEnd: activeTerm?.endDate || BOARD_TERM_END }),
           },
           {
             title: "سجل الاجتماعات والقرارات",
             desc: "تقرير مطبوع للاجتماعات المنعقدة والحاضرين والقرارات.",
-            action: () => printBoardMeetingsReport({ meetings, members }),
+            action: () => printBoardMeetingsReport({ meetings, members: allEmployees }),
           },
           {
             title: "تقرير البدلات المعتمدة",
             desc: "يعرض الجلسات والانتقال والضيافة من التسويات فقط.",
-            action: () => printBoardAllowancesReport({ allowances: allowanceRows, termStart: BOARD_TERM_START, termEnd: BOARD_TERM_END }),
+            action: () => printBoardAllowancesReport({ allowances: allowanceRows, termStart: activeTerm?.startDate || BOARD_TERM_START, termEnd: activeTerm?.endDate || BOARD_TERM_END }),
           },
         ].map((report) => (
           <button
@@ -1479,7 +1559,7 @@ function ReportsTab({ members, meetings, settlementTransactions, T }) {
         <div className={clsx("p-5 rounded-2xl border shadow-sm text-center",T.card)}>
           <div className="text-[11px] font-black text-slate-400 mb-2">أيام متبقية للولاية</div>
           <div className="text-5xl font-black text-amber-500">{termDaysLeft.toLocaleString("ar-EG")}</div>
-          <div className="text-[10px] font-bold text-slate-400 mt-2">حتى {BOARD_TERM_END}</div>
+          <div className="text-[10px] font-bold text-slate-400 mt-2">حتى {activeTerm?.endDate || BOARD_TERM_END}</div>
           <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full mt-4 overflow-hidden">
             <div className="h-full bg-amber-500 rounded-full transition-all" style={{width:`${Math.max(0,100-(termDaysLeft/termTotalDays)*100)}%`}}/>
           </div>
@@ -1546,19 +1626,33 @@ export default function BoardDashboard() {
   const lifecycleSyncRef = useRef(new Set());
 
   const [allEmployees,    setAllEmployees]    = useState([]);
+  const [boardTerms,      setBoardTerms]      = useState([]);
+  const [boardMemberships,setBoardMemberships]= useState([]);
   const [meetings,        setMeetings]        = useState([]);
   const [issuedChecks,    setIssuedChecks]    = useState([]);
   const [transactions,    setTransactions]    = useState([]);
   const [loading,         setLoading]         = useState(true);
 
   useEffect(() => {
-    let empOk=false, meetOk=false, checksOk=false, txOk=false;
-    const check = () => { if (empOk && meetOk && checksOk && txOk) setLoading(false); };
+    let empOk=false, termOk=false, membershipOk=false, meetOk=false, checksOk=false, txOk=false;
+    const check = () => { if (empOk && termOk && membershipOk && meetOk && checksOk && txOk) setLoading(false); };
 
     const unsubEmp = onSnapshot(
       query(collection(db,"employees")),
       snap => { setAllEmployees(snap.docs.map(d=>({id:d.id,...d.data()}))); empOk=true; check(); },
       err  => { console.error("employees:",err); empOk=true; check(); }
+    );
+
+    const unsubTerms = onSnapshot(
+      query(collection(db, BOARD_TERMS_COLLECTION)),
+      snap => { setBoardTerms(snap.docs.map(d=>({id:d.id,...d.data()}))); termOk=true; check(); },
+      err  => { console.error("board_terms:",err); termOk=true; check(); }
+    );
+
+    const unsubMemberships = onSnapshot(
+      query(collection(db, BOARD_MEMBERSHIPS_COLLECTION)),
+      snap => { setBoardMemberships(snap.docs.map(d=>({id:d.id,...d.data()}))); membershipOk=true; check(); },
+      err  => { console.error("board_memberships:",err); membershipOk=true; check(); }
     );
 
     const unsubMeet = onSnapshot(
@@ -1579,7 +1673,7 @@ export default function BoardDashboard() {
       err  => { console.error("transactions:",err); txOk=true; check(); }
     );
 
-    return () => { unsubEmp(); unsubMeet(); unsubChecks(); unsubTx(); };
+    return () => { unsubEmp(); unsubTerms(); unsubMemberships(); unsubMeet(); unsubChecks(); unsubTx(); };
   }, []);
 
   useEffect(() => {
@@ -1603,15 +1697,49 @@ export default function BoardDashboard() {
     [issuedChecks, transactions]
   );
 
+  const activeTerm = useMemo(
+    () => getActiveBoardTerm(boardTerms, {
+      startDate: BOARD_TERM_START,
+      endDate: BOARD_TERM_END,
+      title: "الدورة الحالية",
+      targetSeats: TARGET_BOARD_SIZE,
+    }),
+    [boardTerms]
+  );
+
+  const effectiveBoardMemberships = useMemo(() => {
+    if (boardMemberships.length > 0) return boardMemberships;
+    return buildLegacyBoardMemberships(allEmployees, activeTerm);
+  }, [activeTerm, allEmployees, boardMemberships]);
+
   const boardMembers = useMemo(
-    () => sortBoardMembers(allEmployees.filter((employee) => BOARD_ROLES.includes(employee.membershipStatus))),
-    [allEmployees]
+    () => {
+      const membershipMembers = buildBoardMemberViewsFromMemberships(effectiveBoardMemberships, allEmployees, {
+        termId: activeTerm?.id,
+      });
+      if (membershipMembers.length > 0) return sortBoardMembers(membershipMembers);
+      return sortBoardMembers(allEmployees.filter((employee) => BOARD_ROLES.includes(employee.membershipStatus)));
+    },
+    [activeTerm?.id, allEmployees, effectiveBoardMemberships]
   );
 
   const currentBoardMembers = useMemo(
-    () => boardMembers.filter((employee) => isBoardMemberEligible(employee)),
+    () => boardMembers.filter((employee) =>
+      employee.boardMembership
+        ? isBoardMembershipActiveOnDate(employee.boardMembership)
+        : isBoardMemberEligible(employee)
+    ),
     [boardMembers]
   );
+
+  const boardNavTabs = [
+    { id: "dashboard", label: "نظرة عامة", icon: ShieldCheck },
+    { id: "members", label: "أعضاء المجلس", icon: Users },
+    { id: "terms", label: "الدورات والعضويات", icon: BadgeCheck },
+    { id: "meetings", label: "الاجتماعات", icon: CalendarDays },
+    { id: "allowances", label: "البدلات", icon: Coins },
+    { id: "reports", label: "التقارير", icon: PieChart },
+  ];
 
   const navTabs = [
     { id:"dashboard",  label:"نظرة عامة",    icon:ShieldCheck },
@@ -1640,7 +1768,7 @@ export default function BoardDashboard() {
                 مجلس الإدارة الحالي
               </span>
               <span className="px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-700 dark:text-sky-300 text-[10px] font-black border border-sky-200 dark:border-sky-800/40">
-                الدورة من {BOARD_TERM_START} إلى {BOARD_TERM_END}
+                الدورة من {activeTerm?.startDate || BOARD_TERM_START} إلى {activeTerm?.endDate || BOARD_TERM_END}
               </span>
             </div>
             <h1 className="text-2xl font-black text-amber-600 dark:text-amber-400 flex items-center gap-2">
@@ -1689,7 +1817,7 @@ export default function BoardDashboard() {
 
         {/* Tabs */}
         <div className="flex gap-1 overflow-x-auto hide-scrollbar pb-px">
-          {navTabs.map(tab=>(
+          {boardNavTabs.map(tab=>(
             <button key={tab.id} onClick={()=>setActiveTab(tab.id)} className={clsx(
               "flex items-center gap-1.5 px-4 py-2.5 rounded-t-xl text-[11px] font-black transition-all whitespace-nowrap border-b-2",
               activeTab===tab.id
@@ -1705,11 +1833,12 @@ export default function BoardDashboard() {
 
       {/* ── محتوى التبويبات ── */}
       <div className="mt-2">
-        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} settlementTransactions={settlementTransactions} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
-        {activeTab==="members"    && <MembersTab    members={boardMembers} T={T} openEmployeeModal={openEmployeeModal}/>}
-        {activeTab==="meetings"   && <MeetingsTab   members={boardMembers} meetings={meetings} T={T}/>}
+        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} allEmployees={allEmployees} settlementTransactions={settlementTransactions} activeTerm={activeTerm} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
+        {activeTab==="members"    && <MembersTab    members={boardMembers} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
+        {activeTab==="terms"      && <BoardTermsTab boardTerms={boardTerms} memberships={boardMemberships} allEmployees={allEmployees} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
+        {activeTab==="meetings"   && <MeetingsTab   members={boardMembers} allEmployees={allEmployees} memberships={effectiveBoardMemberships} activeTerm={activeTerm} meetings={meetings} T={T}/>}
         {activeTab==="allowances" && <AllowancesTab members={boardMembers} settlementTransactions={settlementTransactions} T={T}/>}
-        {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} settlementTransactions={settlementTransactions} T={T}/>}
+        {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} allEmployees={allEmployees} settlementTransactions={settlementTransactions} activeTerm={activeTerm} T={T}/>}
       </div>
     </div>
   );

@@ -48,6 +48,17 @@ const getTodayISO = () => new Date().toISOString().split("T")[0];
 const ARABIC_MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 const getMonthValue = (dateString = "") => (dateString || "").slice(5, 7);
 const getYearValue = (dateString = "") => (dateString || "").slice(0, 4);
+const parseFlexibleDate = (value) => {
+  const parsed = parseEmployeeDate(value);
+  if (parsed) return parsed;
+  if (!value) return null;
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+};
+const getDateTimestamp = (value) => {
+  const parsed = parseFlexibleDate(value);
+  return parsed ? parsed.getTime() : 0;
+};
 const getMeetingAllowanceType = (category = "") => {
   if (SESSION_ALLOWANCE_CATEGORIES.includes(category)) return "sessions";
   if (HOSPITALITY_ALLOWANCE_CATEGORIES.includes(category)) return "hospitality";
@@ -55,17 +66,44 @@ const getMeetingAllowanceType = (category = "") => {
 };
 const isMeetingAllowanceCategory = (category = "") => Boolean(getMeetingAllowanceType(category));
 const getLatestSettlementExpenseDate = (expenses = [], fallback = "") => {
-  const dates = (Array.isArray(expenses) ? expenses : [])
-    .map((expense) => expense?.date)
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  return dates[dates.length - 1] || fallback || "";
+  const datedExpenses = (Array.isArray(expenses) ? expenses : [])
+    .map((expense) => ({
+      raw: expense?.date || "",
+      timestamp: getDateTimestamp(expense?.date),
+    }))
+    .filter((entry) => entry.raw);
+  if (datedExpenses.length === 0) return fallback || "";
+  datedExpenses.sort((a, b) => (b.timestamp - a.timestamp) || String(b.raw).localeCompare(String(a.raw)));
+  return datedExpenses[0]?.raw || fallback || "";
 };
 const getSettlementApprovalDate = (settlement = {}) =>
   getLatestSettlementExpenseDate(
     settlement?.settlementExpenses,
     settlement?.settlementDate || settlement?.date || ""
   );
+const getSettlementChequeDate = (settlement = {}) => settlement?.date || settlement?.checkDate || settlement?.issueDate || "";
+const getSettlementChequeNumber = (settlement = {}) => {
+  const numeric = Number(settlement?.checkNum || settlement?.checkNo || 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+};
+const getSettlementSortTimestamp = (settlement = {}) =>
+  getDateTimestamp(getSettlementApprovalDate(settlement)) ||
+  getDateTimestamp(settlement?.updatedAt) ||
+  getDateTimestamp(settlement?.settlementDate) ||
+  getDateTimestamp(settlement?.date) ||
+  getDateTimestamp(settlement?.createdAt);
+const compareSettlementSequenceDesc = (a = {}, b = {}) => {
+  const dateDiff = getDateTimestamp(getSettlementChequeDate(b)) - getDateTimestamp(getSettlementChequeDate(a));
+  if (dateDiff !== 0) return dateDiff;
+
+  const chequeDiff = getSettlementChequeNumber(b) - getSettlementChequeNumber(a);
+  if (chequeDiff !== 0) return chequeDiff;
+
+  const approvalDiff = getSettlementSortTimestamp(b) - getSettlementSortTimestamp(a);
+  if (approvalDiff !== 0) return approvalDiff;
+
+  return String(b.id || "").localeCompare(String(a.id || ""));
+};
 
 const normalizeDateOnly = (value) => {
   const parsed = parseEmployeeDate(value);
@@ -414,10 +452,15 @@ export default function SettlementTab() {
   }, [expCat, activeBoardMembers, selectableBoardMembers, selectedMeeting]);
 
   useEffect(() => {
-    if (isMeetingAllowanceCategory(expCat) && selectedMeeting?.date) {
+    if (
+      isMeetingAllowanceCategory(expCat) &&
+      selectedMeeting?.date &&
+      !editingExpense?.id &&
+      (!expDate || expDate === getTodayISO())
+    ) {
       setExpDate(selectedMeeting.date);
     }
-  }, [expCat, selectedMeeting]);
+  }, [editingExpense?.id, expCat, expDate, selectedMeeting]);
 
   const archivedSettlements = useMemo(
     () => normalizedSourceTransactions.filter((tx) => normalizeRequiresSettlement(tx) && Boolean(tx.isSettled)),
@@ -439,25 +482,49 @@ export default function SettlementTab() {
         const yearOk = archiveYear === "all" || getYearValue(refDate) === archiveYear;
         return searchOk && monthOk && yearOk;
       })
-      .sort((a, b) => String(getSettlementApprovalDate(b)).localeCompare(String(getSettlementApprovalDate(a))));
+      .sort((a, b) => {
+        const timeDiff = getSettlementSortTimestamp(b) - getSettlementSortTimestamp(a);
+        if (timeDiff !== 0) return timeDiff;
+        return String(getSettlementApprovalDate(b)).localeCompare(String(getSettlementApprovalDate(a)));
+      });
   }, [archivedSettlements, archiveMonth, archiveSearch, archiveYear]);
   
-  const getPrevBalance = (empId, currentTxnId) => {
+  const getPrevBalance = (empId, currentTxnId, currentTxn = null) => {
     if (!empId) return 0;
-    const history = archivedSettlements.filter(s => s.employeeId === empId && s.id !== currentTxnId).sort((a, b) => getSettlementApprovalDate(b).localeCompare(getSettlementApprovalDate(a)));
-    return (history.length > 0 && !history[0].returnedActually) ? Number(history[0].settlementReturned || 0) : 0;
+    const currentChequeDateTimestamp = getDateTimestamp(getSettlementChequeDate(currentTxn || {}));
+    const currentChequeNumber = getSettlementChequeNumber(currentTxn || {});
+
+    const history = archivedSettlements
+      .filter((settlement) => {
+        if (settlement.employeeId !== empId || settlement.id === currentTxnId) return false;
+        const settlementChequeDateTimestamp = getDateTimestamp(getSettlementChequeDate(settlement));
+        const settlementChequeNumber = getSettlementChequeNumber(settlement);
+
+        if (!currentChequeDateTimestamp || !settlementChequeDateTimestamp) return true;
+        if (settlementChequeDateTimestamp < currentChequeDateTimestamp) return true;
+        if (settlementChequeDateTimestamp > currentChequeDateTimestamp) return false;
+
+        if (!currentChequeNumber || !settlementChequeNumber) return true;
+        return settlementChequeNumber < currentChequeNumber;
+      })
+      .sort(compareSettlementSequenceDesc);
+
+    const latestSettlement = history[0];
+    return latestSettlement && !latestSettlement.returnedActually
+      ? Number(latestSettlement.settlementReturned || 0)
+      : 0;
   };
 
   const openAdvances = useMemo(
     () =>
       normalizedSourceTransactions
         .filter((t) => normalizeRequiresSettlement(t) && !t.isSettled && (t.state === "posted" || t.state === "approved" || !t.state))
-        .map((adv) => ({ ...adv, prevBalance: getPrevBalance(adv.employeeId, adv.id) })),
+        .map((adv) => ({ ...adv, prevBalance: getPrevBalance(adv.employeeId, adv.id, adv) })),
     [normalizedSourceTransactions, archivedSettlements]
   );
   const currentTxnOptions = useMemo(() => {
     const txMap = new Map();
-    if (editingSettlement) txMap.set(editingSettlement.id, { ...editingSettlement, prevBalance: getPrevBalance(editingSettlement.employeeId, editingSettlement.id) });
+    if (editingSettlement) txMap.set(editingSettlement.id, { ...editingSettlement, prevBalance: getPrevBalance(editingSettlement.employeeId, editingSettlement.id, editingSettlement) });
     openAdvances.forEach(adv => {
       if (!txMap.has(adv.id)) txMap.set(adv.id, adv);
     });
@@ -616,7 +683,7 @@ export default function SettlementTab() {
         expense.id === editingExpense.id
           ? {
               ...expense,
-              date: isMeetingAllowanceCategory(expCat) ? (selectedMeeting?.date || expDate) : expDate,
+              date: isMeetingAllowanceCategory(expCat) ? (expDate || selectedMeeting?.date || getTodayISO()) : expDate,
               amount: expAmt,
               category: expCat,
               notes: expNotes,
@@ -644,7 +711,7 @@ export default function SettlementTab() {
 
     setExpenses(prev => [...prev, {
       id: `e_${Date.now()}`,
-      date: isMeetingAllowanceCategory(expCat) ? (selectedMeeting?.date || expDate) : expDate,
+      date: isMeetingAllowanceCategory(expCat) ? (expDate || selectedMeeting?.date || getTodayISO()) : expDate,
       amount: expAmt,
       category: expCat,
       notes: expNotes,
@@ -1049,7 +1116,7 @@ export default function SettlementTab() {
                   <input type="number" value={expAmt} onChange={e => setExpAmt(e.target.value)} placeholder={`المتاح: ${remaining}`} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-black outline-none focus:ring-2 focus:border-amber-500 h-[38px]", T.inp, Number(expAmt) > remaining && "!border-rose-500 bg-rose-50/10")} />
                 </div>
                 <div className="space-y-1 relative z-[90]">
-                  <ArabicDatePicker label="تاريخ الفاتورة" value={expDate} onChange={setExpDate} maxVal={getTodayISO()} disabled={isMeetingAllowanceCategory(expCat)} />
+                  <ArabicDatePicker label="تاريخ الفاتورة" value={expDate} onChange={setExpDate} maxVal={getTodayISO()} />
                 </div>
               </div>
 
