@@ -5,6 +5,7 @@ import { ThemeProvider } from "./providers/ThemeProvider";
 import { FirebaseProvider } from "./providers/FirebaseProvider";
 import { AlertProvider } from "./providers/AlertProvider";
 import { AuthProvider } from "./providers/AuthProvider";
+import ArabicTextRepairProvider from "./providers/ArabicTextRepairProvider";
 
 // 🎯 استيراد المزود العالمي الجديد للبطاقة المنبثقة
 import { GlobalEmployeeModalProvider } from "./providers/GlobalEmployeeModal";
@@ -17,12 +18,14 @@ export default function App() {
           
           {/* 🎯 تغليف التطبيق بالمزود العالمي هنا */}
           <AuthProvider>
-          <GlobalEmployeeModalProvider>
             <BrowserRouter>
+              <ArabicTextRepairProvider>
+                <GlobalEmployeeModalProvider>
               {/* الراوتر الذي يحتوي على MainLayout والسايد بار */}
-              <Router /> 
+                  <Router /> 
+                </GlobalEmployeeModalProvider>
+              </ArabicTextRepairProvider>
             </BrowserRouter>
-          </GlobalEmployeeModalProvider>
           </AuthProvider>
 
         </AlertProvider>

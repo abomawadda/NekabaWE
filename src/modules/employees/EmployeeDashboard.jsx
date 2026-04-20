@@ -58,7 +58,13 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
 
   useEffect(() => {
     if (!forcedEmployeeId || loading) return;
-    const matchedEmployee = employees.find((employee) => String(employee.id) === String(forcedEmployeeId)) || null;
+    const normalizedForcedId = String(forcedEmployeeId).trim();
+    const matchedEmployee =
+      employees.find(
+        (employee) =>
+          String(employee.id || "").trim() === normalizedForcedId ||
+          String(employee.jobId || "").trim() === normalizedForcedId
+      ) || null;
     setSelectedEmp(matchedEmployee);
     setCurrentView("profile");
   }, [employees, forcedEmployeeId, loading]);

@@ -314,12 +314,17 @@ function ReportBuilderInner() {
     );
   };
 
+  const getSafeDisplayValue = (field, value) => {
+    const formatted = formatDisplayValue(field, value);
+    return String(formatted ?? "").trim() ? formatted : "—";
+  };
+
   const exportToExcel = () => {
     const fields = activeConfig.fields.filter((field) => selectedFields.includes(field.key));
     const rows = filteredRows.map((row, index) => {
       const exportedRow = { "#": index + 1 };
       fields.forEach((field) => {
-        exportedRow[field.label] = formatDisplayValue(field, row[field.key]);
+        exportedRow[field.label] = getSafeDisplayValue(field, row[field.key]);
       });
       return exportedRow;
     });
@@ -808,12 +813,12 @@ function ReportBuilderInner() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-right text-[11px] min-w-[820px]">
+                  <table className="w-full text-right text-[10px] min-w-[820px]">
                     <thead className="bg-slate-900 text-white">
                       <tr>
-                        <th className="p-3 w-12 text-center font-black">#</th>
+                        <th className="p-2.5 w-12 text-center font-black">#</th>
                         {activeFields.map((field) => (
-                          <th key={field.key} className="p-3 font-black whitespace-nowrap">
+                          <th key={field.key} className="p-2.5 font-black whitespace-nowrap">
                             {field.label}
                           </th>
                         ))}
@@ -822,19 +827,19 @@ function ReportBuilderInner() {
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                       {previewRows.map((row, index) => (
                         <tr key={row.id || `${selectedModule}-${index}`} className={index % 2 === 0 ? "" : "bg-slate-50/60 dark:bg-slate-900/20"}>
-                          <td className="p-3 text-center font-black text-slate-400">{index + 1}</td>
+                          <td className="p-2.5 text-center font-black text-slate-400">{index + 1}</td>
                           {activeFields.map((field) => (
                             <td
                               key={`${row.id || index}-${field.key}`}
                               className={clsx(
-                                "p-3 font-bold whitespace-nowrap max-w-[280px] truncate",
+                                "p-2.5 font-bold align-top leading-5",
                                 field.currency
-                                  ? "text-emerald-600 font-black text-left"
-                                  : "text-slate-700 dark:text-slate-200"
+                                  ? "text-emerald-600 font-black text-left whitespace-nowrap"
+                                  : "text-slate-700 dark:text-slate-200 whitespace-normal break-words max-w-[360px]"
                               )}
-                              title={formatDisplayValue(field, row[field.key])}
+                              title={getSafeDisplayValue(field, row[field.key])}
                             >
-                              {formatDisplayValue(field, row[field.key])}
+                              {getSafeDisplayValue(field, row[field.key])}
                             </td>
                           ))}
                         </tr>
@@ -843,12 +848,12 @@ function ReportBuilderInner() {
                     {activeConfig.showTotals !== false && summary.currencyFields.some((field) => selectedFields.includes(field.key)) && (
                       <tfoot>
                         <tr className="bg-slate-100 dark:bg-slate-800/80 border-t-2 border-slate-300 dark:border-slate-700">
-                          <td className="p-3 text-center font-black text-slate-500">#</td>
+                          <td className="p-2.5 text-center font-black text-slate-500">#</td>
                           {activeFields.map((field, index) => (
                             <td
                               key={`total-${field.key}`}
                               className={clsx(
-                                "p-3 font-black",
+                                "p-2.5 font-black",
                                 field.currency ? "text-emerald-600 text-left" : "text-slate-500"
                               )}
                             >

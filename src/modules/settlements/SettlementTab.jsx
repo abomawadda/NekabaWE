@@ -6,7 +6,7 @@
  * ✅ بدون شاشة بيضاء بفضل الـ Local Print & Snapshot Modal.
  */
 
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { collection, query, onSnapshot, doc, setDoc, orderBy, writeBatch, where } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
@@ -21,6 +21,7 @@ import {
   isBoardMember,
   parseEmployeeDate,
 } from "../../utils/memberBenefits";
+import { repairArabicMojibake } from "../../utils/arabicMojibake";
 import { formatInteger, formatMoney } from "../../utils/numberFormat";
 import { tafqeet } from "../../utils/tafqeet";
 import { openPrintWindow } from "../../utils/print";
@@ -281,10 +282,10 @@ const printSettlementLocal = ({
   win.document.write(`
     <!DOCTYPE html><html lang="ar">
     <head><meta charset="UTF-8"><title>تسوية ${advanceTxn?.settlement_mode === 'carry_forward' ? 'عهدة' : 'شيك'} - ${advanceTxn?.employeeName || advanceTxn?.party}</title>
-    <style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box;direction:rtl;}body{padding:30px;color:#1e293b;background:#fff;}.badge{display:inline-block;padding:5px 15px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;font-size:12px;font-weight:700;color:#0f766e;}.info-row{margin-bottom:20px;padding:15px;background:#f8fafc;border-right:4px solid #0d9488;border-radius:8px;font-size:16px;font-weight:bold;}.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}.stat-box{border:1px solid #e2e8f0;padding:15px;border-radius:10px;text-align:center;}.stat-label{font-size:11px;color:#64748b;font-weight:bold;margin-bottom:5px;text-transform:uppercase;}.stat-value{font-size:20px;font-weight:900;}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}th{background:#f1f5f9;color:#0f766e;border:1px solid #cbd5e1;padding:12px;text-align:right;font-weight:900;}td{border:1px solid #cbd5e1;padding:10px;text-align:right;font-weight:700;}.footer-note{margin-top:15px;padding:10px;background:#fefce8;border:1px solid #fef08a;border-radius:8px;font-size:13px;font-weight:bold;color:#854d0e;}.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:50px;text-align:center;}.sig-box{border-top:2px dashed #cbd5e1;padding-top:10px;font-size:14px;font-weight:900;color:#475569;}.sig-space{height:60px;}@media print{@page{size:A4 portrait;margin:10mm;}body{padding:0;}}${getPrintBrandStyles()}</style>
+    <style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');*{font-family:'Cairo',sans-serif;margin:0;padding:0;box-sizing:border-box;direction:rtl;}body{padding:18px;color:#1e293b;background:#fff;font-size:11px;line-height:1.45;}.badge{display:inline-block;padding:4px 12px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;font-size:11px;font-weight:700;color:#0f766e;}.info-row{margin-bottom:12px;padding:10px 12px;background:#f8fafc;border-right:4px solid #0d9488;border-radius:8px;font-size:14px;font-weight:900;line-height:1.5;}.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;}.stat-box{border:1px solid #e2e8f0;padding:10px;border-radius:10px;text-align:center;}.stat-label{font-size:10px;color:#64748b;font-weight:800;margin-bottom:3px;text-transform:uppercase;line-height:1.3;}.stat-value{font-size:16px;font-weight:900;line-height:1.25;}h3{margin-bottom:6px;color:#334155;font-size:13px;line-height:1.4;}table{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px;table-layout:fixed;}th{background:#f1f5f9;color:#0f766e;border:1px solid #cbd5e1;padding:6px 5px;text-align:right;font-weight:900;line-height:1.4;}td{border:1px solid #cbd5e1;padding:5px 4px;text-align:right;font-weight:700;line-height:1.45;vertical-align:top;white-space:normal;word-break:break-word;overflow-wrap:anywhere;}tbody tr:nth-child(even){background:#f8fafc;}.footer-note{margin-top:8px;padding:8px;background:#fefce8;border:1px solid #fef08a;border-radius:8px;font-size:11px;font-weight:800;color:#854d0e;line-height:1.6;}.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:28px;text-align:center;}.sig-box{border-top:2px dashed #cbd5e1;padding-top:8px;font-size:12px;font-weight:900;color:#475569;}.sig-space{height:38px;}@media print{@page{size:A4 portrait;margin:10mm;}body{padding:0;}.info-row,.stats-grid,.stat-box,.footer-note,.sigs,.sig-box{break-inside:avoid;page-break-inside:avoid;}table{page-break-inside:auto;break-inside:auto;}thead{display:table-header-group;}tfoot{display:table-footer-group;}tr{break-inside:avoid;page-break-inside:avoid;}}${getPrintBrandStyles()}</style>
     </head><body>
       ${getPrintBrandHeader({ reportTitle: `كشف تسوية ${advanceTxn?.settlement_mode === 'carry_forward' ? 'عهدة مالية' : 'شيك مصروف'}`, reportMeta: `تاريخ الاعتماد: ${getLatestSettlementExpenseDate(expenses, advanceTxn?.settlementDate || advanceTxn?.date || '—') || '—'}` })}
-      <div class="info-row">اسم مسؤول التسوية: <span style="font-size:20px; color:#0d9488; margin-right: 10px;">${advanceTxn?.employeeName || advanceTxn?.party || '—'}</span></div>
+      <div class="info-row">اسم مسؤول التسوية: <span style="font-size:16px; color:#0d9488; margin-right: 8px;">${advanceTxn?.employeeName || advanceTxn?.party || '—'}</span></div>
       <div class="stats-grid">
         <div class="stat-box"> <div class="stat-label">قيمة الشيك المُنصرف</div> <div class="stat-value" style="color:#334155">${formatMoney(ADV_AMT)}</div> </div>
         <div class="stat-box"> <div class="stat-label">${advanceTxn?.settlement_mode === 'check_plus_subscriptions' ? 'اشتراكات الأعضاء' : 'رصيد مرحل من قبل'}</div> <div class="stat-value" style="color:#d97706">${advanceTxn?.settlement_mode === 'check_plus_subscriptions' ? formatMoney(SUBS_AMT) : formatMoney(prevBalance)}</div> </div>
@@ -387,6 +388,7 @@ export default function SettlementTab() {
   const [expFiles,      setExpFiles]      = useState([]);
   const [expMeetingId,  setExpMeetingId]  = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
+  const lastLoadedSelectionKeyRef = useRef("");
 
   const resetSettlementReturnState = (mode = "carry_forward") => {
     setReturnedActually(mode === "cash_return");
@@ -558,7 +560,10 @@ export default function SettlementTab() {
     };
   };
 
-  const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
+  const showToast = (msg, type = "success") => {
+    setToast({ msg: repairArabicMojibake(msg), type });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   const selectedMeeting = useMemo(() => {
     const targetMeetingId = toEntityId(expMeetingId);
@@ -727,7 +732,10 @@ export default function SettlementTab() {
       ),
     [normalizedSourceTransactions]
   );
-  const editingSettlement = useMemo(() => archivedSettlements.find(t => t.id === editingSettlementId) || null, [archivedSettlements, editingSettlementId]);
+  const editingSettlement = useMemo(
+    () => archivedSettlements.find((t) => toEntityId(t.id) === toEntityId(editingSettlementId)) || null,
+    [archivedSettlements, editingSettlementId]
+  );
   const archiveYears = useMemo(
     () => [...new Set(archivedSettlements.map(s => getYearValue(getSettlementApprovalDate(s))).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
     [archivedSettlements]
@@ -750,7 +758,7 @@ export default function SettlementTab() {
       });
   }, [archivedSettlements, archiveMonth, archiveSearch, archiveYear]);
   
-  const getPrevBalance = (empId, currentTxnId, currentTxn = null) => {
+  const getPrevBalance = useCallback((empId, currentTxnId, currentTxn = null) => {
     if (!empId) return 0;
     const currentChequeDateTimestamp = getDateTimestamp(getSettlementChequeDate(currentTxn || {}));
     const currentChequeNumber = getSettlementChequeNumber(currentTxn || {});
@@ -774,20 +782,20 @@ export default function SettlementTab() {
     return latestSettlement && getSettlementReturnMode(latestSettlement) === "carry_forward"
       ? Number(latestSettlement.settlementReturned || 0)
       : 0;
-  };
+  }, [archivedSettlements]);
 
   const openAdvances = useMemo(
     () =>
       normalizedSourceTransactions
         .filter((t) => normalizeRequiresSettlement(t) && !t.isSettled && (t.state === "posted" || t.state === "approved" || !t.state))
         .map((adv) => ({ ...adv, prevBalance: getPrevBalance(adv.employeeId, adv.id, adv) })),
-    [normalizedSourceTransactions, archivedSettlements]
+    [getPrevBalance, normalizedSourceTransactions]
   );
   const currentTxnOptions = useMemo(() => {
     const txMap = new Map();
     const attachOption = (tx) => {
       if (!tx) return;
-      const optionKey = getIssuedCheckDocId(tx) || tx.id;
+      const optionKey = toEntityId(getIssuedCheckDocId(tx) || tx.id);
       if (!optionKey || txMap.has(optionKey)) return;
       txMap.set(optionKey, {
         ...tx,
@@ -835,15 +843,18 @@ export default function SettlementTab() {
       .sort(compareSettlementSequenceAsc);
   }, [normalizedSourceTransactions]);
 
-  const selectedTxn = useMemo(() => currentTxnOptions.find(a => a.id === selAdvId) || null, [currentTxnOptions, selAdvId]);
+  const selectedTxn = useMemo(
+    () => currentTxnOptions.find((a) => toEntityId(a.id) === toEntityId(selAdvId)) || null,
+    [currentTxnOptions, selAdvId]
+  );
   const selectedBatchTransactions = useMemo(
     () => {
       const lookup = new Map();
       currentTxnOptions.forEach((tx) => {
-        lookup.set(getIssuedCheckDocId(tx) || tx.id, tx);
+        lookup.set(toEntityId(getIssuedCheckDocId(tx) || tx.id), tx);
       });
       normalizedSourceTransactions.forEach((tx) => {
-        const optionKey = getIssuedCheckDocId(tx) || tx.id;
+        const optionKey = toEntityId(getIssuedCheckDocId(tx) || tx.id);
         if (!lookup.has(optionKey)) {
           lookup.set(optionKey, {
             ...tx,
@@ -853,7 +864,7 @@ export default function SettlementTab() {
       });
 
       return selectedBatchIds
-        .map((groupedId) => lookup.get(groupedId))
+        .map((groupedId) => lookup.get(toEntityId(groupedId)))
         .filter(Boolean);
     },
     [currentTxnOptions, getPrevBalance, normalizedSourceTransactions, selectedBatchIds]
@@ -874,16 +885,18 @@ export default function SettlementTab() {
   const editingExpenseAmount = Number(editingExpense?.amount || 0);
 
   const toggleBatchTransaction = useCallback((tx) => {
-    if (!tx?.id) return;
+    const nextId = toEntityId(tx?.id);
+    if (!nextId) return;
     setSelectedBatchIds((prev) => {
-      if (prev.includes(tx.id)) return prev.filter((id) => id !== tx.id);
-      if (prev.length === 0) return [...prev, tx.id];
+      const normalizedPrev = prev.map((id) => toEntityId(id)).filter(Boolean);
+      if (normalizedPrev.includes(nextId)) return normalizedPrev.filter((id) => id !== nextId);
+      if (normalizedPrev.length === 0) return [...normalizedPrev, nextId];
 
-      const anchor = currentTxnOptions.find((item) => item.id === prev[0]) || null;
+      const anchor = currentTxnOptions.find((item) => toEntityId(item.id) === normalizedPrev[0]) || null;
       const sameEmployee = String(anchor?.employeeId || anchor?.party || "") === String(tx.employeeId || tx.party || "");
       const sameMode = String(anchor?.settlement_mode || anchor?.settlementMode || "") === String(tx?.settlement_mode || tx?.settlementMode || "");
-      if (!sameEmployee || !sameMode) return prev;
-      return [...prev, tx.id];
+      if (!sameEmployee || !sameMode) return normalizedPrev;
+      return [...normalizedPrev, nextId];
     });
   }, [currentTxnOptions]);
 
@@ -992,6 +1005,14 @@ export default function SettlementTab() {
   const spent          = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const remaining      = TOTAL_AVAILABLE - spent;
   const availableForExpense = remaining + editingExpenseAmount;
+  const activeSelectionKey = useMemo(() => {
+    const activeTxnId = toEntityId(getIssuedCheckDocId(activeSettlementTxn) || activeSettlementTxn?.id);
+    const normalizedBatchIds =
+      settlementSelectionMode === "batch"
+        ? selectedBatchIds.map((id) => toEntityId(id)).filter(Boolean).sort().join("|")
+        : "";
+    return `${settlementSelectionMode}::${activeTxnId}::${normalizedBatchIds}`;
+  }, [activeSettlementTxn, selectedBatchIds, settlementSelectionMode]);
   const resetExpenseForm = () => {
     setEditingExpense(null);
     setExpAmt("");
@@ -1004,6 +1025,9 @@ export default function SettlementTab() {
   };
 
   useEffect(() => {
+    if (lastLoadedSelectionKeyRef.current === activeSelectionKey) return;
+    lastLoadedSelectionKeyRef.current = activeSelectionKey;
+
     if (activeSettlementTxn) {
       setExpenses(activeSettlementTxn.settlementExpenses || []);
       setCollectedSubs(activeSettlementTxn.collectedSubscriptions || activeSettlementTxn.memberSubscriptions || "");
@@ -1021,14 +1045,15 @@ export default function SettlementTab() {
       resetSettlementReturnState("carry_forward");
       resetExpenseForm();
     }
-  }, [activeSettlementTxn]);
+  }, [activeSelectionKey, activeSettlementTxn]);
 
   useEffect(() => {
     if (settlementSelectionMode !== "batch") return;
     if (selectedBatchIds.length === 0) return;
-    const validIds = new Set(currentTxnOptions.map((tx) => tx.id));
-    const filtered = selectedBatchIds.filter((id) => validIds.has(id));
-    if (filtered.length !== selectedBatchIds.length) {
+    const validIds = new Set(currentTxnOptions.map((tx) => toEntityId(tx.id)));
+    const normalizedSelected = selectedBatchIds.map((id) => toEntityId(id)).filter(Boolean);
+    const filtered = normalizedSelected.filter((id) => validIds.has(id));
+    if (filtered.join("|") !== normalizedSelected.join("|")) {
       setSelectedBatchIds(filtered);
     }
   }, [currentTxnOptions, selectedBatchIds, settlementSelectionMode]);
@@ -1121,14 +1146,15 @@ export default function SettlementTab() {
   };
 
   const startEditSettlement = (settlement) => {
-    const groupedIds =
+    const groupedIdsRaw =
       Array.isArray(settlement?.settlementGroupMemberIds) && settlement.settlementGroupMemberIds.length > 1
         ? settlement.settlementGroupMemberIds
         : [];
+    const groupedIds = toEntityIdList(groupedIdsRaw);
     setSettlementSelectionMode(groupedIds.length > 1 ? "batch" : "single");
     setSelectedBatchIds(groupedIds);
-    setEditingSettlementId(settlement.id);
-    setSelAdvId(settlement.id);
+    setEditingSettlementId(toEntityId(settlement.id));
+    setSelAdvId(toEntityId(settlement.id));
     setActiveTab("current");
     showToast("تم فتح التسوية في وضع التعديل", "success");
   };
@@ -1639,7 +1665,7 @@ export default function SettlementTab() {
                   <select value={selAdvId} onChange={e => setSelAdvId(e.target.value)} className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-teal-500 h-[42px]", T.sel)}>
                     <option value="">— الشيكات التي تتطلب تسوية —</option>
                     {currentTxnOptions.map(a => (
-                      <option key={a.id} value={a.id}>
+                      <option key={toEntityId(a.id) || a.id} value={toEntityId(a.id)}>
                         {getIssuedCheckDisplayParty(a)} {a.settlement_mode === "check_plus_subscriptions" ? "(رحلة)" : a.settlement_mode === "carry_forward" ? "(سلفة)" : "(شيك تسوية)"} — {a.date || "—"} — شيك: {formatCheckNumber(a.checkNum)} — {formatMoney(a.amount)} {a.isSettled ? "— [تعديل تسوية]" : ""}
                       </option>
                     ))}
@@ -1647,6 +1673,7 @@ export default function SettlementTab() {
                 ) : (
                   <div className="space-y-2 max-h-44 overflow-y-auto rounded-2xl border border-slate-200 p-2 bg-slate-50/80">
                     {currentTxnOptions.map((tx) => {
+                      const txId = toEntityId(tx.id);
                       const sameEmployee =
                         !batchAnchorTxn ||
                         String(batchSelectionConstraint.employeeId) === String(tx.employeeId || tx.party || "");
@@ -1655,10 +1682,10 @@ export default function SettlementTab() {
                         String(batchSelectionConstraint.settlementMode) === String(tx.settlement_mode || tx.settlementMode || "");
                       const disabled = Boolean(batchAnchorTxn) && (!sameEmployee || !sameMode);
                       return (
-                        <label key={tx.id} className={clsx("flex items-start gap-2 rounded-xl p-2 text-[10px] font-bold border transition-colors", disabled ? "bg-slate-100 text-slate-400 border-slate-200" : "bg-white border-slate-200 hover:border-indigo-300")}>
+                        <label key={txId || tx.id} className={clsx("flex items-start gap-2 rounded-xl p-2 text-[10px] font-bold border transition-colors", disabled ? "bg-slate-100 text-slate-400 border-slate-200" : "bg-white border-slate-200 hover:border-indigo-300")}>
                           <input
                             type="checkbox"
-                            checked={selectedBatchIds.includes(tx.id)}
+                            checked={selectedBatchIds.includes(txId)}
                             disabled={disabled}
                             onChange={() => toggleBatchTransaction(tx)}
                             className="mt-0.5 accent-indigo-600"

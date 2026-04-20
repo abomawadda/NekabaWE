@@ -48,6 +48,7 @@ import {
 
 const ACCOUNTS_COLLECTION = "user_accounts";
 const SESSIONS_COLLECTION = "auth_sessions";
+const ACCOUNT_STATUS_PENDING = "pending_approval";
 
 const FALLBACK_ADMIN = {
   id: "system-admin",
@@ -58,6 +59,21 @@ const FALLBACK_ADMIN = {
   title: "مدير النظام",
   membershipStatus: "إدارة النظام",
   accountStatus: "active",
+};
+
+const getRoleTitle = (role = "viewer") => {
+  switch (normalizeRole(role)) {
+    case "treasurer":
+      return "أمين الصندوق";
+    case "admin":
+      return "مدير النظام";
+    case "auditor":
+      return "مراجع مالي";
+    case "dataEntry":
+      return "مدخل بيانات";
+    default:
+      return "مشاهد";
+  }
 };
 
 const AuthContext = createContext(null);
@@ -370,7 +386,11 @@ export function AuthProvider({ children }) {
         }
         const account = { id: accountDoc.id, ...accountDoc.data() };
         if (account.accountStatus !== "active") {
-          throw new Error("الحساب غير مفعل حاليًا.");
+          throw new Error(
+            account.accountStatus === ACCOUNT_STATUS_PENDING
+              ? "الحساب بانتظار موافقة الأدمن وتحديد الصلاحية."
+              : "الحساب غير مفعل حاليًا."
+          );
         }
         nextUser = buildUserFromAccount(account);
       }
@@ -487,6 +507,9 @@ export function AuthProvider({ children }) {
       }
 
       if (account.accountStatus && account.accountStatus !== "active") {
+        if (account.accountStatus === ACCOUNT_STATUS_PENDING) {
+          throw new Error("الحساب قيد المراجعة. سيتم تفعيله بواسطة الأدمن بعد تحديد الصلاحية.");
+        }
         throw new Error("الحساب غير مفعل أو موقوف حاليًا.");
       }
 
@@ -531,14 +554,11 @@ export function AuthProvider({ children }) {
       email,
       password,
       confirmPassword,
-      role,
       profileFile,
-      acceptedTerms,
     } = payload || {};
 
     if (!String(fullName || "").trim()) throw new Error("الاسم الكامل مطلوب.");
     if (!normalizeDigits(phone)) throw new Error("رقم الهاتف مطلوب.");
-    if (!acceptedTerms) throw new Error("يجب الموافقة على الشروط والأحكام.");
     if (password !== confirmPassword) throw new Error("تأكيد كلمة المرور غير مطابق.");
 
     const policy = validatePasswordPolicy(password, {
@@ -567,7 +587,7 @@ export function AuthProvider({ children }) {
     const accountId = doc(collection(db, ACCOUNTS_COLLECTION)).id;
     const passwordSalt = randomToken(8);
     const passwordHash = await buildPasswordHash(password, passwordSalt);
-    const normalizedRole = normalizeRole(role);
+    const normalizedRole = "viewer";
     const username = `user_${normalizedPhone.slice(-6) || randomToken(3)}`;
 
     const profileImage =
@@ -580,18 +600,9 @@ export function AuthProvider({ children }) {
       email: normalizedEmail || "",
       username,
       role: normalizedRole,
-      title:
-        normalizedRole === "treasurer"
-          ? "أمين الصندوق"
-          : normalizedRole === "admin"
-            ? "مدير النظام"
-            : normalizedRole === "auditor"
-              ? "مراجع مالي"
-              : normalizedRole === "dataEntry"
-                ? "مدخل بيانات"
-                : "مشاهد",
-      membershipStatus: "حساب نظام",
-      accountStatus: "active",
+      title: "بانتظار التفعيل",
+      membershipStatus: "طلب حساب جديد",
+      accountStatus: ACCOUNT_STATUS_PENDING,
       passwordSalt,
       passwordHash,
       profileImage,
@@ -608,7 +619,8 @@ export function AuthProvider({ children }) {
       userId: accountId,
       role: normalizedRole,
       page: "/register",
-      riskLevel: ["treasurer", "admin"].includes(normalizedRole) ? "high" : "medium",
+      accountStatus: ACCOUNT_STATUS_PENDING,
+      riskLevel: "medium",
     });
 
     return {
@@ -686,8 +698,15 @@ export function AuthProvider({ children }) {
     if (!accountId) throw new Error("معرف الحساب مطلوب.");
 
     const nextRole = updates.role ? normalizeRole(updates.role) : undefined;
+    const nextTitle = nextRole ? getRoleTitle(nextRole) : undefined;
     const payload = {
-      ...(nextRole ? { role: nextRole } : {}),
+      ...(nextRole
+        ? {
+            role: nextRole,
+            title: nextTitle,
+            membershipStatus: "حساب نظام",
+          }
+        : {}),
       ...(updates.accountStatus ? { accountStatus: updates.accountStatus } : {}),
       ...(Array.isArray(updates.permissionOverrides)
         ? { permissionOverrides: updates.permissionOverrides }
@@ -746,7 +765,15 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => {
     const rolePermissions = user ? getRolePermissions(user.role) : [];
-    const hasFinancialPrivileges = rolePermissions.some((permission) =>
+    const effectivePermissions = user
+      ? Array.from(
+          new Set([
+            ...rolePermissions,
+            ...(Array.isArray(user.permissionOverrides) ? user.permissionOverrides : []),
+          ])
+        )
+      : [];
+    const hasFinancialPrivileges = effectivePermissions.some((permission) =>
       [
         PERMISSIONS.treasuryCreate,
         PERMISSIONS.treasuryEdit,
@@ -766,7 +793,7 @@ export function AuthProvider({ children }) {
       isAdmin: user?.role === "admin",
       isReadOnly: Boolean(user) && !hasFinancialPrivileges && !can(PERMISSIONS.employeesEdit),
       userRole: user?.role || "viewer",
-      permissions: rolePermissions,
+      permissions: effectivePermissions,
       can,
       loginWithPassword,
       loginAdmin: loginWithPassword,

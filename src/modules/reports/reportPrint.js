@@ -14,14 +14,15 @@ export const renderPrintReport = ({
   if (!win) return;
 
   const fields = config.fields.filter((field) => selectedFields.includes(field.key));
-  const orientation = "portrait";
-  const layoutClass = "portrait-report";
+  const orientation = config.orientation === "landscape" ? "landscape" : "portrait";
+  const layoutClass = orientation === "landscape" ? "landscape-report" : "portrait-report";
   const reportMeta = [
     period?.from && period?.to ? `الفترة: ${period.from} إلى ${period.to}` : "",
     `عدد السجلات: ${rows.length}`,
   ]
     .filter(Boolean)
     .join(" • ");
+
   const summaryCardsData =
     Array.isArray(summary?.customSummary?.cards) && summary.customSummary.cards.length > 0
       ? summary.customSummary.cards
@@ -68,13 +69,18 @@ export const renderPrintReport = ({
         .join("")
     : "";
 
+  const sanitizeCellValue = (value) => {
+    const normalized = String(value ?? "");
+    return normalized.trim() ? normalized : "—";
+  };
+
   const headersHtml = fields.map((field) => `<th>${escapeHtml(field.label)}</th>`).join("");
   const rowsHtml = rows
     .map((row, index) => {
       const cells = fields
         .map((field) => {
-          const value = formatDisplayValue(field, row[field.key]);
-          const className = field.currency ? "cell-amount" : "";
+          const value = sanitizeCellValue(formatDisplayValue(field, row[field.key]));
+          const className = field.currency ? "cell-amount" : "cell-text";
           return `<td class="${className}">${escapeHtml(value)}</td>`;
         })
         .join("");
@@ -82,27 +88,33 @@ export const renderPrintReport = ({
     })
     .join("");
 
-  const totalsRow = config.showTotals !== false && summary.currencyFields.some((field) => selectedFields.includes(field.key))
-    ? `
+  const totalsRow =
+    config.showTotals !== false &&
+    summary.currencyFields.some((field) => selectedFields.includes(field.key))
+      ? `
       <tr class="totals-row">
         <td class="cell-index">#</td>
         ${fields
           .map((field, index) => {
-            if (index === 0) return `<td>الإجمالي</td>`;
+            if (index === 0) return `<td class="cell-text">الإجمالي</td>`;
             if (field.currency) {
-              return `<td class="cell-amount">${escapeHtml(formatDisplayValue(field, summary.totals[field.key] || 0))}</td>`;
+              return `<td class="cell-amount">${escapeHtml(
+                sanitizeCellValue(formatDisplayValue(field, summary.totals[field.key] || 0))
+              )}</td>`;
             }
-            return `<td>—</td>`;
+            return `<td class="cell-text">—</td>`;
           })
           .join("")}
       </tr>
     `
-    : "";
+      : "";
+
   const toNumeric = (value) => {
     const normalized = String(value ?? "").replace(/,/g, "").trim();
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : 0;
   };
+
   const totalsInWords = summary.currencyFields
     .filter((field) => selectedFields.includes(field.key))
     .map((field) => {
@@ -125,46 +137,51 @@ export const renderPrintReport = ({
           @page { size: A4 ${orientation}; margin: 10mm; }
           *{box-sizing:border-box;margin:0;padding:0;font-family:'Cairo',sans-serif}
           html,body{width:100%;height:auto}
-          body{padding:8px 0 26px;color:#0f172a;background:#fff;font-size:11px}
-          .sheet{display:block;position:relative;z-index:1;padding-bottom:20px}
-          .summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-bottom:8px}
-          .summary-card{border:1px solid #dbeafe;border-radius:12px;padding:8px 10px;background:linear-gradient(180deg,#f8fafc,#ffffff)}
-          .summary-label{font-size:8.5px;font-weight:900;color:#64748b;margin-bottom:4px;line-height:1.4}
-          .summary-value{font-size:14px;font-weight:900;color:#0f766e;line-height:1.25}
-          .table-shell{border:1px solid #cbd5e1;border-radius:16px;overflow:hidden}
-          .summary-sections{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
-          .summary-section{border:1px solid #e2e8f0;border-radius:12px;padding:10px;background:#f8fafc}
+          body{padding:6px 0 10px;color:#0f172a;background:#fff;font-size:10px;line-height:1.35}
+          .sheet{display:block;position:relative;z-index:1}
+          .summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:6px}
+          .summary-card{border:1px solid #dbeafe;border-radius:10px;padding:6px 8px;background:linear-gradient(180deg,#f8fafc,#ffffff)}
+          .summary-label{font-size:8px;font-weight:900;color:#64748b;margin-bottom:3px;line-height:1.4}
+          .summary-value{font-size:12px;font-weight:900;color:#0f766e;line-height:1.25}
+          .table-shell{border:1px solid #cbd5e1;border-radius:12px;overflow:hidden}
+          .summary-sections{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
+          .summary-section{border:1px solid #e2e8f0;border-radius:10px;padding:8px;background:#f8fafc}
           .summary-section-title{font-size:9px;font-weight:900;color:#0f172a;margin-bottom:6px}
           .summary-section-items{display:grid;gap:5px}
           .summary-section-item{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:9px;color:#475569}
           .summary-section-item strong{font-size:9px;color:#0f172a}
-          table{width:100%;border-collapse:collapse}
-          th{background:#0f172a;color:#fff;padding:9px 7px;border:1px solid #334155;font-size:10px;text-align:right}
-          td{border:1px solid #cbd5e1;padding:7px;font-size:10px;vertical-align:top;word-break:break-word}
+          table{width:100%;border-collapse:collapse;table-layout:fixed}
+          th{background:#0f172a;color:#fff;padding:6px 5px;border:1px solid #334155;font-size:9px;text-align:right;line-height:1.4}
+          td{border:1px solid #cbd5e1;padding:5px 4px;font-size:9px;vertical-align:top;line-height:1.45;word-break:break-word;overflow-wrap:anywhere;white-space:normal}
           tbody tr:nth-child(even){background:#f8fafc}
-          .cell-index{text-align:center;font-weight:900;width:42px}
+          .cell-index{text-align:center;font-weight:900;width:38px}
+          .cell-text{text-align:right}
           .cell-amount{text-align:left;font-weight:900;color:#047857;white-space:nowrap}
           .totals-row td{background:#eef2ff;font-weight:900}
-          .amount-words{margin-top:10px;border:1px solid #bfdbfe;border-radius:12px;padding:10px;background:#f8fbff;display:grid;gap:6px}
-          .amount-words-row{display:flex;gap:8px;flex-wrap:wrap;font-size:10px;line-height:1.6}
+          .amount-words{margin-top:8px;border:1px solid #bfdbfe;border-radius:10px;padding:8px;background:#f8fbff;display:grid;gap:5px}
+          .amount-words-row{display:flex;gap:8px;flex-wrap:wrap;font-size:9px;line-height:1.5}
           .amount-words-label{font-weight:900;color:#1e3a8a}
           .amount-words-value{font-weight:800;color:#0f172a}
-          .signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}
-          .sig{padding-top:28px;border-top:1px dashed #94a3b8;text-align:center;font-size:9px;font-weight:800;color:#475569}
+          .signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px}
+          .sig{padding-top:22px;border-top:1px dashed #94a3b8;text-align:center;font-size:9px;font-weight:800;color:#475569}
           .portrait-report .summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
-          .portrait-report th,.portrait-report td{font-size:9px;padding:5px 4px}
-          .portrait-report .summary-value{font-size:13px}
+          .portrait-report th,.portrait-report td{font-size:8.5px;padding:4px 3px}
+          .portrait-report .summary-value{font-size:11px}
           .portrait-report .summary-sections{grid-template-columns:repeat(2,minmax(0,1fr))}
+          .landscape-report .summary-grid{grid-template-columns:repeat(6,minmax(0,1fr))}
+          .landscape-report .summary-value{font-size:11px}
           @media print{
-            body{padding:0 0 16px}
+            body{padding:0 0 8px}
             .sheet,.summary-grid,.summary-card,.summary-sections,.summary-section,.signatures,.sig,.table-shell{break-inside:auto;page-break-inside:auto}
             .summary-grid,.summary-sections,.summary-section,.signatures,.brand-header,.print-footer{break-inside:avoid;page-break-inside:avoid}
             .summary-card{break-inside:avoid;page-break-inside:avoid}
+            .table-shell{overflow:visible}
             table{page-break-inside:auto;break-inside:auto}
             thead{display:table-header-group}
             tfoot{display:table-footer-group}
             tbody{break-inside:auto;page-break-inside:auto}
-            tr,td,th{break-inside:avoid;page-break-inside:avoid}
+            tr{break-inside:avoid;page-break-inside:avoid}
+            td,th{break-inside:auto;page-break-inside:auto}
             .totals-row{break-inside:avoid;page-break-inside:avoid}
           }
           ${getPrintBrandStyles()}
@@ -183,9 +200,9 @@ export const renderPrintReport = ({
                 </tr>
               </thead>
               <tbody>
-                ${rowsHtml || `<tr><td colspan="${fields.length + 1}" style="text-align:center;padding:24px;color:#64748b">${escapeHtml(config.emptyMessage)}</td></tr>`}
-                ${totalsRow}
+                ${rowsHtml || `<tr><td colspan="${fields.length + 1}" style="text-align:center;padding:20px;color:#64748b">${escapeHtml(config.emptyMessage)}</td></tr>`}
               </tbody>
+              ${totalsRow ? `<tfoot>${totalsRow}</tfoot>` : ""}
             </table>
           </div>
           ${totalsInWords ? `<div class="amount-words">${totalsInWords}</div>` : ""}

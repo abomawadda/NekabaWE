@@ -81,16 +81,30 @@ export default function SecurityCenter() {
     () => accounts.filter((item) => item.accountStatus === "blocked"),
     [accounts]
   );
+  const pendingAccounts = useMemo(
+    () => accounts.filter((item) => item.accountStatus === "pending_approval"),
+    [accounts]
+  );
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     window.setTimeout(() => setToast(null), 3000);
   };
 
-  const handleRoleChange = async (accountId, role) => {
+  const handleRoleChange = async (account, role) => {
     try {
-      await updateAccountAccess(accountId, { role });
-      showToast("تم تحديث دور الحساب.");
+      const updates = {
+        role,
+        ...(account?.accountStatus === "pending_approval"
+          ? { accountStatus: "active" }
+          : {}),
+      };
+      await updateAccountAccess(account.id, updates);
+      showToast(
+        account?.accountStatus === "pending_approval"
+          ? "تم تحديد الصفة وتفعيل الحساب بنجاح."
+          : "تم تحديث دور الحساب."
+      );
     } catch (error) {
       showToast(error.message || "تعذر تحديث الدور.", "error");
     }
@@ -149,9 +163,10 @@ export default function SecurityCenter() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <Stat label="الحسابات" value={accounts.length} icon={Users} tone="sky" />
         <Stat label="الجلسات النشطة" value={activeSessions.length} icon={ShieldCheck} tone="teal" />
+        <Stat label="طلبات تفعيل" value={pendingAccounts.length} icon={Clock3} tone="sky" />
         <Stat label="حسابات موقوفة" value={blockedAccounts.length} icon={Lock} tone="amber" />
         <Stat label="سجلات التدقيق" value={auditLogs.length} icon={FileSearch} tone="rose" />
       </div>
@@ -189,7 +204,7 @@ export default function SecurityCenter() {
                       <td className="py-3 px-4">
                         <select
                           value={account.role || "viewer"}
-                          onChange={(e) => handleRoleChange(account.id, e.target.value)}
+                          onChange={(e) => handleRoleChange(account, e.target.value)}
                           className={clsx("px-3 py-2 rounded-xl border text-[11px] font-black", T.sel)}
                         >
                           {ROLE_OPTIONS.map((option) => (
@@ -206,6 +221,7 @@ export default function SecurityCenter() {
                           className={clsx("px-3 py-2 rounded-xl border text-[11px] font-black", T.sel)}
                         >
                           <option value="active">نشط</option>
+                          <option value="pending_approval">بانتظار التفعيل</option>
                           <option value="blocked">موقوف</option>
                           <option value="inactive">غير مفعل</option>
                         </select>

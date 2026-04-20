@@ -33,6 +33,7 @@ import {
 
 const REPORT_OPENING_BALANCE = 42685.79;
 const INCOME_TRANSACTION_TYPES = new Set(["deposit", "refund", "subs"]);
+const DIRECT_FINANCE_REPORT_TYPES = new Set(["deposit", "refund", "subs", "bank_charge"]);
 const MONTH_NAMES_AR = [
   "يناير",
   "فبراير",
@@ -88,13 +89,34 @@ const getMergedPostedFinanceRows = (sourceData = {}) => {
   );
 
   const directTransactions = (sourceData.transactions || [])
-    .filter((record) => !isLegacyCheckType(record?.type))
+    .filter((record) => {
+      if (isLegacyCheckType(record?.type)) return false;
+      const normalizedType = normalizeIssuedCheckType(record?.type);
+      return DIRECT_FINANCE_REPORT_TYPES.has(normalizedType);
+    })
     .map((record) => ({
       ...record,
+      type: normalizeIssuedCheckType(record?.type),
       sourceCollection: record?.sourceCollection || "transactions",
     }));
 
   return [...directTransactions, ...normalizedChecks].filter(isPostedRecord);
+};
+
+const hasMeaningfulMonthlyAnalysisData = (row = {}) => {
+  const amount = Math.abs(toNumber(row.amountValue));
+  if (amount > 0) return true;
+
+  const hasDate = String(row.date || "").trim().length > 0;
+  const hasParty = String(row.party || "").trim().length > 0 && String(row.party).trim() !== "—";
+  const hasSource =
+    String(row.incomeSourceLabel || "").trim().length > 0 &&
+    String(row.incomeSourceLabel).trim() !== "—";
+  const hasBucket =
+    String(row.expenseBucket || "").trim().length > 0 &&
+    String(row.expenseBucket).trim() !== "—";
+
+  return hasDate && (hasParty || hasSource || hasBucket);
 };
 
 const getPostedFinanceImpactRows = (sourceData = {}) => {
@@ -940,7 +962,8 @@ export const buildSimplifiedBalanceSheetSummary = ({ rows = [] } = {}) => {
 };
 
 export const buildMonthlyFinancialAnalysisRows = (sourceData = {}) =>
-  getMergedPostedFinanceRows(sourceData).map((record) => {
+  getMergedPostedFinanceRows(sourceData)
+    .map((record) => {
     const normalizedType = normalizeIssuedCheckType(record.type);
     const amount = toNumber(record.advanceAmountBase || record.amount);
     const { year, month } = getDateParts(record.date || record.settlementDate || "");
@@ -996,7 +1019,8 @@ export const buildMonthlyFinancialAnalysisRows = (sourceData = {}) =>
         record.eventName,
       ].filter(Boolean).join(" "),
     };
-  });
+    })
+    .filter(hasMeaningfulMonthlyAnalysisData);
 
 export const buildMonthlyFinancialAnalysisSummary = ({ rows = [], sourceData = {}, filters = {} } = {}) => {
   const allRows = buildMonthlyFinancialAnalysisRows(sourceData);

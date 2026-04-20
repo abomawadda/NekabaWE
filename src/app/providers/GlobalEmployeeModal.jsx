@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   X,
   UserCircle,
@@ -55,11 +56,21 @@ const buildMailURL = (email, name) => {
   return `mailto:${email}?subject=${subject}&body=${body}`;
 };
 
+const resolveEmployeeRouteId = (employee = {}) =>
+  String(
+    employee?.id ||
+      employee?.employeeId ||
+      employee?.memberId ||
+      employee?.jobId ||
+      ""
+  ).trim();
+
 /* =========================
    Provider
 ========================= */
 export const GlobalEmployeeModalProvider = ({ children }) => {
   const T = useT();
+  const navigate = useNavigate();
 
   const [selectedEmp, setSelectedEmp] = useState(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -218,7 +229,9 @@ export const GlobalEmployeeModalProvider = ({ children }) => {
                 onClick={() => {
                   closeEmployeeModal();
                   // مثال ربط مع Node route
-                  window.location.href = `/employees/${selectedEmp.id}`;
+                  const routeId = resolveEmployeeRouteId(selectedEmp);
+                  if (!routeId) return;
+                  navigate(`/employees/${routeId}`);
                 }}
                 className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition flex items-center justify-center gap-2"
               >

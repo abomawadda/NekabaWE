@@ -351,7 +351,7 @@ function TreasuryLedgerInner() {
         .sig-box { font-size:10px; font-weight:700; color:#334155; }
         .sig-line { margin-top:35px; border-top:1px dashed #94a3b8; width:80%; margin-inline:auto; }
         @media print {
-          @page { margin:8mm; size:A4 landscape; }
+          @page { margin:8mm; size:A4 portrait; }
           body { padding:0; }
           .info-bar, .signatures, .sig-box, .brand-header { break-inside:avoid; page-break-inside:avoid; }
           thead { display:table-header-group; }

@@ -1,13 +1,15 @@
 import { AlertTriangle, Bell, Menu, Moon, ShieldCheck, Sun, UserCircle } from "lucide-react";
 import { useT, useTh } from "../providers/ThemeProvider";
 import { useAuth } from "../providers/AuthProvider";
+import { ROLE_LABELS } from "../../security/permissions";
 import clsx from "clsx";
 
 export default function HeaderAuth({ toggleSidebar }) {
   const T = useT();
   const { dark, toggle } = useTh();
-  const { user, sessionIntegrity, logout } = useAuth();
-  const userSubtitle = user?.membershipStatus || user?.title || "مستخدم النظام";
+  const { user, sessionIntegrity, logout, permissions } = useAuth();
+  const roleLabel = ROLE_LABELS[user?.role] || user?.title || "مستخدم النظام";
+  const userSubtitle = `${roleLabel} • ${permissions?.length || 0} صلاحية`;
 
   return (
     <header className={clsx("h-14 border-b flex items-center justify-between px-4 sm:px-6 transition-colors duration-300 sticky top-0 z-40", T.hdr, T.div)}>

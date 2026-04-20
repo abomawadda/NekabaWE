@@ -350,7 +350,7 @@ export const REPORT_MODULES = {
     icon: Wallet,
     sources: ["transactions", "issued_checks"],
     dateField: "date",
-    orientation: "portrait",
+    orientation: "landscape",
     sortLabel: "التاريخ ثم النوع ثم الجهة",
     searchPlaceholder: "ابحث في الجهة أو المصدر أو بند الصرف أو البيان...",
     emptyMessage: "لا توجد بيانات مالية مطابقة للشهر أو الفلاتر المحددة.",
