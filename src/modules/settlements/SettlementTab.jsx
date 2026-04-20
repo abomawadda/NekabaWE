@@ -216,8 +216,24 @@ const printSettlementLocal = ({
   if (!win) return;
 
   const ADV_AMT = Number(advanceTxn?.advanceAmountBase || advanceTxn?.amount || 0);
+  const hasGroupedChecks = Array.isArray(groupedChecks) && groupedChecks.length > 1;
+  const GROUPED_CHECKS_TOTAL = (Array.isArray(groupedChecks) ? groupedChecks : []).reduce(
+    (sum, check) => sum + Number(check?.amount || 0),
+    0
+  );
+  const DISPLAY_CHECK_AMOUNT = hasGroupedChecks && GROUPED_CHECKS_TOTAL > 0 ? GROUPED_CHECKS_TOTAL : ADV_AMT;
+  const checkAmountLabel = hasGroupedChecks ? "إجمالي الشيكات المجمعة" : "قيمة الشيك المُنصرف";
+  const tableColGroup = `
+    <colgroup>
+      <col style="width:8%" />
+      <col style="width:18%" />
+      <col style="width:20%" />
+      <col style="width:36%" />
+      <col style="width:18%" />
+    </colgroup>
+  `;
   const SUBS_AMT = Number(collectedSubs || 0);
-  const TOTAL_AVAILABLE = ADV_AMT + Number(prevBalance) + Number(collectedSubs);
+  const TOTAL_AVAILABLE = DISPLAY_CHECK_AMOUNT + Number(prevBalance) + Number(collectedSubs);
   const INVOICES_TOTAL = (expenses || []).reduce(
     (sum, expense) => sum + Number(expense?.amount || 0),
     0
@@ -232,19 +248,20 @@ const printSettlementLocal = ({
   const groupedChecksHtml =
     groupedChecks.length > 1
       ? `
-        <div style="margin-bottom:16px; padding:12px; border:1px solid #cbd5e1; border-radius:12px; background:#f8fafc;">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px;">
-            <h3 style="font-size:14px; color:#0f172a; font-weight:900;">تفاصيل الشيكات المجمعة</h3>
+        <div style="margin-bottom:10px; border:1px solid #cbd5e1; border-radius:12px; background:#fff; overflow:hidden;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 10px; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
+            <h3 style="font-size:13px; color:#0f172a; font-weight:900; margin:0;">تفاصيل الشيكات المجمعة</h3>
             <span class="badge">عدد الشيكات: ${groupedChecks.length}</span>
           </div>
           <table style="margin-top:0;">
+            ${tableColGroup}
             <thead>
               <tr>
-                <th style="width:44px; text-align:center;">م</th>
-                <th style="width:120px; text-align:center;">التاريخ</th>
-                <th style="width:140px; text-align:center;">رقم الشيك</th>
+                <th style="text-align:center;">م</th>
+                <th style="text-align:center;">التاريخ</th>
+                <th style="text-align:center;">رقم الشيك</th>
                 <th>البيان</th>
-                <th style="width:130px;">القيمة</th>
+                <th>القيمة</th>
               </tr>
             </thead>
             <tbody>
@@ -287,14 +304,34 @@ const printSettlementLocal = ({
       ${getPrintBrandHeader({ reportTitle: `كشف تسوية ${advanceTxn?.settlement_mode === 'carry_forward' ? 'عهدة مالية' : 'شيك مصروف'}`, reportMeta: `تاريخ الاعتماد: ${getLatestSettlementExpenseDate(expenses, advanceTxn?.settlementDate || advanceTxn?.date || '—') || '—'}` })}
       <div class="info-row">اسم مسؤول التسوية: <span style="font-size:16px; color:#0d9488; margin-right: 8px;">${advanceTxn?.employeeName || advanceTxn?.party || '—'}</span></div>
       <div class="stats-grid">
-        <div class="stat-box"> <div class="stat-label">قيمة الشيك المُنصرف</div> <div class="stat-value" style="color:#334155">${formatMoney(ADV_AMT)}</div> </div>
+        <div class="stat-box"> <div class="stat-label">${checkAmountLabel}</div> <div class="stat-value" style="color:#334155">${formatMoney(DISPLAY_CHECK_AMOUNT)}</div> </div>
         <div class="stat-box"> <div class="stat-label">${advanceTxn?.settlement_mode === 'check_plus_subscriptions' ? 'اشتراكات الأعضاء' : 'رصيد مرحل من قبل'}</div> <div class="stat-value" style="color:#d97706">${advanceTxn?.settlement_mode === 'check_plus_subscriptions' ? formatMoney(SUBS_AMT) : formatMoney(prevBalance)}</div> </div>
         <div class="stat-box" style="background:#f0fdf4; border-color:#86efac"> <div class="stat-label" style="color:#15803d">إجمالي ميزانية التسوية</div> <div class="stat-value" style="color:#166534">${formatMoney(TOTAL_AVAILABLE)}</div> </div>
         <div class="stat-box" style="background:#fff1f2; border-color:#fda4af"> <div class="stat-label" style="color:#e11d48">المنصرف الفعلي بالفواتير</div> <div class="stat-value" style="color:#be123c">${formatMoney(spent)}</div> </div>
       </div>
       <h3 style="margin-bottom:10px; color:#334155; font-size: 14px;">بيان الفواتير والمصروفات المدرجة:</h3>
       ${groupedChecksHtml}
-      <table><thead><tr><th style="width:40px; text-align:center;">م</th><th style="width:100px; text-align:center;">التاريخ</th><th style="width:150px;">التصنيف المحاسبي</th><th>البيان والملاحظات</th><th style="width:120px;">المبلغ</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="4" style="font-weight:900; background:#ecfeff;">إجمالي مبلغ الفواتير</td><td style="text-align:left; font-weight:900; background:#ecfeff;">${formatMoney(INVOICES_TOTAL)}</td></tr></tfoot></table>
+      <div style="margin-bottom:10px; border:1px solid #cbd5e1; border-radius:12px; background:#fff; overflow:hidden;">
+        <table style="margin-top:0;">
+          ${tableColGroup}
+          <thead>
+            <tr>
+              <th style="text-align:center;">م</th>
+              <th style="text-align:center;">التاريخ</th>
+              <th>التصنيف المحاسبي</th>
+              <th>البيان والملاحظات</th>
+              <th>المبلغ</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4" style="font-weight:900; background:#ecfeff;">إجمالي مبلغ الفواتير</td>
+              <td style="text-align:left; font-weight:900; background:#ecfeff;">${formatMoney(INVOICES_TOTAL)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
       ${invoicesTotalInWords ? `<div class="footer-note" style="margin-top:10px;background:#f0f9ff;border-color:#bae6fd;color:#075985;">تفقيط إجمالي الفواتير: ${invoicesTotalInWords}</div>` : ""}
       ${totalBudgetInWords ? `<div class="footer-note" style="margin-top:10px;background:#ecfdf5;border-color:#86efac;color:#166534;">تفقيط إجمالي ميزانية التسوية: ${totalBudgetInWords}</div>` : ""}
       <div class="footer-note">الحالة النهائية للتسوية: ${settlementFooter}</div>

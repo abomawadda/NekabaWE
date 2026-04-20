@@ -128,6 +128,53 @@ const formatDate = (ds) => {
   catch { return ds; }
 };
 
+const getDurationLabel = (startValue, endValue) => {
+  const startDate = parseBoardDate(startValue);
+  const endDate = parseBoardDate(endValue) || new Date();
+  if (!startDate || !endDate || endDate.getTime() < startDate.getTime()) return "—";
+
+  let years = endDate.getFullYear() - startDate.getFullYear();
+  let months = endDate.getMonth() - startDate.getMonth();
+  const dayDiff = endDate.getDate() - startDate.getDate();
+
+  if (dayDiff < 0) months -= 1;
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const yearsPart = years > 0 ? `${years} سنة` : "";
+  const monthsPart = months > 0 ? `${months} شهر` : "";
+  const daysOnly = Math.max(
+    0,
+    Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+  );
+
+  if (!yearsPart && !monthsPart) return `${daysOnly} يوم`;
+  return [yearsPart, monthsPart].filter(Boolean).join(" و ");
+};
+
+const getMemberTermStartDate = (member = {}, activeTerm = null) =>
+  member?.boardMembership?.joinDate ||
+  member?.boardMembershipStartDate ||
+  activeTerm?.startDate ||
+  BOARD_TERM_START;
+
+const getMemberTermEndDate = (member = {}, activeTerm = null) =>
+  member?.boardMembership?.endDate ||
+  member?.membershipExpiry ||
+  member?.boardMembershipEndDate ||
+  activeTerm?.endDate ||
+  BOARD_TERM_END;
+
+const getDecisionVotesTotal = (decision = {}) =>
+  Number(decision?.votes?.for || 0) +
+  Number(decision?.votes?.against || 0) +
+  Number(decision?.votes?.abstain || 0);
+
+const getMeetingVotesTotal = (meeting = {}) =>
+  (meeting?.decisions || []).reduce((sum, decision) => sum + getDecisionVotesTotal(decision), 0);
+
 const getInitials = (name = "") => name.split(" ").slice(0, 2).map(w => w[0]).join("");
 
 const AVATAR_BG = ["bg-teal-600","bg-sky-600","bg-violet-600","bg-amber-600","bg-rose-600","bg-emerald-600","bg-indigo-600","bg-pink-600"];
@@ -519,22 +566,67 @@ function DashboardTab({ members, meetings, allEmployees, settlementTransactions,
 
 function MembersTab({
   members,
+  meetings,
+  allEmployees,
   activeTerm,
   T,
   openEmployeeModal,
 }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
-
-  const filtered = members.filter(m => {
+  const heldMeetings = useMemo(
+    () => meetings.filter((meeting) => meeting.status === "held"),
+    [meetings]
+  );
+  const memberVotesMap = useMemo(() => {
+    const votesMap = new Map();
+    heldMeetings.forEach((meeting) => {
+      const attendees = getMeetingAttendeeIds(meeting);
+      const decisionsCount = meeting.decisions?.length || 0;
+      attendees.forEach((memberId) => {
+        const previous = votesMap.get(memberId) || { attendedMeetings: 0, voteCount: 0 };
+        votesMap.set(memberId, {
+          attendedMeetings: previous.attendedMeetings + 1,
+          voteCount: previous.voteCount + decisionsCount,
+        });
+      });
+    });
+    return votesMap;
+  }, [heldMeetings]);
+  const employeesMap = useMemo(
+    () => new Map((allEmployees || []).map((employee) => [employee.id, employee])),
+    [allEmployees]
+  );
+  const filtered = members.filter((member) => {
     const matchFilter =
-      filter === "all" ? true :
-      filter === "active" ? isActiveMember(m) :
-      filter === "inactive" ? !isActiveMember(m) :
-      getBoardRoleLabel(m) === filter;
-    const matchSearch = !search || (m.name||"").includes(search) || (getBoardRoleLabel(m)||"").includes(search);
+      filter === "all"
+        ? true
+        : filter === "active"
+          ? isActiveMember(member)
+          : filter === "inactive"
+            ? !isActiveMember(member)
+            : getBoardRoleLabel(member) === filter;
+    const matchSearch =
+      !search ||
+      (member.name || "").includes(search) ||
+      (getBoardRoleLabel(member) || "").includes(search);
     return matchFilter && matchSearch;
   });
+  const activeCount = members.filter((member) => isActiveMember(member)).length;
+  const totalMemberVotes = members.reduce((sum, member) => {
+    const stats = memberVotesMap.get(member.id);
+    return sum + Number(stats?.voteCount || 0);
+  }, 0);
+  const termStart = activeTerm?.startDate || BOARD_TERM_START;
+  const termEnd = activeTerm?.endDate || BOARD_TERM_END;
+  const termDurationLabel = getDurationLabel(termStart, termEnd);
+  const averageAttendancePct = members.length && heldMeetings.length
+    ? Math.round(
+      (members.reduce((sum, member) => sum + Number((memberVotesMap.get(member.id) || {}).attendedMeetings || 0), 0)
+      / (members.length * heldMeetings.length))
+      * 100
+    )
+    : 0;
 
   return (
     <div className="animate-in fade-in duration-500 space-y-4">
@@ -552,19 +644,26 @@ function MembersTab({
               <div className="text-lg font-black text-teal-600">{members.length}</div>
             </div>
             <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
-              <div className="text-[10px] font-black text-slate-400">الرئاسة والأمانات</div>
-              <div className="text-lg font-black text-amber-600">{members.filter((m) => ["رئيس المجلس", "الأمين العام", "أمين الصندوق"].includes(getBoardRoleLabel(m))).length}</div>
+              <div className="text-[10px] font-black text-slate-400">الأعضاء النشطون</div>
+              <div className="text-lg font-black text-emerald-600">{activeCount}</div>
             </div>
             <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
-              <div className="text-[10px] font-black text-slate-400">الأعضاء</div>
-              <div className="text-lg font-black text-sky-600">{members.filter((m) => ["عضو مجلس إدارة", "عضو مجلس"].includes(getBoardRoleLabel(m))).length}</div>
+              <div className="text-[10px] font-black text-slate-400">عدد الأصوات</div>
+              <div className="text-lg font-black text-amber-600">{totalMemberVotes}</div>
             </div>
             <div className="px-3 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-center">
               <div className="text-[10px] font-black text-slate-400">مدة الدورة</div>
-              <div className="text-[11px] font-black text-slate-700 dark:text-slate-200">{activeTerm?.startDate || BOARD_TERM_START}</div>
-              <div className="text-[11px] font-black text-slate-400">{activeTerm?.endDate || BOARD_TERM_END}</div>
+              <div className="text-[11px] font-black text-slate-700 dark:text-slate-200">{termStart}</div>
+              <div className="text-[11px] font-black text-slate-400">{termEnd}</div>
+              <div className="text-[10px] font-black text-slate-500 mt-1">{termDurationLabel}</div>
             </div>
           </div>
+        </div>
+        <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800/40">
+          <Activity size={12} className="text-sky-600" />
+          <span className="text-[10px] font-black text-sky-700 dark:text-sky-300">
+            متوسط حضور الأعضاء في الاجتماعات المنعقدة: {averageAttendancePct}%
+          </span>
         </div>
       </div>
 
@@ -573,7 +672,7 @@ function MembersTab({
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <div className="relative flex-1 sm:flex-none">
             <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-            <input className={clsx(inputCls,"pr-8 py-2 text-xs w-full sm:w-52")} placeholder="بحث بالاسم..." value={search} onChange={e=>setSearch(e.target.value)}/>
+            <input className={clsx(inputCls,"pr-8 py-2 text-xs w-full sm:w-56")} placeholder="بحث بالاسم أو الصفة..." value={search} onChange={e=>setSearch(e.target.value)}/>
           </div>
         </div>
       </div>
@@ -585,6 +684,7 @@ function MembersTab({
           {key:"رئيس المجلس",label:"الرئيس"},
           {key:"الأمين العام",label:"الأمين"},
           {key:"أمين الصندوق",label:"الصندوق"},
+          {key:"نائب الرئيس",label:"نائب الرئيس"},
           {key:"عضو مجلس إدارة",label:"أعضاء الإدارة"},
           {key:"عضو مجلس",label:"عضو مجلس"},
           {key:"inactive",label:"غير نشط"},
@@ -601,15 +701,27 @@ function MembersTab({
         emptyMessage="لا توجد نتائج مطابقة"
         headers={[
           {label:"العضو والصفة"},
-          {label:"جهة العمل / التخصص"},
-          {label:"الهاتف"},
-          {label:"انتهاء العضوية"},
+          {label:"تاريخ الالتحاق"},
+          {label:"تاريخ الانتهاء"},
+          {label:"تاريخ المعاش"},
+          {label:"مدة العضوية"},
+          {label:"عدد الاجتماعات"},
+          {label:"عدد الأصوات"},
           {label:"الحالة",className:"text-center"},
           {label:"ملف",className:"text-left"},
         ]}
         renderDesktopRow={(emp,i)=>{
           const effectiveState = getEffectiveMemberState(emp);
           const inactive = !isActiveMember(emp);
+          const termStartDate = getMemberTermStartDate(emp, activeTerm);
+          const termEndDate = activeTerm?.endDate || BOARD_TERM_END;
+          const membershipEndDate = getMemberTermEndDate(emp, activeTerm);
+          const retirementDate = employeesMap.get(emp.id)?.retirementDate || "";
+          const memberDurationLabel = getDurationLabel(
+            termStartDate,
+            membershipEndDate || retirementDate || termEndDate || new Date()
+          );
+          const voteStats = memberVotesMap.get(emp.id) || { attendedMeetings: 0, voteCount: 0 };
           return (
           <tr onClick={()=>openEmployeeModal(emp)} className={clsx("group transition-all cursor-pointer",
             inactive ? "bg-rose-50/20 dark:bg-rose-900/10 hover:bg-rose-50/40" : "hover:bg-teal-500/5")}>
@@ -622,12 +734,16 @@ function MembersTab({
                 </div>
               </div>
             </td>
+            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDate(termStartDate)}</td>
+            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDate(termEndDate)}</td>
+            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDate(retirementDate)}</td>
+            <td className="p-3.5 font-bold text-xs text-slate-600 dark:text-slate-300">{memberDurationLabel}</td>
+            <td className="p-3.5 text-center font-black text-xs text-sky-700 dark:text-sky-300">{voteStats.attendedMeetings}</td>
             <td className="p-3.5">
-              <p className="font-bold text-xs text-slate-700 dark:text-slate-300">{emp.workplace||"—"}</p>
-              <p className="text-[10px] font-bold text-slate-400 mt-0.5">{emp.specialization||"—"}</p>
+              <div className="inline-flex items-center justify-center px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 min-w-[68px]">
+                <span className="text-xs font-black leading-none">{voteStats.voteCount}</span>
+              </div>
             </td>
-            <td className="p-3.5 font-bold text-xs text-slate-500">{emp.phone||"—"}</td>
-            <td className="p-3.5 font-bold text-xs text-slate-500">{emp.membershipExpiry || emp.retirementDate || "—"}</td>
             <td className="p-3.5 text-center"><StateBadge state={effectiveState}/></td>
             <td className="p-3.5 text-left">
               <button className="p-1.5 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-teal-600 rounded-lg transition-all"><Eye size={15}/></button>
@@ -637,6 +753,15 @@ function MembersTab({
         renderMobileCard={(emp,i)=>{
           const effectiveState = getEffectiveMemberState(emp);
           const inactive = !isActiveMember(emp);
+          const termStartDate = getMemberTermStartDate(emp, activeTerm);
+          const termEndDate = activeTerm?.endDate || BOARD_TERM_END;
+          const membershipEndDate = getMemberTermEndDate(emp, activeTerm);
+          const retirementDate = employeesMap.get(emp.id)?.retirementDate || "";
+          const memberDurationLabel = getDurationLabel(
+            termStartDate,
+            membershipEndDate || retirementDate || termEndDate || new Date()
+          );
+          const voteStats = memberVotesMap.get(emp.id) || { attendedMeetings: 0, voteCount: 0 };
           return (
           <div onClick={()=>openEmployeeModal(emp)} className={clsx("p-4 rounded-2xl border shadow-sm flex gap-3 cursor-pointer hover:shadow-md transition-all",T.card,
             inactive && "border-rose-200 bg-rose-50/20 dark:border-rose-900/50")}>
@@ -644,8 +769,12 @@ function MembersTab({
             <div className="flex-1 min-w-0">
               <h3 className={clsx("font-black text-sm leading-tight", inactive && "line-through opacity-60")}>{emp.name}</h3>
               <p className="text-[10px] font-bold text-amber-600 mt-0.5">{getBoardRoleLabel(emp)}</p>
-              {emp.workplace && <p className="text-[10px] text-slate-400 font-bold mt-1">{emp.workplace}</p>}
-              <p className="text-[10px] text-slate-400 font-bold mt-1">انتهاء العضوية: {emp.membershipExpiry || emp.retirementDate || "—"}</p>
+              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ الالتحاق: {formatDate(termStartDate)}</p>
+              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ الانتهاء: {formatDate(termEndDate)}</p>
+              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ المعاش: {formatDate(retirementDate)}</p>
+              <p className="text-[10px] text-slate-500 font-black mt-1">مدة العضوية: {memberDurationLabel}</p>
+              <p className="text-[10px] text-sky-600 font-black mt-1">عدد الاجتماعات: {voteStats.attendedMeetings}</p>
+              <p className="text-[10px] text-amber-600 font-black mt-1">عدد الأصوات: {voteStats.voteCount}</p>
               <div className="mt-2"><StateBadge state={effectiveState}/></div>
             </div>
             <Eye size={15} className="text-slate-300 mt-1 shrink-0"/>
@@ -751,6 +880,7 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
       termId: resolvedTermId,
       onDate: meetingDate || new Date(),
     });
+    return sortBoardMembers(membershipMembers || []);
   }, [allEmployees, meetingDate, members, memberships, resolvedTermId]);
   const visibleMembers = useMemo(() => {
     const membersMap = new Map((allEmployees || []).map((member) => [member.id, member]));
@@ -1065,6 +1195,8 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
 
   const heldCount = meetings.filter(m=>m.status==="held").length;
   const scheduledCount = meetings.filter(m=>m.status==="scheduled").length;
+  const totalDecisions = meetings.reduce((sum, meeting) => sum + (meeting.decisions?.length || 0), 0);
+  const totalVotes = meetings.reduce((sum, meeting) => sum + getMeetingVotesTotal(meeting), 0);
 
   const saveMeeting = async (form) => {
     setSaving(true);
@@ -1122,13 +1254,33 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
         )}
       </Modal>
 
+      <div className={clsx("p-4 rounded-3xl border shadow-sm bg-gradient-to-l from-sky-50/80 via-white to-white dark:from-sky-900/10 dark:via-slate-900 dark:to-slate-900", T.card)}>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-black text-slate-800 dark:text-slate-100">شاشة الاجتماعات المحسنة</h3>
+            <p className={clsx("text-[11px] font-bold mt-1", T.muted)}>
+              الدورة الحالية من {formatDate(activeTerm?.startDate || BOARD_TERM_START)} إلى {formatDate(activeTerm?.endDate || BOARD_TERM_END)}.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-black border border-slate-200">
+              إجمالي الأصوات: {totalVotes}
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-700 text-[10px] font-black border border-amber-200">
+              إجمالي القرارات: {totalDecisions}
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Stats row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {[
           {label:"إجمالي الاجتماعات",value:meetings.length,color:"text-slate-700 dark:text-slate-200"},
           {label:"منعقد",value:heldCount,color:"text-emerald-600"},
           {label:"مجدول",value:scheduledCount,color:"text-sky-600"},
-          {label:"قرارات",value:meetings.reduce((s,m)=>s+(m.decisions?.length||0),0),color:"text-amber-600"},
+          {label:"القرارات",value:totalDecisions,color:"text-amber-600"},
+          {label:"الأصوات",value:totalVotes,color:"text-violet-600"},
         ].map((s,i)=>(
           <div key={i} className={clsx("p-4 rounded-2xl border text-center",T.card)}>
             <div className={clsx("text-3xl font-black",s.color)}>{s.value}</div>
@@ -1149,7 +1301,7 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
           ))}
           <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 hidden sm:block"/>
           {/* Type filter */}
-          {[{k:"all",l:"كل الأنواع"},{k:"ordinary",l:"عادي"},{k:"emergency",l:"طارئ"}].map(f=>(
+          {[{k:"all",l:"كل الأنواع"},{k:"ordinary",l:"عادي"},{k:"emergency",l:"طارئ"},{k:"annual",l:"سنوي عام"},{k:"extraordinary",l:"استثنائي"}].map(f=>(
             <button key={f.k} onClick={()=>setFilterType(f.k)} className={clsx("px-3 py-1.5 rounded-full text-[11px] font-black transition-all border",
               filterType===f.k?"bg-sky-500 text-white border-sky-500 shadow-sm":"bg-transparent text-slate-500 border-slate-200 dark:border-slate-700 hover:border-sky-400 hover:text-sky-600")}>
               {f.l}
@@ -1187,6 +1339,7 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
             onDate: m.date || new Date(),
           }).length;
           const presentCount = m.attendees?.length||0;
+          const meetingVotesTotal = getMeetingVotesTotal(m);
           return (
             <div key={m.id} className={clsx("rounded-2xl border shadow-sm hover:shadow-md transition-all overflow-hidden group cursor-pointer",T.card)}
               onClick={()=>setDetailMeeting(m)}>
@@ -1215,13 +1368,20 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
                     {m.time && <span className="flex items-center gap-0.5"><Clock size={10}/>{m.time}</span>}
                     {m.venue && <span className="flex items-center gap-0.5 truncate max-w-[160px]"><MapPin size={10}/>{m.venue}</span>}
                     {m.status==="held" && <span className="flex items-center gap-0.5 text-emerald-600"><UserCheck size={10}/>{presentCount}/{eligibleMembersCount} حضر</span>}
+                    {m.status==="held" && <span className="flex items-center gap-0.5 text-violet-600"><BarChart3 size={10}/>{meetingVotesTotal} صوت</span>}
                   </div>
                 </div>
 
                 {/* Right side stats */}
-                <div className="text-center shrink-0 hidden sm:flex flex-col items-center justify-center gap-1">
-                  <span className="text-2xl font-black text-amber-600">{m.decisions?.length||0}</span>
-                  <span className="text-[9px] font-bold text-slate-400">قرار</span>
+                <div className="text-center shrink-0 hidden sm:flex flex-col items-center justify-center gap-1.5">
+                  <div className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 min-w-[68px]">
+                    <span className="text-lg font-black leading-none block">{m.decisions?.length||0}</span>
+                    <span className="text-[9px] font-bold">قرار</span>
+                  </div>
+                  <div className="px-2.5 py-1 rounded-lg bg-violet-50 border border-violet-200 text-violet-700 min-w-[68px]">
+                    <span className="text-lg font-black leading-none block">{meetingVotesTotal}</span>
+                    <span className="text-[9px] font-bold">صوت</span>
+                  </div>
                 </div>
 
                 {/* Actions */}
@@ -2023,7 +2183,7 @@ export default function BoardDashboard() {
       {/* ── محتوى التبويبات ── */}
       <div className="mt-2">
         {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} allEmployees={allEmployees} settlementTransactions={settlementTransactions} activeTerm={activeTerm} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
-        {activeTab==="members"    && <MembersTab    members={boardMembers} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
+        {activeTab==="members"    && <MembersTab    members={boardMembers} meetings={meetings} allEmployees={allEmployees} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="terms"      && <BoardTermsTab boardTerms={boardTerms} memberships={boardMemberships} allEmployees={allEmployees} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="meetings"   && <MeetingsTab   members={boardMembers} allEmployees={allEmployees} memberships={effectiveBoardMemberships} activeTerm={activeTerm} meetings={meetings} T={T}/>}
         {activeTab==="allowances" && <AllowancesTab members={boardMembers} memberships={effectiveBoardMemberships} allEmployees={allEmployees} activeTerm={activeTerm} settlementTransactions={settlementTransactions} T={T}/>}
