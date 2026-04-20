@@ -12,7 +12,15 @@ import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { formatMoney } from "../../utils/numberFormat";
 import { openPrintWindow } from "../../utils/print";
-import { excludeMigratedLegacyChecks, getIssuedCheckDisplayParty, getIssuedCheckTypeLabel, LEGACY_CHECK_TYPES, normalizeIssuedCheckType, normalizeRequiresSettlement } from "./helpers/issuedChecks";
+import {
+  getIssuedCheckDisplayParty,
+  getIssuedCheckTypeLabel,
+  isGroupedSettlementFollower,
+  LEGACY_CHECK_TYPES,
+  mergeIssuedChecksSourcesNormalized,
+  normalizeIssuedCheckType,
+  normalizeRequiresSettlement,
+} from "./helpers/issuedChecks";
 import * as XLSX from "xlsx";
 import {
   Printer, Wallet, TrendingUp, TrendingDown, FileText,
@@ -197,15 +205,11 @@ function TreasuryLedgerInner() {
   }, []);
 
   useEffect(() => {
-    const filteredLegacy = excludeMigratedLegacyChecks(
-      legacyTransactions,
-      issuedChecks
-    );
-    const normalizedChecks = issuedChecks.map((tx) => ({
-      ...tx,
-      type: normalizeIssuedCheckType(tx.type),
-    }));
-    setTransactions([...filteredLegacy, ...normalizedChecks]);
+    const normalizedChecks = mergeIssuedChecksSourcesNormalized(
+      issuedChecks,
+      legacyTransactions
+    ).filter((tx) => !isGroupedSettlementFollower(tx));
+    setTransactions(normalizedChecks);
   }, [issuedChecks, legacyTransactions]);
 
   // بناء بيانات دفتر الأستاذ

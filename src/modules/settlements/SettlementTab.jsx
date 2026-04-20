@@ -28,6 +28,7 @@ import {
   getDefaultRequiresSettlement,
   getIssuedCheckDisplayParty,
   getSettlementMode,
+  isGroupedSettlementFollower as isGroupedSettlementFollowerRecord,
   isLegacyCheckType,
   LEGACY_ISSUED_CHECK_PREFIX,
   mergeIssuedChecksSources,
@@ -129,12 +130,6 @@ const getSettlementEffectiveRemaining = (settlement = {}) => {
   }
   return Number(settlement?.settlementReturned || 0);
 };
-const isGroupedSettlementFollower = (settlement = {}) =>
-  Boolean(
-    settlement?.settlementGroupFollower ||
-      (settlement?.settlementGroupLeaderId &&
-        String(settlement.settlementGroupLeaderId) !== String(settlement.id || ""))
-  );
 const getSettlementSortTimestamp = (settlement = {}) =>
   getDateTimestamp(getSettlementApprovalDate(settlement)) ||
   getDateTimestamp(settlement?.updatedAt) ||
@@ -698,7 +693,7 @@ export default function SettlementTab() {
   const archivedSettlements = useMemo(
     () =>
       normalizedSourceTransactions.filter(
-        (tx) => normalizeRequiresSettlement(tx) && Boolean(tx.isSettled) && !isGroupedSettlementFollower(tx)
+        (tx) => normalizeRequiresSettlement(tx) && Boolean(tx.isSettled) && !isGroupedSettlementFollowerRecord(tx)
       ),
     [normalizedSourceTransactions]
   );
@@ -760,12 +755,32 @@ export default function SettlementTab() {
   );
   const currentTxnOptions = useMemo(() => {
     const txMap = new Map();
-    if (editingSettlement) txMap.set(editingSettlement.id, { ...editingSettlement, prevBalance: getPrevBalance(editingSettlement.employeeId, editingSettlement.id, editingSettlement) });
+    const attachOption = (tx) => {
+      if (!tx) return;
+      const optionKey = getIssuedCheckDocId(tx) || tx.id;
+      if (!optionKey || txMap.has(optionKey)) return;
+      txMap.set(optionKey, {
+        ...tx,
+        prevBalance: getPrevBalance(tx.employeeId, tx.id, tx),
+      });
+    };
+
+    if (editingSettlement) {
+      attachOption(editingSettlement);
+      (editingSettlement.settlementGroupMemberIds || []).forEach((groupedId) => {
+        const groupedTx = normalizedSourceTransactions.find(
+          (tx) => getIssuedCheckDocId(tx) === groupedId
+        );
+        attachOption(groupedTx);
+      });
+    }
+
     openAdvances.forEach(adv => {
-      if (!txMap.has(adv.id)) txMap.set(adv.id, adv);
+      attachOption(adv);
     });
+
     return Array.from(txMap.values());
-  }, [editingSettlement, openAdvances, archivedSettlements]);
+  }, [editingSettlement, getPrevBalance, normalizedSourceTransactions, openAdvances]);
   const buildGroupedSettlementChecks = useCallback((settlement) => {
     const groupedIds =
       Array.isArray(settlement?.settlementGroupMemberIds) && settlement.settlementGroupMemberIds.length > 1
@@ -792,8 +807,26 @@ export default function SettlementTab() {
 
   const selectedTxn = useMemo(() => currentTxnOptions.find(a => a.id === selAdvId) || null, [currentTxnOptions, selAdvId]);
   const selectedBatchTransactions = useMemo(
-    () => currentTxnOptions.filter((tx) => selectedBatchIds.includes(tx.id)),
-    [currentTxnOptions, selectedBatchIds]
+    () => {
+      const lookup = new Map();
+      currentTxnOptions.forEach((tx) => {
+        lookup.set(getIssuedCheckDocId(tx) || tx.id, tx);
+      });
+      normalizedSourceTransactions.forEach((tx) => {
+        const optionKey = getIssuedCheckDocId(tx) || tx.id;
+        if (!lookup.has(optionKey)) {
+          lookup.set(optionKey, {
+            ...tx,
+            prevBalance: getPrevBalance(tx.employeeId, tx.id, tx),
+          });
+        }
+      });
+
+      return selectedBatchIds
+        .map((groupedId) => lookup.get(groupedId))
+        .filter(Boolean);
+    },
+    [currentTxnOptions, getPrevBalance, normalizedSourceTransactions, selectedBatchIds]
   );
   const batchAnchorTxn = selectedBatchTransactions[0] || null;
   const batchSelectionConstraint = useMemo(() => {

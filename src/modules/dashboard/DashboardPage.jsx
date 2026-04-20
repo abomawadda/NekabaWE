@@ -5,7 +5,14 @@ import { Link } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
 import BrandHeader from "../../ui/BrandHeader";
 import { formatMoney } from "../../utils/numberFormat";
-import { excludeMigratedLegacyChecks, getIssuedCheckDisplayParty, getIssuedCheckTypeLabel, normalizeIssuedCheckType, normalizeRequiresSettlement } from "../treasury/helpers/issuedChecks";
+import {
+  getIssuedCheckDisplayParty,
+  getIssuedCheckTypeLabel,
+  isGroupedSettlementFollower,
+  mergeIssuedChecksSourcesNormalized,
+  normalizeIssuedCheckType,
+  normalizeRequiresSettlement,
+} from "../treasury/helpers/issuedChecks";
 // 🎯 استدعاء أداة البطاقة السريعة لتعمل في الشاشة الرئيسية أيضاً
 import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
 import clsx from "clsx";
@@ -225,14 +232,10 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    const filteredLegacy = excludeMigratedLegacyChecks(
-      legacyTransactions,
-      issuedChecks
-    );
-    const merged = [
-      ...filteredLegacy.map((tx) => ({ ...tx, type: normalizeIssuedCheckType(tx.type) })),
-      ...issuedChecks.map((tx) => ({ ...tx, type: normalizeIssuedCheckType(tx.type) })),
-    ];
+    const merged = mergeIssuedChecksSourcesNormalized(
+      issuedChecks,
+      legacyTransactions
+    ).filter((tx) => !isGroupedSettlementFollower(tx));
     setTransactions(merged);
   }, [issuedChecks, legacyTransactions]);
 

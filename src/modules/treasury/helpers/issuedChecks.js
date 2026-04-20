@@ -183,6 +183,13 @@ export const getIssuedCheckSourceKey = (doc = {}) => {
   return id;
 };
 
+export const isGroupedSettlementFollower = (doc = {}) =>
+  Boolean(
+    doc?.settlementGroupFollower ||
+      (doc?.settlementGroupLeaderId &&
+        String(doc.settlementGroupLeaderId) !== String(doc.id || ""))
+  );
+
 const getIssuedCheckSortStamp = (doc = {}) =>
   String(doc?.updatedAt || doc?.settlementDate || doc?.date || "");
 

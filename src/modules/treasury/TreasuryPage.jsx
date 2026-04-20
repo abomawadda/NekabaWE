@@ -7,8 +7,9 @@ import {
   DIRECT_FINANCE_TYPES,
   getLegacyChecksMigrationPreview,
   getIssuedCheckTypeLabel,
+  isGroupedSettlementFollower,
   isDirectFinanceType,
-  mergeIssuedChecksSources,
+  mergeIssuedChecksSourcesNormalized,
   normalizeRequiresSettlement,
   normalizeIssuedCheckType,
 } from "./helpers/issuedChecks";
@@ -227,8 +228,13 @@ export default function TreasuryPage() {
       .filter((tx) => DIRECT_FINANCE_TYPES.includes(tx.type))
       .map((tx) => ({ ...tx, sourceCollection: "transactions" }));
 
+    const normalizedChecks = mergeIssuedChecksSourcesNormalized(
+      issuedChecks,
+      legacyTransactions
+    ).filter((tx) => !isGroupedSettlementFollower(tx));
+
     setTransactions([
-      ...mergeIssuedChecksSources(issuedChecks, legacyTransactions),
+      ...normalizedChecks,
       ...directFinanceEntries,
     ]);
   }, [issuedChecks, legacyTransactions]);

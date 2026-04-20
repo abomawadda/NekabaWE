@@ -11,6 +11,7 @@ import { formatMoney } from "../../utils/numberFormat";
 import {
   getIssuedCheckDisplayParty,
   getIssuedCheckTypeLabel,
+  isGroupedSettlementFollower,
   isLegacyCheckType,
   mergeIssuedChecksSourcesNormalized,
   normalizeIssuedCheckType,
@@ -84,7 +85,7 @@ const getMergedPostedFinanceRows = (sourceData = {}) => {
   const normalizedChecks = mergeIssuedChecksSourcesNormalized(
     sourceData.issued_checks || [],
     sourceData.transactions || []
-  );
+  ).filter((record) => !isGroupedSettlementFollower(record));
 
   const directTransactions = (sourceData.transactions || [])
     .filter((record) => !isLegacyCheckType(record?.type))
@@ -241,7 +242,11 @@ export const buildIssuedChecksRows = (sourceData = {}) => {
     sourceData.transactions || []
   );
   return merged
-    .filter((record) => !["deposit", "refund", "subs", "bank_charge"].includes(record.type))
+    .filter(
+      (record) =>
+        !isGroupedSettlementFollower(record) &&
+        !["deposit", "refund", "subs", "bank_charge"].includes(record.type)
+    )
     .map((record) => ({
       id: record.id,
       date: record.date || "",
@@ -280,7 +285,7 @@ export const buildSettlementRows = (sourceData = {}) => {
   return merged
     .filter(
       (record) =>
-        !record?.settlementGroupFollower &&
+        !isGroupedSettlementFollower(record) &&
         (
           Boolean(record?.isSettled) ||
           (Array.isArray(record?.settlementExpenses) && record.settlementExpenses.length > 0)
