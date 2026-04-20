@@ -1,6 +1,7 @@
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { formatMoney } from "../../utils/numberFormat";
 import { openPrintWindow } from "../../utils/print";
+import { tafqeet } from "../../utils/tafqeet";
 
 // ── دالة طباعة كشف تسوية العهد والسلف ──
 export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBalance = 0, returnedActually }) {
@@ -9,6 +10,11 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
 
   const ADV_AMT = Number(advanceTxn?.advanceAmountBase || advanceTxn?.amount || 0);
   const TOTAL_AVAILABLE = ADV_AMT + Number(prevBalance);
+  const INVOICES_TOTAL = (expenses || []).reduce(
+    (sum, expense) => sum + Number(expense?.amount || 0),
+    0
+  );
+  const invoicesTotalInWords = tafqeet(INVOICES_TOTAL);
 
   const rowsHtml = expenses?.length > 0 
     ? expenses.map((e, i) => `
@@ -80,7 +86,14 @@ export function printSettlement({ advanceTxn, expenses, spent, remaining, prevBa
       <table>
         <thead><tr><th style="width:40px; text-align:center;">م</th><th style="width:100px; text-align:center;">التاريخ</th><th style="width:150px;">التصنيف المحاسبي</th><th>البيان والملاحظات</th><th style="width:120px;">المبلغ</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4" style="font-weight:900; background:#ecfeff;">إجمالي مبلغ الفواتير</td>
+            <td style="text-align:left; font-weight:900; background:#ecfeff;">${formatMoney(INVOICES_TOTAL)}</td>
+          </tr>
+        </tfoot>
       </table>
+      ${invoicesTotalInWords ? `<div class="footer-note" style="margin-top:10px;background:#f0f9ff;border-color:#bae6fd;color:#075985;">تفقيط إجمالي الفواتير: ${invoicesTotalInWords}</div>` : ""}
 
       <div class="footer-note">
         الحالة النهائية للعهدة: 

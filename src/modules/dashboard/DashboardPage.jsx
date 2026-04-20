@@ -8,7 +8,6 @@ import { formatMoney } from "../../utils/numberFormat";
 import {
   getIssuedCheckDisplayParty,
   getIssuedCheckTypeLabel,
-  isGroupedSettlementFollower,
   mergeIssuedChecksSourcesNormalized,
   normalizeIssuedCheckType,
   normalizeRequiresSettlement,
@@ -26,6 +25,7 @@ import {
 
 // ── الثوابت ──
 const OPENING_BALANCE = 42685.79;
+const DIRECT_LEDGER_TYPES = ["deposit", "refund", "subs", "bank_charge"];
 
 // 🎯 مصفوفة صفات المجلس للفلترة والترتيب التلقائي
 const BOARD_ROLES = ["رئيس المجلس", "الأمين العام", "أمين الصندوق", "عضو مجلس إدارة"];
@@ -232,11 +232,17 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    const merged = mergeIssuedChecksSourcesNormalized(
+    const normalizedChecks = mergeIssuedChecksSourcesNormalized(
       issuedChecks,
       legacyTransactions
-    ).filter((tx) => !isGroupedSettlementFollower(tx));
-    setTransactions(merged);
+    );
+    const directTransactions = (legacyTransactions || [])
+      .filter((tx) => DIRECT_LEDGER_TYPES.includes(tx?.type))
+      .map((tx) => ({
+        ...tx,
+        sourceCollection: tx?.sourceCollection || "transactions",
+      }));
+    setTransactions([...directTransactions, ...normalizedChecks]);
   }, [issuedChecks, legacyTransactions]);
 
   // ── الحسابات والإحصاءات ──

@@ -7,7 +7,6 @@ import {
   DIRECT_FINANCE_TYPES,
   getLegacyChecksMigrationPreview,
   getIssuedCheckTypeLabel,
-  isGroupedSettlementFollower,
   isDirectFinanceType,
   mergeIssuedChecksSourcesNormalized,
   normalizeRequiresSettlement,
@@ -39,7 +38,7 @@ import {
 import { useLocation, useNavigate } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
 import { useAuth } from "../../app/providers/AuthProvider";
-import { formatMoney } from "../../utils/numberFormat";
+import { formatInteger, formatMoney } from "../../utils/numberFormat";
 import { logAuditEvent } from "../../utils/auditLog";
 import { filterDataByScope, PERMISSIONS } from "../../security/permissions";
 import clsx from "clsx";
@@ -105,7 +104,7 @@ const formatCheckRef = (value) => {
   if (!value || value === "—") return "—";
   const normalized = String(value).replace(/[\u0660-\u0669]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
   const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? formatMoney(parsed) : value;
+  return Number.isFinite(parsed) ? formatInteger(parsed) : value;
 };
 
 function StatCard({ label, value, icon: Icon, color, sub }) {
@@ -231,7 +230,7 @@ export default function TreasuryPage() {
     const normalizedChecks = mergeIssuedChecksSourcesNormalized(
       issuedChecks,
       legacyTransactions
-    ).filter((tx) => !isGroupedSettlementFollower(tx));
+    );
 
     setTransactions([
       ...normalizedChecks,

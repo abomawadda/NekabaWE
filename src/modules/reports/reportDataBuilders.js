@@ -85,7 +85,7 @@ const getMergedPostedFinanceRows = (sourceData = {}) => {
   const normalizedChecks = mergeIssuedChecksSourcesNormalized(
     sourceData.issued_checks || [],
     sourceData.transactions || []
-  ).filter((record) => !isGroupedSettlementFollower(record));
+  );
 
   const directTransactions = (sourceData.transactions || [])
     .filter((record) => !isLegacyCheckType(record?.type))
@@ -244,7 +244,6 @@ export const buildIssuedChecksRows = (sourceData = {}) => {
   return merged
     .filter(
       (record) =>
-        !isGroupedSettlementFollower(record) &&
         !["deposit", "refund", "subs", "bank_charge"].includes(record.type)
     )
     .map((record) => ({

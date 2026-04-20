@@ -10,12 +10,11 @@ import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
-import { formatMoney } from "../../utils/numberFormat";
+import { formatInteger, formatMoney } from "../../utils/numberFormat";
 import { openPrintWindow } from "../../utils/print";
 import {
   getIssuedCheckDisplayParty,
   getIssuedCheckTypeLabel,
-  isGroupedSettlementFollower,
   LEGACY_CHECK_TYPES,
   mergeIssuedChecksSourcesNormalized,
   normalizeIssuedCheckType,
@@ -31,6 +30,7 @@ import clsx from "clsx";
 // ─────────────────────────────────────────────
 const OPENING_BALANCE = 42685.79;
 const getTodayISO = () => new Date().toISOString().split("T")[0];
+const DIRECT_LEDGER_TYPES = ["deposit", "refund", "subs", "bank_charge"];
 const normalizeArabicDigits = (value = "") =>
   String(value).replace(/[٠-٩]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
 
@@ -44,7 +44,7 @@ const formatCheckReference = (checkNum) => {
   const normalized = normalizeArabicDigits(checkNum).trim();
   if (!normalized) return "—";
   const numericValue = Number(normalized);
-  return Number.isFinite(numericValue) ? formatMoney(numericValue) : checkNum;
+  return Number.isFinite(numericValue) ? formatInteger(numericValue) : checkNum;
 };
 const getDateRangeLabel = (dates = [], fallbackFrom = "", fallbackTo = "") => {
   const sortedDates = dates.filter(Boolean).sort((a, b) => a.localeCompare(b));
@@ -208,8 +208,14 @@ function TreasuryLedgerInner() {
     const normalizedChecks = mergeIssuedChecksSourcesNormalized(
       issuedChecks,
       legacyTransactions
-    ).filter((tx) => !isGroupedSettlementFollower(tx));
-    setTransactions(normalizedChecks);
+    );
+    const directTransactions = (legacyTransactions || [])
+      .filter((tx) => DIRECT_LEDGER_TYPES.includes(tx?.type))
+      .map((tx) => ({
+        ...tx,
+        sourceCollection: tx?.sourceCollection || "transactions",
+      }));
+    setTransactions([...directTransactions, ...normalizedChecks]);
   }, [issuedChecks, legacyTransactions]);
 
   // بناء بيانات دفتر الأستاذ

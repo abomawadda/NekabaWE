@@ -15,12 +15,12 @@ export const toNumericValue = (value) => {
 
 export const formatMoney = (value) => {
   const numericValue = toNumericValue(value);
-  const hasFraction = Math.abs(numericValue - Math.trunc(numericValue)) > 0.000001;
+  return numericValue.toFixed(2);
+};
 
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: hasFraction ? 2 : 0,
-    maximumFractionDigits: hasFraction ? 2 : 0,
-  }).format(numericValue);
+export const formatInteger = (value) => {
+  const numericValue = toNumericValue(value);
+  return String(Math.trunc(numericValue));
 };
 
 export const formatMoneyOrDash = (value) => {

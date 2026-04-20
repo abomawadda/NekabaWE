@@ -1,5 +1,6 @@
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
 import { openPrintWindow } from "../../utils/print";
+import { tafqeet } from "../../utils/tafqeet";
 import { escapeHtml, formatDisplayValue } from "./reportUtils";
 
 export const renderPrintReport = ({
@@ -97,6 +98,22 @@ export const renderPrintReport = ({
       </tr>
     `
     : "";
+  const toNumeric = (value) => {
+    const normalized = String(value ?? "").replace(/,/g, "").trim();
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const totalsInWords = summary.currencyFields
+    .filter((field) => selectedFields.includes(field.key))
+    .map((field) => {
+      const totalAmount = toNumeric(summary.totals[field.key] || 0);
+      const words = tafqeet(totalAmount);
+      return words
+        ? `<div class="amount-words-row"><span class="amount-words-label">تفقيط ${escapeHtml(field.label)}:</span><span class="amount-words-value">${escapeHtml(words)}</span></div>`
+        : "";
+    })
+    .filter(Boolean)
+    .join("");
 
   win.document.write(`<!DOCTYPE html>
     <html lang="ar" dir="rtl">
@@ -128,6 +145,10 @@ export const renderPrintReport = ({
           .cell-index{text-align:center;font-weight:900;width:42px}
           .cell-amount{text-align:left;font-weight:900;color:#047857;white-space:nowrap}
           .totals-row td{background:#eef2ff;font-weight:900}
+          .amount-words{margin-top:10px;border:1px solid #bfdbfe;border-radius:12px;padding:10px;background:#f8fbff;display:grid;gap:6px}
+          .amount-words-row{display:flex;gap:8px;flex-wrap:wrap;font-size:10px;line-height:1.6}
+          .amount-words-label{font-weight:900;color:#1e3a8a}
+          .amount-words-value{font-weight:800;color:#0f172a}
           .signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}
           .sig{padding-top:28px;border-top:1px dashed #94a3b8;text-align:center;font-size:9px;font-weight:800;color:#475569}
           .portrait-report .summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
@@ -167,6 +188,7 @@ export const renderPrintReport = ({
               </tbody>
             </table>
           </div>
+          ${totalsInWords ? `<div class="amount-words">${totalsInWords}</div>` : ""}
           ${summarySectionsHtml ? `<div class="summary-sections">${summarySectionsHtml}</div>` : ""}
           <div class="signatures">
             <div class="sig">إعداد التقرير</div>

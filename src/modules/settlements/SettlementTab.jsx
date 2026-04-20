@@ -21,7 +21,8 @@ import {
   isBoardMember,
   parseEmployeeDate,
 } from "../../utils/memberBenefits";
-import { formatMoney } from "../../utils/numberFormat";
+import { formatInteger, formatMoney } from "../../utils/numberFormat";
+import { tafqeet } from "../../utils/tafqeet";
 import { openPrintWindow } from "../../utils/print";
 import {
   buildLegacyIssuedCheckId,
@@ -76,6 +77,17 @@ const parseFlexibleDate = (value) => {
 const getDateTimestamp = (value) => {
   const parsed = parseFlexibleDate(value);
   return parsed ? parsed.getTime() : 0;
+};
+const toEntityId = (value) => String(value ?? "").trim();
+const toEntityIdList = (values = []) =>
+  Array.from(new Set((Array.isArray(values) ? values : []).map(toEntityId).filter(Boolean)));
+const formatCheckNumber = (value) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const raw = String(value).trim();
+  const normalized = raw.replace(/[٠-٩]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
+  const numeric = Number(normalized.replace(/,/g, ""));
+  if (!Number.isFinite(numeric)) return raw;
+  return formatInteger(numeric);
 };
 const getMeetingAllowanceType = (category = "") => {
   if (SESSION_ALLOWANCE_CATEGORIES.includes(category)) return "sessions";
@@ -205,6 +217,12 @@ const printSettlementLocal = ({
   const ADV_AMT = Number(advanceTxn?.advanceAmountBase || advanceTxn?.amount || 0);
   const SUBS_AMT = Number(collectedSubs || 0);
   const TOTAL_AVAILABLE = ADV_AMT + Number(prevBalance) + Number(collectedSubs);
+  const INVOICES_TOTAL = (expenses || []).reduce(
+    (sum, expense) => sum + Number(expense?.amount || 0),
+    0
+  );
+  const invoicesTotalInWords = tafqeet(INVOICES_TOTAL);
+  const totalBudgetInWords = tafqeet(TOTAL_AVAILABLE);
 
   const rowsHtml = expenses?.length > 0 
     ? expenses.map((e, i) => `<tr><td style="text-align:center">${i + 1}</td><td style="text-align:center">${e.date}</td><td style="color:#0f766e">${e.category}</td><td>${e.notes || "—"}</td><td style="text-align:left; font-weight:900">${formatMoney(e.amount)}</td></tr>`).join("")
@@ -235,7 +253,7 @@ const printSettlementLocal = ({
                     <tr>
                       <td style="text-align:center">${index + 1}</td>
                       <td style="text-align:center">${check.date || "-"}</td>
-                      <td style="text-align:center">${check.checkNum || "-"}</td>
+                      <td style="text-align:center">${formatCheckNumber(check.checkNum)}</td>
                       <td>${check.party || "-"}</td>
                       <td style="text-align:left; font-weight:900">${formatMoney(check.amount || 0)}</td>
                     </tr>`
@@ -275,7 +293,9 @@ const printSettlementLocal = ({
       </div>
       <h3 style="margin-bottom:10px; color:#334155; font-size: 14px;">بيان الفواتير والمصروفات المدرجة:</h3>
       ${groupedChecksHtml}
-      <table><thead><tr><th style="width:40px; text-align:center;">م</th><th style="width:100px; text-align:center;">التاريخ</th><th style="width:150px;">التصنيف المحاسبي</th><th>البيان والملاحظات</th><th style="width:120px;">المبلغ</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+      <table><thead><tr><th style="width:40px; text-align:center;">م</th><th style="width:100px; text-align:center;">التاريخ</th><th style="width:150px;">التصنيف المحاسبي</th><th>البيان والملاحظات</th><th style="width:120px;">المبلغ</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="4" style="font-weight:900; background:#ecfeff;">إجمالي مبلغ الفواتير</td><td style="text-align:left; font-weight:900; background:#ecfeff;">${formatMoney(INVOICES_TOTAL)}</td></tr></tfoot></table>
+      ${invoicesTotalInWords ? `<div class="footer-note" style="margin-top:10px;background:#f0f9ff;border-color:#bae6fd;color:#075985;">تفقيط إجمالي الفواتير: ${invoicesTotalInWords}</div>` : ""}
+      ${totalBudgetInWords ? `<div class="footer-note" style="margin-top:10px;background:#ecfdf5;border-color:#86efac;color:#166534;">تفقيط إجمالي ميزانية التسوية: ${totalBudgetInWords}</div>` : ""}
       <div class="footer-note">الحالة النهائية للتسوية: ${settlementFooter}</div>
       <div class="sigs"><div class="sig-box">توقيع المسؤول<div class="sig-space"></div></div><div class="sig-box">المراجعة والرقابة<div class="sig-space"></div></div><div class="sig-box">يعتمد، أمين الصندوق<div class="sig-space"></div></div></div>
       <script>window.onload=()=>{setTimeout(()=>window.print(), 500);}</script>
@@ -540,7 +560,11 @@ export default function SettlementTab() {
 
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
-  const selectedMeeting = useMemo(() => boardMeetings.find(m => m.id === expMeetingId) || null, [boardMeetings, expMeetingId]);
+  const selectedMeeting = useMemo(() => {
+    const targetMeetingId = toEntityId(expMeetingId);
+    if (!targetMeetingId) return null;
+    return boardMeetings.find((meeting) => toEntityId(meeting?.id) === targetMeetingId) || null;
+  }, [boardMeetings, expMeetingId]);
 
   const activeBoardTerm = useMemo(
     () =>
@@ -566,15 +590,16 @@ export default function SettlementTab() {
 
   const historicalMeetingMembers = useMemo(() => {
     if (!selectedMeeting) return [];
-    const employeesMap = new Map(employees.map((employee) => [employee.id, employee]));
+    const employeesMap = new Map(employees.map((employee) => [toEntityId(employee.id), employee]));
     const attendanceRecords = getMeetingAttendanceRecords(selectedMeeting);
 
     if (attendanceRecords.length > 0) {
       return attendanceRecords.map((record) => {
-        const employee = employeesMap.get(record.memberId) || {};
+        const memberId = toEntityId(record.memberId);
+        const employee = employeesMap.get(memberId) || {};
         return {
           ...employee,
-          id: record.memberId,
+          id: memberId,
           name: record.memberName || employee.name || "—",
           boardRoleTitle: record.role || employee.boardRoleTitle || employee.membershipStatus || "—",
           membershipStatus: record.role || employee.membershipStatus || "—",
@@ -591,7 +616,7 @@ export default function SettlementTab() {
     }
 
     return (selectedMeeting.attendees || [])
-      .map((memberId) => employeesMap.get(memberId))
+      .map((memberId) => employeesMap.get(toEntityId(memberId)))
       .filter(Boolean);
   }, [activeBoardTerm?.id, employees, selectedMeeting]);
 
@@ -613,29 +638,32 @@ export default function SettlementTab() {
     const merged = [...historicalMeetingMembers, ...activeBoardMembers];
     const uniqueMembers = new Map();
     merged.forEach((member) => {
-      if (member?.id && !uniqueMembers.has(member.id)) uniqueMembers.set(member.id, member);
+      const memberId = toEntityId(member?.id);
+      if (memberId && !uniqueMembers.has(memberId)) uniqueMembers.set(memberId, { ...member, id: memberId });
     });
     return Array.from(uniqueMembers.values());
   }, [activeBoardMembers, expCat, historicalMeetingMembers]);
   const selectableBoardMembersMap = useMemo(
-    () => new Map(selectableBoardMembers.map((member) => [member.id, member])),
+    () => new Map(selectableBoardMembers.map((member) => [toEntityId(member.id), member])),
     [selectableBoardMembers]
   );
 
   const buildExpenseBoardMemberSnapshots = useCallback((memberIds = []) => {
-    const employeesMap = new Map(employees.map((employee) => [employee.id, employee]));
+    const employeesMap = new Map(employees.map((employee) => [toEntityId(employee.id), employee]));
     return (memberIds || [])
       .map((memberId) => {
+        const normalizedMemberId = toEntityId(memberId);
+        if (!normalizedMemberId) return null;
         const scopedMember =
-          selectableBoardMembersMap.get(memberId) ||
-          historicalMeetingMembers.find((member) => member.id === memberId) ||
-          activeBoardMembers.find((member) => member.id === memberId) ||
-          employeesMap.get(memberId) ||
+          selectableBoardMembersMap.get(normalizedMemberId) ||
+          historicalMeetingMembers.find((member) => toEntityId(member.id) === normalizedMemberId) ||
+          activeBoardMembers.find((member) => toEntityId(member.id) === normalizedMemberId) ||
+          employeesMap.get(normalizedMemberId) ||
           null;
         if (!scopedMember) return null;
 
         return {
-          memberId,
+          memberId: normalizedMemberId,
           name: scopedMember.name || "—",
           role:
             scopedMember.boardMembership?.role ||
@@ -656,10 +684,10 @@ export default function SettlementTab() {
   useEffect(() => {
     if (isMeetingAllowanceCategory(expCat)) {
       if (selectedMeeting) {
-        const allowedIds = new Set(selectableBoardMembers.map((member) => member.id));
+        const allowedIds = new Set(selectableBoardMembers.map((member) => toEntityId(member.id)));
         const memberIdsFromMeeting = historicalMeetingMembers.length > 0
-          ? historicalMeetingMembers.map((member) => member.id)
-          : (selectedMeeting.attendees || []);
+          ? historicalMeetingMembers.map((member) => toEntityId(member.id))
+          : (selectedMeeting.attendees || []).map((memberId) => toEntityId(memberId));
         setSelectedMembers(memberIdsFromMeeting.filter((memberId) => allowedIds.has(memberId)));
       } else {
         setSelectedMembers([]);
@@ -670,7 +698,9 @@ export default function SettlementTab() {
     if (isBoardAllowanceCategory(expCat)) {
       setExpMeetingId("");
       setSelectedMembers((prev) =>
-        prev.filter((memberId) => selectableBoardMembers.some((member) => member.id === memberId))
+        prev.filter((memberId) =>
+          selectableBoardMembers.some((member) => toEntityId(member.id) === toEntityId(memberId))
+        )
       );
       return;
     }
@@ -919,7 +949,10 @@ export default function SettlementTab() {
       if (!allowanceType) continue;
 
       const meetingId = String(expense.meetingId || "").trim();
-      const meetingTitle = expense.meetingTitle || boardMeetings.find((meeting) => meeting.id === meetingId)?.title || "الاجتماع المحدد";
+      const meetingTitle =
+        expense.meetingTitle ||
+        boardMeetings.find((meeting) => toEntityId(meeting.id) === meetingId)?.title ||
+        "الاجتماع المحدد";
 
       if (!meetingId) continue;
 
@@ -939,7 +972,8 @@ export default function SettlementTab() {
 
   useEffect(() => {
     if (!isMeetingAllowanceCategory(expCat) || !expMeetingId) return;
-    if (availableMeetings.some((meeting) => meeting.id === expMeetingId)) return;
+    const selectedMeetingId = toEntityId(expMeetingId);
+    if (availableMeetings.some((meeting) => toEntityId(meeting.id) === selectedMeetingId)) return;
     setExpMeetingId("");
   }, [availableMeetings, expCat, expMeetingId]);
 
@@ -1006,12 +1040,13 @@ export default function SettlementTab() {
     setExpNotes(expense.notes || "");
     setExpDate(expense.date || getTodayISO());
     setExpFiles(Array.isArray(expense.files) ? expense.files : []);
-    setSelectedMembers(Array.isArray(expense.boardMembers) ? expense.boardMembers : []);
-    setExpMeetingId(expense.meetingId || "");
+    setSelectedMembers(toEntityIdList(expense.boardMembers));
+    setExpMeetingId(toEntityId(expense.meetingId));
   };
 
   const addExpense = () => {
     if (editingExpense) {
+      const normalizedMemberIds = toEntityIdList(selectedMembers);
       if (!expAmt || Number(expAmt) <= 0) return showToast("ط£ط¯ط®ظ„ ظ…ط¨ظ„ط؛ط§ظ‹ طµط­ظٹط­ط§ظ‹", "error");
       if (Number(expAmt) > availableForExpense) return showToast(`طھط¬ط§ظˆط²طھ ط§ظ„ظ…طھط§ط­! (${formatMoney(availableForExpense || 0)})`, "error");
       if (isMeetingAllowanceCategory(expCat) && !selectedMeeting) return showToast("ط§ط®طھط± ط§ظ„ط§ط¬طھظ…ط§ط¹ ط£ظˆظ„ط§ظ‹", "error");
@@ -1028,14 +1063,14 @@ export default function SettlementTab() {
               amount: expAmt,
               category: expCat,
               notes: expNotes,
-              meetingId: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.id || "" : "",
+              meetingId: isMeetingAllowanceCategory(expCat) ? toEntityId(selectedMeeting?.id) : "",
               meetingTitle: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.title || "" : "",
-              boardMembers: isBoardAllowanceCategory(expCat) ? selectedMembers : [],
+              boardMembers: isBoardAllowanceCategory(expCat) ? normalizedMemberIds : [],
               boardMemberSnapshots: isBoardAllowanceCategory(expCat)
-                ? buildExpenseBoardMemberSnapshots(selectedMembers)
+                ? buildExpenseBoardMemberSnapshots(normalizedMemberIds)
                 : [],
-              allowancePerMember: isBoardAllowanceCategory(expCat) && selectedMembers.length > 0
-                ? Number(expAmt) / selectedMembers.length
+              allowancePerMember: isBoardAllowanceCategory(expCat) && normalizedMemberIds.length > 0
+                ? Number(expAmt) / normalizedMemberIds.length
                 : 0,
               files: expFiles
             }
@@ -1053,20 +1088,21 @@ export default function SettlementTab() {
       return showToast(`تم صرف ${ALLOWANCE_TYPE_LABELS[getMeetingAllowanceType(expCat)] || expCat} لهذا الاجتماع بالفعل`, "error");
     }
 
+    const normalizedMemberIds = toEntityIdList(selectedMembers);
     setExpenses(prev => [...prev, {
       id: `e_${Date.now()}`,
       date: isMeetingAllowanceCategory(expCat) ? (expDate || selectedMeeting?.date || getTodayISO()) : expDate,
       amount: expAmt,
       category: expCat,
       notes: expNotes,
-      meetingId: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.id || "" : "",
+      meetingId: isMeetingAllowanceCategory(expCat) ? toEntityId(selectedMeeting?.id) : "",
       meetingTitle: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.title || "" : "",
-      boardMembers: isBoardAllowanceCategory(expCat) ? selectedMembers : [],
+      boardMembers: isBoardAllowanceCategory(expCat) ? normalizedMemberIds : [],
       boardMemberSnapshots: isBoardAllowanceCategory(expCat)
-        ? buildExpenseBoardMemberSnapshots(selectedMembers)
+        ? buildExpenseBoardMemberSnapshots(normalizedMemberIds)
         : [],
-      allowancePerMember: isBoardAllowanceCategory(expCat) && selectedMembers.length > 0
-        ? Number(expAmt) / selectedMembers.length
+      allowancePerMember: isBoardAllowanceCategory(expCat) && normalizedMemberIds.length > 0
+        ? Number(expAmt) / normalizedMemberIds.length
         : 0,
       files: expFiles
     }]);
@@ -1206,7 +1242,25 @@ export default function SettlementTab() {
   };
 
   const openConfirmModal = () => {
-    if (settlementSelectionMode === "batch" && selectedBatchTransactions.length < 2) {
+    const groupedTxnIdsForModal = settlementSelectionMode === "batch"
+      ? Array.from(
+          new Set(
+            [
+              ...activeSelectionTransactions.map((tx) => getIssuedCheckDocId(tx)),
+              ...(Array.isArray(activeSettlementTxn?.settlementGroupMemberIds)
+                ? activeSettlementTxn.settlementGroupMemberIds
+                : []),
+            ]
+              .map((id) => String(id || "").trim())
+              .filter(Boolean)
+          )
+        )
+      : activeSelectionTransactions
+          .map((tx) => getIssuedCheckDocId(tx))
+          .map((id) => String(id || "").trim())
+          .filter(Boolean);
+
+    if (settlementSelectionMode === "batch" && groupedTxnIdsForModal.length < 2) {
       return showToast("اختر شيكين أو أكثر من نفس المسؤول ونفس نمط التسوية لاستخدام التسوية المجمعة.", "error");
     }
     const validationError = validateMeetingAllowanceExpenses();
@@ -1230,7 +1284,7 @@ export default function SettlementTab() {
       advanceAmountBase: ADVANCE_AMT,
       collectedSubs: SUBS_AMT,
       type: activeSettlementTxn?.type || "",
-      groupedTxnIds: activeSelectionTransactions.map((tx) => getIssuedCheckDocId(tx)),
+      groupedTxnIds: groupedTxnIdsForModal,
       selectionMode: settlementSelectionMode,
     });
   };
@@ -1250,7 +1304,9 @@ export default function SettlementTab() {
     try {
       const batch = writeBatch(db);
       const leaderTxn = activeSettlementTxn;
-      const groupedTxnIds = confirmModalData.groupedTxnIds || [confirmModalData.txnId];
+      const groupedTxnIds = Array.from(
+        new Set((confirmModalData.groupedTxnIds || [confirmModalData.txnId]).filter(Boolean))
+      );
       const isBatchSettlement = (confirmModalData.selectionMode || settlementSelectionMode) === "batch" && groupedTxnIds.length > 1;
       const normalizedReturnMode =
         confirmModalData.remaining > 0 ? returnMode : "settled";
@@ -1584,7 +1640,7 @@ export default function SettlementTab() {
                     <option value="">— الشيكات التي تتطلب تسوية —</option>
                     {currentTxnOptions.map(a => (
                       <option key={a.id} value={a.id}>
-                        {getIssuedCheckDisplayParty(a)} {a.settlement_mode === "check_plus_subscriptions" ? "(رحلة)" : a.settlement_mode === "carry_forward" ? "(سلفة)" : "(شيك تسوية)"} — {a.date || "—"} — شيك: {a.checkNum ? formatMoney(a.checkNum) : "—"} — {formatMoney(a.amount)} {a.isSettled ? "— [تعديل تسوية]" : ""}
+                        {getIssuedCheckDisplayParty(a)} {a.settlement_mode === "check_plus_subscriptions" ? "(رحلة)" : a.settlement_mode === "carry_forward" ? "(سلفة)" : "(شيك تسوية)"} — {a.date || "—"} — شيك: {formatCheckNumber(a.checkNum)} — {formatMoney(a.amount)} {a.isSettled ? "— [تعديل تسوية]" : ""}
                       </option>
                     ))}
                   </select>
@@ -1608,7 +1664,7 @@ export default function SettlementTab() {
                             className="mt-0.5 accent-indigo-600"
                           />
                           <span className="leading-relaxed">
-                            {getIssuedCheckDisplayParty(tx)} {tx.settlement_mode === "check_plus_subscriptions" ? "(رحلة)" : tx.settlement_mode === "carry_forward" ? "(سلفة)" : "(شيك تسوية)"} — {tx.date || "—"} — شيك: {tx.checkNum ? formatMoney(tx.checkNum) : "—"} — {formatMoney(tx.amount)}
+                            {getIssuedCheckDisplayParty(tx)} {tx.settlement_mode === "check_plus_subscriptions" ? "(رحلة)" : tx.settlement_mode === "carry_forward" ? "(سلفة)" : "(شيك تسوية)"} — {tx.date || "—"} — شيك: {formatCheckNumber(tx.checkNum)} — {formatMoney(tx.amount)}
                           </span>
                         </label>
                       );
@@ -1680,7 +1736,7 @@ export default function SettlementTab() {
                       {availableMeetings.length > 0 ? "-- اختر الاجتماع --" : "-- لا توجد اجتماعات متاحة لهذا البدل --"}
                     </option>
                     {availableMeetings.map(m => (
-                      <option key={m.id} value={m.id}>
+                      <option key={toEntityId(m.id) || m.id} value={toEntityId(m.id)}>
                         {m.title} — {m.date || "—"} — الحضور: {m.attendees?.length || 0}
                       </option>
                     ))}
@@ -1702,21 +1758,23 @@ export default function SettlementTab() {
                     <Users size={14}/> {selectedMeeting ? "أعضاء الاجتماع المستحقون" : `تحديد أعضاء المجلس المستحقين لـ ${expCat}`}
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto p-2 bg-white dark:bg-slate-800 rounded-lg border border-indigo-100 dark:border-indigo-800">
-                    {selectableBoardMembers.map(m => (
-                      <label key={m.id} className="flex items-center gap-2 text-[10px] font-bold cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-1 rounded transition-colors">
+                    {selectableBoardMembers.map(m => {
+                      const memberId = toEntityId(m.id);
+                      return (
+                      <label key={memberId || m.id} className="flex items-center gap-2 text-[10px] font-bold cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-1 rounded transition-colors">
                         <input 
                           type="checkbox" 
-                          checked={selectedMembers.includes(m.id)}
+                          checked={selectedMembers.includes(memberId)}
                           disabled={false}
                           onChange={(e) => {
-                            if (e.target.checked) setSelectedMembers(p => [...p, m.id]);
-                            else setSelectedMembers(p => p.filter(id => id !== m.id));
+                            if (e.target.checked) setSelectedMembers(p => toEntityIdList([...p, memberId]));
+                            else setSelectedMembers(p => p.filter(id => id !== memberId));
                           }}
                           className="accent-indigo-600"
                         />
                         {String(m?.name || "—").split(" ").slice(0,2).join(" ")}
                       </label>
-                    ))}
+                    )})}
                     {selectableBoardMembers.length === 0 && <p className="text-[9px] text-slate-400 p-1">لا يوجد أعضاء مجلس مستحقون لهذا التاريخ</p>}
                   </div>
                   {expAmt && selectedMembers.length > 0 && (
@@ -1794,7 +1852,24 @@ export default function SettlementTab() {
                         <p className="text-[9px] font-black text-slate-400 mt-0.5">{e.date}</p>
                       </td>
                       <td className="p-2.5 font-black text-rose-600 text-sm">{formatMoney(e.amount || 0)}</td>
-                      <td className="p-2.5 text-left"><button onClick={() => setExpenseToDelete(e)} className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="حذف الفاتورة"><Trash2 size={14}/></button></td>
+                      <td className="p-2.5 text-left">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={(event) => { event.stopPropagation(); startEditExpense(e); }}
+                            className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                            title="تعديل الفاتورة"
+                          >
+                            <Edit3 size={14}/>
+                          </button>
+                          <button
+                            onClick={(event) => { event.stopPropagation(); setExpenseToDelete(e); }}
+                            className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="حذف الفاتورة"
+                          >
+                            <Trash2 size={14}/>
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
