@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
 import {
   collection, query, onSnapshot, orderBy,
   addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
@@ -1361,6 +1362,52 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
           sourceName: tx.employeeName || tx.party || "تسوية معتمدة",
         }))
     );
+  const filteredDetailedRows = useMemo(
+    () => detailedRows.filter((row) => filterMember === "all" || row.memberIds.includes(filterMember)),
+    [detailedRows, filterMember]
+  );
+  const getAllowanceSourceLabel = useCallback((row) => {
+    if (row.isMeetingLinked) return "مرتبط باجتماع";
+    if (row.sourceMode === "individual_travel") return "انتقال فردي / مهمة مستقلة";
+    return "بدل مباشر بدون اجتماع";
+  }, []);
+  const handleDetailedExport = useCallback(() => {
+    const rows = filteredDetailedRows.map((row) => ({
+      "نوع البدل": row.category,
+      "مصدر البدل": getAllowanceSourceLabel(row),
+      "الاجتماع": row.meetingTitle || "",
+      "الأعضاء": row.memberIds
+        .map((id) => {
+          const member =
+            membersMap.get(id) ||
+            row.memberSnapshots.find((snapshot) => snapshot.memberId === id);
+          return member?.name || "عضو";
+        })
+        .join("، "),
+      "تاريخ التسوية": formatDate(row.date),
+      "إجمالي البند": Number(row.amount || 0),
+      "نصيب العضو": Number(row.perMember || 0),
+      "البيان": row.notes || row.sourceName || "",
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [
+      { wch: 18 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 42 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 36 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "بدلات المجلس");
+    XLSX.writeFile(
+      wb,
+      `بدلات_المجلس_${filterYear === "all" ? "كل_السنوات" : filterYear}_${filterMonth === "all" ? "كل_الشهور" : filterMonth}.xlsx`
+    );
+  }, [filterMonth, filterYear, filteredDetailedRows, getAllowanceSourceLabel, membersMap]);
 
   const grandSessionsTotal = memberRows.reduce((s, r) => s + Number(r.allowances.sessions || 0), 0);
   const grandTravelTotal = memberRows.reduce((s, r) => s + Number(r.allowances.travel || 0), 0);
@@ -1426,7 +1473,10 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
           ))}
         </div>
         {subTab==="details" && (
-          <button className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-all">
+          <button
+            onClick={handleDetailedExport}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-all"
+          >
             <Download size={13}/> تصدير
           </button>
         )}
@@ -1493,7 +1543,7 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
                 </tr>
               </thead>
               <tbody>
-                {detailedRows.filter((row) => filterMember === "all" || row.memberIds.includes(filterMember)).map((row)=>(
+                {filteredDetailedRows.map((row)=>(
                   <tr key={row.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/3 transition-colors">
                     <td className="p-3.5">
                       <div className="space-y-1">
@@ -1544,7 +1594,7 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
               <tfoot>
                 <tr className="bg-emerald-50 dark:bg-emerald-900/10 border-t-2 border-emerald-200 dark:border-emerald-800/30">
                   <td className="p-3.5 font-black text-xs text-slate-700 dark:text-slate-200" colSpan={3}>الإجمالي المعتمد من التسويات</td>
-                  <td className="p-3.5 text-center font-black text-lg text-emerald-600">{formatMoney(detailedRows.filter((row) => filterMember === "all" || row.memberIds.includes(filterMember)).reduce((s,row)=>s+row.amount,0))}</td>
+                  <td className="p-3.5 text-center font-black text-lg text-emerald-600">{formatMoney(filteredDetailedRows.reduce((s,row)=>s+row.amount,0))}</td>
                   <td colSpan={2}/>
                 </tr>
               </tfoot>
