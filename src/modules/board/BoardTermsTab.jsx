@@ -212,7 +212,7 @@ export default function BoardTermsTab({
     normalizedTerms[0] ||
     activeTerm ||
     null;
-  const canManageMemberships = Boolean(selectedTerm?.id && selectedTerm.id !== VIRTUAL_ACTIVE_TERM_ID);
+  const canManageMemberships = Boolean(selectedTerm?.id);
 
   const membershipsForSelectedTerm = useMemo(
     () =>

@@ -14,6 +14,7 @@ import {
   getBoardRoleLabel,
   getEffectiveMemberState,
   getEmployeeAge,
+  getRetirementDate,
   isActiveMember,
   isBoardMemberEligible,
   parseEmployeeDate,
@@ -129,6 +130,15 @@ const formatDate = (ds) => {
       : ds;
   }
   catch { return ds; }
+};
+
+const formatDateNumeric = (ds) => {
+  const parsed = parseBoardDate(ds);
+  if (!parsed) return "—";
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const year = parsed.getFullYear();
+  return `${day}-${month}-${year}`;
 };
 
 const getDurationLabel = (startValue, endValue) => {
@@ -618,15 +628,23 @@ function MembersTab({
   const termDurationLabel = getDurationLabel(termStart, termEnd);
   const getMemberRetirementFromProfile = useCallback((member = {}) => {
     const primaryProfile = employeesMap.get(member.id) || {};
+    const legalRetirement =
+      getRetirementDate(primaryProfile) ||
+      getRetirementDate(member) ||
+      null;
     return (
+      legalRetirement ||
       primaryProfile.retirementDate ||
       primaryProfile.retiredAt ||
       primaryProfile.retireDate ||
       primaryProfile.pensionDate ||
+      primaryProfile.membershipExpiry ||
+      primaryProfile.membershipEndDate ||
       member.retirementDate ||
       member.retiredAt ||
       member.retireDate ||
       member.pensionDate ||
+      member.membershipExpiry ||
       ""
     );
   }, [employeesMap]);
@@ -740,9 +758,9 @@ function MembersTab({
                 </div>
               </div>
             </td>
-            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDate(termStartDate)}</td>
-            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDate(termEndDate)}</td>
-            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDate(retirementDate)}</td>
+            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDateNumeric(termStartDate)}</td>
+            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDateNumeric(termEndDate)}</td>
+            <td className="p-3.5 font-bold text-xs text-slate-500">{formatDateNumeric(retirementDate)}</td>
             <td className="p-3.5 font-bold text-xs text-slate-600 dark:text-slate-300">{memberDurationLabel}</td>
             <td className="p-3.5 text-center font-black text-xs text-sky-700 dark:text-sky-300">{voteStats.attendedMeetings}</td>
             <td className="p-3.5">
@@ -771,9 +789,9 @@ function MembersTab({
             <div className="flex-1 min-w-0">
               <h3 className={clsx("font-black text-sm leading-tight", inactive && "line-through opacity-60")}>{emp.name}</h3>
               <p className="text-[10px] font-bold text-amber-600 mt-0.5">{getBoardRoleLabel(emp)}</p>
-              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ الالتحاق: {formatDate(termStartDate)}</p>
-              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ الانتهاء: {formatDate(termEndDate)}</p>
-              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ المعاش: {formatDate(retirementDate)}</p>
+              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ الالتحاق: {formatDateNumeric(termStartDate)}</p>
+              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ الانتهاء: {formatDateNumeric(termEndDate)}</p>
+              <p className="text-[10px] text-slate-400 font-bold mt-1">تاريخ المعاش: {formatDateNumeric(retirementDate)}</p>
               <p className="text-[10px] text-slate-500 font-black mt-1">مدة العضوية: {memberDurationLabel}</p>
               <p className="text-[10px] text-sky-600 font-black mt-1">عدد الاجتماعات: {voteStats.attendedMeetings}</p>
               <p className="text-[10px] text-amber-600 font-black mt-1">عدد الأصوات: {voteStats.voteCount}</p>
@@ -2150,7 +2168,7 @@ export default function BoardDashboard() {
 
       {/* ── شريط الهيدر والتبويبات ── */}
       <div className={clsx(
-        "px-4 pt-4 pb-0 rounded-[2rem] border shadow-sm mb-5 sticky top-2 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl overflow-hidden",
+        "px-4 pt-4 pb-0 rounded-[2rem] border shadow-sm mb-5 sticky top-0 z-[80] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl overflow-hidden",
         T.card
       )}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
