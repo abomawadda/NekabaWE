@@ -2,12 +2,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
 import clsx from "clsx";
-import { Edit3, Plus, PlusCircle, Save, X } from "lucide-react";
+import { ArrowUpCircle, Edit3, Plus, PlusCircle, Save, Trash2, X } from "lucide-react";
 import { db } from "../../app/providers/FirebaseProvider";
 import { logAuditEvent } from "../../utils/auditLog";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
@@ -23,7 +24,6 @@ import {
 import { BOARD_MEMBERSHIP_ROLES } from "../../utils/memberBenefits";
 
 const TARGET_BOARD_SIZE = 11;
-const VIRTUAL_ACTIVE_TERM_ID = "__legacy_active_term__";
 
 const BOARD_ROLE_ORDER = {
   "رئيس المجلس": 1,
@@ -198,6 +198,8 @@ export default function BoardTermsTab({
   const [membershipForm, setMembershipForm] = useState(createEmptyBoardMembershipForm());
   const [savingTerm, setSavingTerm] = useState(false);
   const [savingMembership, setSavingMembership] = useState(false);
+  const [deletingTermId, setDeletingTermId] = useState("");
+  const [deletingMembershipId, setDeletingMembershipId] = useState("");
 
   useEffect(() => {
     const candidateIds = [...normalizedTerms.map((term) => term.id), activeTerm?.id].filter(Boolean);
@@ -212,14 +214,21 @@ export default function BoardTermsTab({
     normalizedTerms[0] ||
     activeTerm ||
     null;
-  const canManageMemberships = Boolean(selectedTerm?.id);
+  const selectedTermIsPersisted = Boolean(
+    selectedTerm?.id && normalizedTerms.some((term) => term.id === selectedTerm.id)
+  );
+  const canManageMemberships = Boolean(selectedTerm?.id && selectedTermIsPersisted);
+
+  const normalizedMemberships = useMemo(
+    () => memberships.map((membership) => normalizeBoardMembership(membership)),
+    [memberships]
+  );
 
   const membershipsForSelectedTerm = useMemo(
     () =>
-      memberships
-        .filter((membership) => (selectedTerm?.id ? membership.termId === selectedTerm.id : true))
-        .map((membership) => normalizeBoardMembership(membership)),
-    [memberships, selectedTerm?.id]
+      normalizedMemberships
+        .filter((membership) => (selectedTerm?.id ? membership.termId === selectedTerm.id : true)),
+    [normalizedMemberships, selectedTerm?.id]
   );
 
   const membershipViews = useMemo(
@@ -286,6 +295,17 @@ export default function BoardTermsTab({
     setShowMembershipModal(true);
   };
 
+  const openEscalationMembership = () => {
+    if (!canManageMemberships) return;
+    setEditingMembership(null);
+    setMembershipForm({
+      ...createEmptyBoardMembershipForm(selectedTerm?.id || ""),
+      joinMethod: "escalated",
+      status: "active",
+    });
+    setShowMembershipModal(true);
+  };
+
   const openEditMembership = (membership) => {
     setEditingMembership(membership);
     setMembershipForm({
@@ -328,6 +348,58 @@ export default function BoardTermsTab({
         : "",
     });
     setShowMembershipModal(true);
+  };
+
+  const removeTerm = async (term) => {
+    if (!term?.id) return;
+    const linkedMemberships = normalizedMemberships
+      .filter((membership) => membership.termId === term.id);
+    const confirmationMessage = linkedMemberships.length > 0
+      ? `سيتم حذف الدورة وعدد ${linkedMemberships.length} عضوية مرتبطة بها. هل تريد المتابعة؟`
+      : "هل تريد حذف هذه الدورة؟";
+
+    if (!window.confirm(confirmationMessage)) return;
+
+    setDeletingTermId(term.id);
+    try {
+      await Promise.all(
+        linkedMemberships.map((membership) =>
+          deleteDoc(doc(db, BOARD_MEMBERSHIPS_COLLECTION, membership.id))
+        )
+      );
+      await deleteDoc(doc(db, BOARD_TERMS_COLLECTION, term.id));
+      await logAuditEvent("board_term_deleted", {
+        termId: term.id,
+        title: term.title || "",
+        deletedMembershipsCount: linkedMemberships.length,
+      });
+      if (selectedTermId === term.id) setSelectedTermId("");
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setDeletingTermId("");
+    }
+  };
+
+  const removeMembership = async (membership) => {
+    if (!membership?.id) return;
+    if (!window.confirm(`هل تريد حذف عضوية ${membership.memberName || "هذا العضو"}؟`)) return;
+
+    setDeletingMembershipId(membership.id);
+    try {
+      await deleteDoc(doc(db, BOARD_MEMBERSHIPS_COLLECTION, membership.id));
+      await logAuditEvent("board_membership_deleted", {
+        membershipId: membership.id,
+        termId: membership.termId || "",
+        memberId: membership.memberId || "",
+        memberName: membership.memberName || "",
+        role: membership.role || "",
+      });
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setDeletingMembershipId("");
+    }
   };
 
   const saveTerm = async () => {
@@ -639,6 +711,7 @@ export default function BoardTermsTab({
         <div className="flex flex-wrap gap-2">
           <button onClick={openCreateTerm} className="px-4 py-2 rounded-xl text-xs font-black bg-sky-500 text-white hover:bg-sky-600 transition-all flex items-center gap-1.5"><PlusCircle size={14}/> إضافة دورة</button>
           <button onClick={openCreateMembership} disabled={!canManageMemberships} className={clsx("px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5", canManageMemberships ? "bg-amber-500 text-white hover:bg-amber-600" : "bg-slate-200 text-slate-400 cursor-not-allowed")}><Plus size={14}/> إضافة عضوية</button>
+          <button onClick={openEscalationMembership} disabled={!canManageMemberships} className={clsx("px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5", canManageMemberships ? "bg-teal-500 text-white hover:bg-teal-600" : "bg-slate-200 text-slate-400 cursor-not-allowed")}><ArrowUpCircle size={14}/> تصعيد عضو</button>
         </div>
       </div>
 
@@ -660,19 +733,49 @@ export default function BoardTermsTab({
               const activeCount = memberships.filter((membership) => membership.termId === term.id && membership.status === "active").length;
               const selected = term.id === selectedTerm?.id;
               return (
-                <button key={term.id} onClick={() => setSelectedTermId(term.id)} className={clsx("w-full text-right p-4 rounded-2xl border transition-all", selected ? "border-amber-400 bg-amber-50/60 dark:bg-amber-900/10" : "border-slate-200 dark:border-slate-700 hover:border-amber-300")}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-black text-slate-800 dark:text-slate-100">{term.title || "بدون عنوان"}</div>
-                      <div className="text-[10px] font-bold text-slate-400 mt-1">{term.startDate || "—"} إلى {term.endDate || "—"}</div>
+                <div
+                  key={term.id}
+                  className={clsx(
+                    "w-full p-4 rounded-2xl border transition-all",
+                    selected
+                      ? "border-amber-400 bg-amber-50/60 dark:bg-amber-900/10"
+                      : "border-slate-200 dark:border-slate-700 hover:border-amber-300"
+                  )}
+                >
+                  <button onClick={() => setSelectedTermId(term.id)} className="w-full text-right">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-black text-slate-800 dark:text-slate-100">{term.title || "بدون عنوان"}</div>
+                        <div className="text-[10px] font-bold text-slate-400 mt-1">{term.startDate || "—"} إلى {term.endDate || "—"}</div>
+                      </div>
+                      <span className={clsx("px-2.5 py-1 rounded-lg text-[10px] font-black border", chipClass(term.status === "active" ? "emerald" : term.status === "planned" ? "sky" : term.status === "archived" ? "slate" : "amber"))}>{TERM_STATUS_LABELS[term.status] || term.status}</span>
                     </div>
-                    <span className={clsx("px-2.5 py-1 rounded-lg text-[10px] font-black border", chipClass(term.status === "active" ? "emerald" : term.status === "planned" ? "sky" : term.status === "archived" ? "slate" : "amber"))}>{TERM_STATUS_LABELS[term.status] || term.status}</span>
+                    <div className="flex items-center justify-between mt-3 text-[10px] font-black text-slate-500">
+                      <span>{activeCount} عضوية سارية</span>
+                      <span>{term.targetSeats || TARGET_BOARD_SIZE} مقعد</span>
+                    </div>
+                  </button>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => openEditTerm(term)}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-black border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-amber-300 hover:text-amber-600 transition-all flex items-center gap-1"
+                    >
+                      <Edit3 size={11}/> تعديل
+                    </button>
+                    <button
+                      onClick={() => removeTerm(term)}
+                      disabled={deletingTermId === term.id}
+                      className={clsx(
+                        "px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all flex items-center gap-1",
+                        deletingTermId === term.id
+                          ? "border-rose-100 text-rose-300 cursor-not-allowed"
+                          : "border-rose-200 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                      )}
+                    >
+                      <Trash2 size={11}/> {deletingTermId === term.id ? "جاري الحذف..." : "حذف"}
+                    </button>
                   </div>
-                  <div className="flex items-center justify-between mt-3 text-[10px] font-black text-slate-500">
-                    <span>{activeCount} عضوية سارية</span>
-                    <span>{term.targetSeats || TARGET_BOARD_SIZE} مقعد</span>
-                  </div>
-                </button>
+                </div>
               );
             }) : <div className="p-4 rounded-2xl border border-dashed border-slate-300 text-center text-[11px] font-bold text-slate-400">لا توجد دورات مسجلة بعد. ابدأ بإضافة أول دورة.</div>}
           </div>
@@ -687,7 +790,28 @@ export default function BoardTermsTab({
               </div>
               <div className="flex flex-wrap gap-2">
                 <span className={clsx("px-2.5 py-1 rounded-lg text-[10px] font-black border", chipClass(selectedTerm?.status === "active" ? "emerald" : selectedTerm?.status === "planned" ? "sky" : "amber"))}>{TERM_STATUS_LABELS[selectedTerm?.status] || selectedTerm?.status || "انتقالية"}</span>
-                {selectedTerm?.id && selectedTerm.id !== VIRTUAL_ACTIVE_TERM_ID && <button onClick={() => openEditTerm(selectedTerm)} className="px-3 py-1.5 rounded-xl text-[10px] font-black bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-all flex items-center gap-1"><Edit3 size={12}/> تعديل الدورة</button>}
+                {selectedTermIsPersisted && (
+                  <button
+                    onClick={() => openEditTerm(selectedTerm)}
+                    className="px-3 py-1.5 rounded-xl text-[10px] font-black bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-all flex items-center gap-1"
+                  >
+                    <Edit3 size={12}/> تعديل الدورة
+                  </button>
+                )}
+                {selectedTermIsPersisted && (
+                  <button
+                    onClick={() => removeTerm(selectedTerm)}
+                    disabled={deletingTermId === selectedTerm.id}
+                    className={clsx(
+                      "px-3 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1",
+                      deletingTermId === selectedTerm.id
+                        ? "bg-rose-100 text-rose-300 cursor-not-allowed"
+                        : "bg-rose-100 text-rose-600 hover:bg-rose-200"
+                    )}
+                  >
+                    <Trash2 size={12}/> {deletingTermId === selectedTerm.id ? "جارٍ الحذف..." : "حذف الدورة"}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -706,7 +830,10 @@ export default function BoardTermsTab({
                 <h3 className="text-sm font-black text-slate-800 dark:text-slate-100">عضويات المجلس داخل الدورة</h3>
                 <div className="text-[11px] font-bold text-slate-400 mt-1">كل عضوية تحمل تاريخ التحاق وانتهاء وسبب وطريقة الالتحاق.</div>
               </div>
-              <button onClick={openCreateMembership} disabled={!canManageMemberships} className={clsx("px-3 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1", canManageMemberships ? "bg-amber-500 text-white hover:bg-amber-600" : "bg-slate-200 text-slate-400 cursor-not-allowed")}><Plus size={12}/> إضافة عضوية</button>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={openCreateMembership} disabled={!canManageMemberships} className={clsx("px-3 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1", canManageMemberships ? "bg-amber-500 text-white hover:bg-amber-600" : "bg-slate-200 text-slate-400 cursor-not-allowed")}><Plus size={12}/> إضافة عضوية</button>
+                <button onClick={openEscalationMembership} disabled={!canManageMemberships} className={clsx("px-3 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1", canManageMemberships ? "bg-teal-500 text-white hover:bg-teal-600" : "bg-slate-200 text-slate-400 cursor-not-allowed")}><ArrowUpCircle size={12}/> تصعيد عضو</button>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -728,6 +855,18 @@ export default function BoardTermsTab({
                         <span className={clsx("px-2.5 py-1 rounded-lg text-[10px] font-black border", chipClass("sky"))}>{membership.role || "—"}</span>
                         <span className={clsx("px-2.5 py-1 rounded-lg text-[10px] font-black border", chipClass(membership.status === "active" ? "emerald" : membership.status === "vacated" ? "rose" : "amber"))}>{MEMBERSHIP_STATUS_LABELS[membership.status] || membership.status || "—"}</span>
                         <button onClick={() => openEditMembership(membership)} className="px-2.5 py-1 rounded-lg text-[10px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-300 transition-all flex items-center gap-1"><Edit3 size={11}/> تعديل</button>
+                        <button
+                          onClick={() => removeMembership(membership)}
+                          disabled={deletingMembershipId === membership.id}
+                          className={clsx(
+                            "px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all flex items-center gap-1",
+                            deletingMembershipId === membership.id
+                              ? "border-rose-100 text-rose-300 cursor-not-allowed"
+                              : "border-rose-200 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                          )}
+                        >
+                          <Trash2 size={11}/> {deletingMembershipId === membership.id ? "جارٍ الحذف..." : "حذف"}
+                        </button>
                         {membership.status !== "active" && canManageMemberships && (
                           <button onClick={() => openReplacementMembership(membership)} className="px-2.5 py-1 rounded-lg text-[10px] font-black border border-teal-200 dark:border-teal-800 text-teal-600 hover:text-teal-700 hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-all flex items-center gap-1">
                             <Plus size={11}/> بديل/تصعيد

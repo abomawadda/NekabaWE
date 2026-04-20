@@ -2129,6 +2129,38 @@ export default function BoardDashboard() {
     <div className={clsx("max-w-[1600px] mx-auto pb-20 animate-in fade-in duration-500",T.text)} dir="rtl">
       <BrandHeader sectionTitle="منظومة مجلس الإدارة والبدلات" sectionHint="المتابعة الإدارية والمالية والقرارات" className="mb-4" />
 
+      <div className={clsx(
+        "px-4 pt-4 pb-0 rounded-[2rem] border shadow-sm mb-5 sticky top-0 z-[120] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl overflow-hidden",
+        T.card
+      )}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-sm font-black text-slate-800 dark:text-slate-100">تنقلات شاشة مجلس الإدارة</h2>
+            <p className={clsx("text-[10px] font-bold mt-0.5",T.muted)}>
+              اللجنة النقابية • {currentBoardMembers.length} من {TARGET_BOARD_SIZE} عضو حاليًا • {meetings.filter(m=>m.status==="held").length} اجتماعات • مع الاحتفاظ بالأعضاء المنتهية عضويتهم لأغراض التاريخ المالي والإداري
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>
+            <span className="text-[10px] font-black text-slate-400">مزامنة مباشرة</span>
+          </div>
+        </div>
+
+        <div className="flex gap-1 overflow-x-auto hide-scrollbar pb-px">
+          {boardNavTabs.map(tab=>(
+            <button key={tab.id} onClick={()=>setActiveTab(tab.id)} className={clsx(
+              "flex items-center gap-1.5 px-4 py-2.5 rounded-t-xl text-[11px] font-black transition-all whitespace-nowrap border-b-2",
+              activeTab===tab.id
+                ?"bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500"
+                :"text-slate-500 dark:text-slate-400 border-transparent hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/10"
+            )}>
+              <tab.icon size={14}/>
+              <span className="hidden xs:inline sm:inline">{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className={clsx("mb-5 rounded-[2rem] border shadow-sm overflow-hidden", T.card)}>
         <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="p-5 bg-[radial-gradient(circle_at_top_right,_rgba(245,158,11,0.18),_transparent_32%),linear-gradient(135deg,rgba(20,184,166,0.06),rgba(255,255,255,0.86))] dark:bg-[radial-gradient(circle_at_top_right,_rgba(245,158,11,0.14),_transparent_32%),linear-gradient(135deg,rgba(13,148,136,0.12),rgba(15,23,42,0.9))]">
@@ -2163,40 +2195,6 @@ export default function BoardDashboard() {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* ── شريط الهيدر والتبويبات ── */}
-      <div className={clsx(
-        "px-4 pt-4 pb-0 rounded-[2rem] border shadow-sm mb-5 sticky top-0 z-[80] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl overflow-hidden",
-        T.card
-      )}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-          <div>
-            <h2 className="text-sm font-black text-slate-800 dark:text-slate-100">تنقلات شاشة مجلس الإدارة</h2>
-            <p className={clsx("text-[10px] font-bold mt-0.5",T.muted)}>
-              اللجنة النقابية • {currentBoardMembers.length} من {TARGET_BOARD_SIZE} عضو حاليًا • {meetings.filter(m=>m.status==="held").length} اجتماعات • مع الاحتفاظ بالأعضاء المنتهية عضويتهم لأغراض التاريخ المالي والإداري
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>
-            <span className="text-[10px] font-black text-slate-400">مزامنة مباشرة</span>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 overflow-x-auto hide-scrollbar pb-px">
-          {boardNavTabs.map(tab=>(
-            <button key={tab.id} onClick={()=>setActiveTab(tab.id)} className={clsx(
-              "flex items-center gap-1.5 px-4 py-2.5 rounded-t-xl text-[11px] font-black transition-all whitespace-nowrap border-b-2",
-              activeTab===tab.id
-                ?"bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500"
-                :"text-slate-500 dark:text-slate-400 border-transparent hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/10"
-            )}>
-              <tab.icon size={14}/>
-              <span className="hidden xs:inline sm:inline">{tab.label}</span>
-            </button>
-          ))}
         </div>
       </div>
 
