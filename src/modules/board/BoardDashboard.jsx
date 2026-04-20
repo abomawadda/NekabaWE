@@ -16,6 +16,7 @@ import {
   getEmployeeAge,
   isActiveMember,
   isBoardMemberEligible,
+  parseEmployeeDate,
 } from "../../utils/memberBenefits";
 import { formatMoney } from "../../utils/numberFormat";
 import { mergeIssuedChecksSourcesNormalized } from "../treasury/helpers/issuedChecks";
@@ -112,6 +113,8 @@ const ARABIC_MONTHS = ["يناير","فبراير","مارس","أبريل","ما
 const parseBoardDate = (value) => {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const parsedEmployeeDate = parseEmployeeDate(value);
+  if (parsedEmployeeDate) return parsedEmployeeDate;
   const normalized = String(value).trim().replace(/\//g, "-");
   const parsed = new Date(normalized);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -159,13 +162,6 @@ const getMemberTermStartDate = (member = {}, activeTerm = null) =>
   member?.boardMembershipStartDate ||
   activeTerm?.startDate ||
   BOARD_TERM_START;
-
-const getMemberTermEndDate = (member = {}, activeTerm = null) =>
-  member?.boardMembership?.endDate ||
-  member?.membershipExpiry ||
-  member?.boardMembershipEndDate ||
-  activeTerm?.endDate ||
-  BOARD_TERM_END;
 
 const getDecisionVotesTotal = (decision = {}) =>
   Number(decision?.votes?.for || 0) +
@@ -620,6 +616,20 @@ function MembersTab({
   const termStart = activeTerm?.startDate || BOARD_TERM_START;
   const termEnd = activeTerm?.endDate || BOARD_TERM_END;
   const termDurationLabel = getDurationLabel(termStart, termEnd);
+  const getMemberRetirementFromProfile = useCallback((member = {}) => {
+    const primaryProfile = employeesMap.get(member.id) || {};
+    return (
+      primaryProfile.retirementDate ||
+      primaryProfile.retiredAt ||
+      primaryProfile.retireDate ||
+      primaryProfile.pensionDate ||
+      member.retirementDate ||
+      member.retiredAt ||
+      member.retireDate ||
+      member.pensionDate ||
+      ""
+    );
+  }, [employeesMap]);
   const averageAttendancePct = members.length && heldMeetings.length
     ? Math.round(
       (members.reduce((sum, member) => sum + Number((memberVotesMap.get(member.id) || {}).attendedMeetings || 0), 0)
@@ -715,12 +725,8 @@ function MembersTab({
           const inactive = !isActiveMember(emp);
           const termStartDate = getMemberTermStartDate(emp, activeTerm);
           const termEndDate = activeTerm?.endDate || BOARD_TERM_END;
-          const membershipEndDate = getMemberTermEndDate(emp, activeTerm);
-          const retirementDate = employeesMap.get(emp.id)?.retirementDate || "";
-          const memberDurationLabel = getDurationLabel(
-            termStartDate,
-            membershipEndDate || retirementDate || termEndDate || new Date()
-          );
+          const retirementDate = getMemberRetirementFromProfile(emp);
+          const memberDurationLabel = termDurationLabel;
           const voteStats = memberVotesMap.get(emp.id) || { attendedMeetings: 0, voteCount: 0 };
           return (
           <tr onClick={()=>openEmployeeModal(emp)} className={clsx("group transition-all cursor-pointer",
@@ -755,12 +761,8 @@ function MembersTab({
           const inactive = !isActiveMember(emp);
           const termStartDate = getMemberTermStartDate(emp, activeTerm);
           const termEndDate = activeTerm?.endDate || BOARD_TERM_END;
-          const membershipEndDate = getMemberTermEndDate(emp, activeTerm);
-          const retirementDate = employeesMap.get(emp.id)?.retirementDate || "";
-          const memberDurationLabel = getDurationLabel(
-            termStartDate,
-            membershipEndDate || retirementDate || termEndDate || new Date()
-          );
+          const retirementDate = getMemberRetirementFromProfile(emp);
+          const memberDurationLabel = termDurationLabel;
           const voteStats = memberVotesMap.get(emp.id) || { attendedMeetings: 0, voteCount: 0 };
           return (
           <div onClick={()=>openEmployeeModal(emp)} className={clsx("p-4 rounded-2xl border shadow-sm flex gap-3 cursor-pointer hover:shadow-md transition-all",T.card,
