@@ -412,7 +412,8 @@ export default function DashboardPage() {
             {[
               { title: "الأعضاء", icon: Users, color: "teal", link: "/employees" },
               { title: "إصدار شيك", icon: Wallet, color: "emerald", link: "/treasury/admin" },
-              { title: "التسويات", icon: Briefcase, color: "amber", link: "/treasury/settlements" },
+              { title: "إصدار شيك", icon: Wallet, color: "emerald", link: "/treasury/admin?type=aid" },       
+ { title: "التسويات", icon: Briefcase, color: "amber", link: "/treasury/settlements" },
               { title: "كشف الحساب", icon: ReceiptText, color: "purple", link: "/treasury/ledger" },
               { title: "استيراد بيانات", icon: UploadCloud, color: "blue", link: "/importer" }, // 👈 الزر الجديد هنا
             ].map((mod, i) => {
