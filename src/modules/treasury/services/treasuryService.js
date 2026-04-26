@@ -47,25 +47,57 @@ import { useFirebase } from "../../../app/providers/FirebaseProvider";
 import {
   buildLegacyIssuedCheckId,
   isDirectFinanceType,
-  isLegacyCheckType,
   getDefaultRequiresSettlement,
-  getPendingLegacyCheckTransactions,
   getSettlementMode,
   getIssuedCheckDisplayParty,
   normalizeIssuedCheckType,
+  LEGACY_ISSUED_CHECK_PREFIX,
 } from "../helpers/issuedChecks";
 
 const LEGACY_COLLECTION = "transactions";
 const BATCH_SIZE = 400;
 const ISSUED_CHECKS_COLLECTION = "issued_checks";
 
+const normalizeCollectionName = (value = "") => {
+  const name = String(value || "").trim();
+  if (name === ISSUED_CHECKS_COLLECTION) return ISSUED_CHECKS_COLLECTION;
+  if (name === LEGACY_COLLECTION) return LEGACY_COLLECTION;
+  return "";
+};
+
+const isMigratedLegacyIssuedCheck = (tx = {}) => {
+  const id = String(tx?.id || "");
+  return Boolean(
+    tx?.migratedFromLegacy ||
+      tx?.legacySourceId ||
+      tx?.sourceTransactionId ||
+      id.startsWith(LEGACY_ISSUED_CHECK_PREFIX)
+  );
+};
+
+const shouldKeepInLegacyTransactions = (tx = {}) => {
+  const sourceCollection = normalizeCollectionName(tx?.sourceCollection);
+
+  // الخصومات المباشرة ليست شيكات وتظل في transactions.
+  if (isDirectFinanceType(tx?.type)) return true;
+
+  // السجلات القديمة التي تظهر من transactions قبل ترحيلها يجب تحديثها/حذفها من نفس مكانها.
+  if (sourceCollection === LEGACY_COLLECTION && !isMigratedLegacyIssuedCheck(tx)) {
+    return true;
+  }
+
+  return false;
+};
+
 function normalizeIssuedCheckPayload(tx = {}, options = {}) {
   const type = normalizeIssuedCheckType(tx.type);
-  const requiresSettlement = Boolean(
-    tx.requires_settlement ??
-      tx.requiresSettlement ??
-      getDefaultRequiresSettlement(type)
-  );
+  const explicitRequiresSettlement =
+    tx.requires_settlement ?? tx.requiresSettlement ?? options.requires_settlement;
+  const requiresSettlement = isDirectFinanceType(type)
+    ? false
+    : explicitRequiresSettlement === undefined || explicitRequiresSettlement === null
+      ? getDefaultRequiresSettlement(type)
+      : Boolean(explicitRequiresSettlement);
 
   return {
     ...tx,
@@ -76,6 +108,7 @@ function normalizeIssuedCheckPayload(tx = {}, options = {}) {
     settlement_mode:
       tx.settlement_mode ||
       tx.settlementMode ||
+      options.settlement_mode ||
       getSettlementMode(type, requiresSettlement),
     party: tx.party || getIssuedCheckDisplayParty(tx) || "",
     attachments: Array.isArray(tx.attachments) ? tx.attachments : [],
@@ -90,9 +123,12 @@ export function useTreasuryService() {
   const STORAGE_ROOT = "treasury/attachments";
 
   const getTargetCollection = (tx = {}) => {
-    if (tx?.sourceCollection) return tx.sourceCollection;
-    if (isDirectFinanceType(tx.type)) return LEGACY_COLLECTION;
-    if (isLegacyCheckType(tx.type) && !tx?.legacySourceId) return LEGACY_COLLECTION;
+    const sourceCollection = normalizeCollectionName(tx?.sourceCollection);
+
+    if (sourceCollection === ISSUED_CHECKS_COLLECTION) return ISSUED_CHECKS_COLLECTION;
+    if (shouldKeepInLegacyTransactions(tx)) return LEGACY_COLLECTION;
+
+    // القاعدة الصحيحة: أي شيك جديد أو شيك مُرحّل يجب أن يكون في issued_checks.
     return ISSUED_CHECKS_COLLECTION;
   };
 
@@ -107,26 +143,31 @@ export function useTreasuryService() {
   async function saveTransaction(tx) {
     const targetCollection = getTargetCollection(tx);
     const txId = tx.id || doc(collection(db, targetCollection)).id;
+    const normalizedType = normalizeIssuedCheckType(tx.type);
+    const requiresSettlement = isDirectFinanceType(normalizedType)
+      ? false
+      : tx.requires_settlement === undefined && tx.requiresSettlement === undefined
+        ? getDefaultRequiresSettlement(normalizedType)
+        : Boolean(tx.requires_settlement ?? tx.requiresSettlement);
+
     const finalData = normalizeIssuedCheckPayload(tx, {
       id: txId,
-      checkNum: isDirectFinanceType(tx.type) ? "" : tx.checkNum,
-      requires_settlement: isDirectFinanceType(tx.type)
-        ? false
-        : Boolean(tx.requires_settlement ?? tx.requiresSettlement),
-      requiresSettlement: isDirectFinanceType(tx.type)
-        ? false
-        : Boolean(tx.requires_settlement ?? tx.requiresSettlement),
-      settlement_mode: isDirectFinanceType(tx.type)
+      sourceCollection: targetCollection,
+      checkNum: isDirectFinanceType(normalizedType) ? "" : tx.checkNum,
+      requires_settlement: requiresSettlement,
+      requiresSettlement,
+      settlement_mode: isDirectFinanceType(normalizedType)
         ? "none"
-        : tx.settlement_mode ||
-          (Boolean(tx.requires_settlement ?? tx.requiresSettlement)
-            ? "check_only"
-            : "none"),
+        : tx.settlement_mode || getSettlementMode(normalizedType, requiresSettlement),
+      isSettled: requiresSettlement ? Boolean(tx.isSettled) : false,
+      settlementExpenses: Array.isArray(tx.settlementExpenses)
+        ? tx.settlementExpenses
+        : [],
       updatedAt: new Date().toISOString(),
       createdAt: tx.createdAt || new Date().toISOString(),
     });
 
-    await setDoc(doc(db, targetCollection, txId), finalData);
+    await setDoc(doc(db, targetCollection, txId), finalData, { merge: false });
     return txId;
   }
 
@@ -134,7 +175,7 @@ export function useTreasuryService() {
     legacyTransactions = [],
     issuedChecks = [],
   } = {}) {
-    const pendingTransactions = getPendingLegacyCheckTransactions(
+    const pendingTransactions = getPendingLegacyCheckTransactionsSafe(
       legacyTransactions,
       issuedChecks
     );
@@ -155,6 +196,7 @@ export function useTreasuryService() {
         const migratedId = buildLegacyIssuedCheckId(tx.id);
         const normalized = normalizeIssuedCheckPayload(tx, {
           id: migratedId,
+          sourceCollection: ISSUED_CHECKS_COLLECTION,
           legacySourceId: tx.id,
           sourceTransactionId: tx.id,
           legacySourceCollection: LEGACY_COLLECTION,
@@ -177,6 +219,42 @@ export function useTreasuryService() {
     return { migratedCount, batches };
   }
 
+  const getDeleteDocumentRefs = (tx = {}) => {
+    const refs = new Map();
+    const id = String(tx?.id || "").trim();
+    if (!id) return [];
+
+    const addRef = (collectionName, docId) => {
+      if (!collectionName || !docId) return;
+      refs.set(`${collectionName}/${docId}`, doc(db, collectionName, docId));
+    };
+
+    const targetCollection = getTargetCollection(tx);
+    addRef(targetCollection, id);
+
+    if (isDirectFinanceType(tx?.type)) {
+      addRef(LEGACY_COLLECTION, id);
+      return Array.from(refs.values());
+    }
+
+    // حماية إضافية: عند حذف شيك نحذف أي نسخة مطابقة في السجل الموحد أو السجل القديم.
+    addRef(ISSUED_CHECKS_COLLECTION, id);
+    addRef(LEGACY_COLLECTION, id);
+
+    const sourceId = String(tx?.legacySourceId || tx?.sourceTransactionId || "").trim();
+    if (sourceId) {
+      addRef(LEGACY_COLLECTION, sourceId);
+      addRef(ISSUED_CHECKS_COLLECTION, buildLegacyIssuedCheckId(sourceId));
+    }
+
+    if (id.startsWith(LEGACY_ISSUED_CHECK_PREFIX)) {
+      const legacyId = id.slice(LEGACY_ISSUED_CHECK_PREFIX.length);
+      addRef(LEGACY_COLLECTION, legacyId);
+    }
+
+    return Array.from(refs.values());
+  };
+
   // ──────────────────────────────────────────────────────────
   // حذف سند (مع مرفقاته من Storage)
   // ──────────────────────────────────────────────────────────
@@ -187,7 +265,13 @@ export function useTreasuryService() {
         tx.attachments.map((att) => deleteAttachment(att.storagePath))
       );
     }
-    await deleteDoc(doc(db, getTargetCollection(tx), tx.id));
+
+    const refs = getDeleteDocumentRefs(tx);
+    if (!refs.length) return;
+
+    const batch = writeBatch(db);
+    refs.forEach((refDoc) => batch.delete(refDoc));
+    await batch.commit();
   }
 
   // ──────────────────────────────────────────────────────────
@@ -283,3 +367,7 @@ export function useTreasuryService() {
     deleteAttachment,
   };
 }
+
+// استيراد كسول لتفادي إعادة تصدير غير مستخدمة أثناء بناء Vite إذا تغيّر ترتيب الملفات.
+// أبقيناه خارج قائمة import الطويلة لتقليل احتمال تضارب الإصدارات القديمة.
+import { getPendingLegacyCheckTransactions as getPendingLegacyCheckTransactionsSafe } from "../helpers/issuedChecks";
