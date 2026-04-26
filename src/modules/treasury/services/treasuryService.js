@@ -29,7 +29,6 @@ import {
   getFirestore,
   doc,
   setDoc,
-  deleteDoc,
   writeBatch,
   collection,
   query,
@@ -46,6 +45,7 @@ import {
 import { useFirebase } from "../../../app/providers/FirebaseProvider";
 import {
   buildLegacyIssuedCheckId,
+  getPendingLegacyCheckTransactions,
   isDirectFinanceType,
   getDefaultRequiresSettlement,
   getSettlementMode,
@@ -175,7 +175,7 @@ export function useTreasuryService() {
     legacyTransactions = [],
     issuedChecks = [],
   } = {}) {
-    const pendingTransactions = getPendingLegacyCheckTransactionsSafe(
+    const pendingTransactions = getPendingLegacyCheckTransactions(
       legacyTransactions,
       issuedChecks
     );
@@ -367,7 +367,3 @@ export function useTreasuryService() {
     deleteAttachment,
   };
 }
-
-// استيراد كسول لتفادي إعادة تصدير غير مستخدمة أثناء بناء Vite إذا تغيّر ترتيب الملفات.
-// أبقيناه خارج قائمة import الطويلة لتقليل احتمال تضارب الإصدارات القديمة.
-import { getPendingLegacyCheckTransactions as getPendingLegacyCheckTransactionsSafe } from "../helpers/issuedChecks";
