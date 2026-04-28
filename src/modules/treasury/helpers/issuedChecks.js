@@ -62,6 +62,70 @@ export const normalizeRequiresSettlement = (doc) =>
       getDefaultRequiresSettlement(doc?.type)
   );
 
+export const normalizeSettlementStatus = (doc = {}) => {
+  const raw = String(
+    doc?.settlementStatus ||
+      doc?.settlement_state ||
+      doc?.settlementState ||
+      ""
+  ).trim();
+  if (raw) return raw;
+
+  if (doc?.isSettled) return "settled";
+  if (Array.isArray(doc?.settlementExpenses) && doc.settlementExpenses.length > 0) {
+    return "draft";
+  }
+  return "open";
+};
+
+export const isSettlementDraft = (doc = {}) => {
+  const status = normalizeSettlementStatus(doc);
+  return Boolean(
+    status === "draft" ||
+      status === "partial" ||
+      doc?.settlementDraft === true ||
+      doc?.hasDraftSettlement === true ||
+      (Array.isArray(doc?.settlementExpenses) &&
+        doc.settlementExpenses.length > 0 &&
+        !doc?.settlementApprovedAt &&
+        !doc?.settlementCompletedAt &&
+        !doc?.settlementClosedAt &&
+        !doc?.settlementFinalized)
+  );
+};
+
+export const isSettlementClosed = (doc = {}) =>
+  Boolean(
+    doc?.settlementFinalized ||
+      doc?.settlementCompletedAt ||
+      doc?.settlementClosedAt ||
+      normalizeSettlementStatus(doc) === "settled"
+  );
+
+export const normalizeSettlementOpenState = (doc = {}) => {
+  const requiresSettlement = normalizeRequiresSettlement(doc);
+  const draft = requiresSettlement && isSettlementDraft(doc) && !isSettlementClosed(doc);
+  const settled = requiresSettlement
+    ? Boolean(doc?.isSettled) && !draft
+    : Boolean(doc?.isSettled);
+  const status = draft
+    ? "draft"
+    : settled
+      ? "settled"
+      : normalizeSettlementStatus(doc);
+
+  return {
+    ...doc,
+    requires_settlement: requiresSettlement,
+    requiresSettlement,
+    isSettled: settled,
+    hasDraftSettlement: draft,
+    settlementDraft: draft,
+    settlementStatus: status,
+    settlement_state: status,
+  };
+};
+
 export const getIssuedCheckTypeLabel = (type = "") =>
   ISSUED_CHECK_TYPE_LABELS[normalizeIssuedCheckType(type)] ||
   EXTRA_FINANCE_TYPE_LABELS[type] ||
@@ -155,20 +219,24 @@ export const mergeIssuedChecksSources = (
   issuedChecks = [],
   legacyTransactions = []
 ) => {
-  const normalizedIssuedChecks = issuedChecks.map((tx) => ({
-    ...tx,
-    type: normalizeIssuedCheckType(tx.type),
-    sourceCollection: tx?.sourceCollection || "issued_checks",
-  }));
+  const normalizedIssuedChecks = issuedChecks.map((tx) =>
+    normalizeSettlementOpenState({
+      ...tx,
+      type: normalizeIssuedCheckType(tx.type),
+      sourceCollection: tx?.sourceCollection || "issued_checks",
+    })
+  );
 
   const pendingLegacyChecks = getPendingLegacyCheckTransactions(
     legacyTransactions,
     issuedChecks
-  ).map((tx) => ({
-    ...tx,
-    type: normalizeIssuedCheckType(tx.type),
-    sourceCollection: "transactions",
-  }));
+  ).map((tx) =>
+    normalizeSettlementOpenState({
+      ...tx,
+      type: normalizeIssuedCheckType(tx.type),
+      sourceCollection: "transactions",
+    })
+  );
 
   return [...pendingLegacyChecks, ...normalizedIssuedChecks];
 };
@@ -185,9 +253,10 @@ export const getIssuedCheckSourceKey = (doc = {}) => {
 
 export const isGroupedSettlementFollower = (doc = {}) =>
   Boolean(
-    doc?.settlementGroupFollower ||
-      (doc?.settlementGroupLeaderId &&
-        String(doc.settlementGroupLeaderId) !== String(doc.id || ""))
+    !isSettlementDraft(doc) &&
+      (doc?.settlementGroupFollower ||
+        (doc?.settlementGroupLeaderId &&
+          String(doc.settlementGroupLeaderId) !== String(doc.id || "")))
   );
 
 const getIssuedCheckSortStamp = (doc = {}) =>
@@ -199,11 +268,17 @@ export const mergeIssuedChecksSourcesNormalized = (
 ) => {
   const grouped = new Map();
 
-  mergeIssuedChecksSources(issuedChecks, legacyTransactions).forEach((doc) => {
+  mergeIssuedChecksSources(issuedChecks, legacyTransactions).forEach((rawDoc) => {
+    const doc = normalizeSettlementOpenState(rawDoc);
     const key = getIssuedCheckSourceKey(doc);
     const current = grouped.get(key);
 
     if (!current) {
+      grouped.set(key, doc);
+      return;
+    }
+
+    if (isSettlementDraft(doc) && !isSettlementDraft(current)) {
       grouped.set(key, doc);
       return;
     }
@@ -232,5 +307,5 @@ export const mergeIssuedChecksSourcesNormalized = (
     }
   });
 
-  return Array.from(grouped.values());
+  return Array.from(grouped.values()).map(normalizeSettlementOpenState);
 };
