@@ -3,26 +3,10 @@
  *
  * تتضمن:
  * - حفظ / تحديث السندات في Firestore
- * - حذف السندات
+ * - حذف السندات والشيكات حذفًا فعليًا من كل أماكنها المحتملة
  * - رفع المرفقات إلى Firebase Storage مع البيان
  * - حذف المرفقات من Storage
  * - فحص تكرار رقم الشيك
- *
- * تخزين المرفقات:
- * ┌─────────────────────────────────────────────────────┐
- * │  Firebase Storage path:                             │
- * │  treasury/attachments/{txId}/{timestamp}_{filename} │
- * │                                                     │
- * │  Firestore (داخل مستند السند):                      │
- * │  attachments: [{ id, name, description, url,        │
- * │                  storagePath, size, mimeType,        │
- * │                  uploadedAt }]                      │
- * └─────────────────────────────────────────────────────┘
- *
- * الأمان:
- * - Firebase Storage Security Rules تمنع الوصول إلا للمستخدمين المصادق عليهم
- * - كل ملف مرتبط بـ txId لا يمكن تخمينه
- * - روابط التحميل (Download URLs) مؤقتة بشكل افتراضي ومحمية بـ Firebase Auth
  */
 
 import {
@@ -65,6 +49,15 @@ const normalizeCollectionName = (value = "") => {
   return "";
 };
 
+const normalizeCheckNum = (value = "") =>
+  String(value ?? "")
+    .trim()
+    .replace(/[٠-٩]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit))
+    .replace(/[\u0660-\u0669]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
+
+const unique = (values = []) =>
+  Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
+
 const isMigratedLegacyIssuedCheck = (tx = {}) => {
   const id = String(tx?.id || "");
   return Boolean(
@@ -98,11 +91,20 @@ function normalizeIssuedCheckPayload(tx = {}, options = {}) {
     : explicitRequiresSettlement === undefined || explicitRequiresSettlement === null
       ? getDefaultRequiresSettlement(type)
       : Boolean(explicitRequiresSettlement);
+  const settlementExpenses = Array.isArray(tx.settlementExpenses)
+    ? tx.settlementExpenses
+    : [];
+  const settlementStatus =
+    tx.settlementStatus ||
+    tx.settlement_state ||
+    tx.settlementState ||
+    (requiresSettlement && settlementExpenses.length && !tx.isSettled ? "draft" : undefined);
 
   return {
     ...tx,
     ...options,
     type,
+    checkNum: isDirectFinanceType(type) ? "" : normalizeCheckNum(options.checkNum ?? tx.checkNum),
     requires_settlement: requiresSettlement,
     requiresSettlement,
     settlement_mode:
@@ -110,6 +112,8 @@ function normalizeIssuedCheckPayload(tx = {}, options = {}) {
       tx.settlementMode ||
       options.settlement_mode ||
       getSettlementMode(type, requiresSettlement),
+    settlementStatus,
+    settlement_state: settlementStatus,
     party: tx.party || getIssuedCheckDisplayParty(tx) || "",
     attachments: Array.isArray(tx.attachments) ? tx.attachments : [],
   };
@@ -132,14 +136,6 @@ export function useTreasuryService() {
     return ISSUED_CHECKS_COLLECTION;
   };
 
-  // ──────────────────────────────────────────────────────────
-  // حفظ / تحديث سند
-  // ──────────────────────────────────────────────────────────
-  /**
-   * يستخدم setDoc مع ID ثابت:
-   * - إذا كان tx.id موجودًا → تحديث (overwrite) للمستند الحالي بالكامل
-   * - إذا لم يكن موجودًا → إنشاء مستند جديد بـ ID مُنشأ تلقائيًا
-   */
   async function saveTransaction(tx) {
     const targetCollection = getTargetCollection(tx);
     const txId = tx.id || doc(collection(db, targetCollection)).id;
@@ -149,6 +145,14 @@ export function useTreasuryService() {
       : tx.requires_settlement === undefined && tx.requiresSettlement === undefined
         ? getDefaultRequiresSettlement(normalizedType)
         : Boolean(tx.requires_settlement ?? tx.requiresSettlement);
+    const settlementExpenses = Array.isArray(tx.settlementExpenses)
+      ? tx.settlementExpenses
+      : [];
+    const settlementStatus =
+      tx.settlementStatus ||
+      tx.settlement_state ||
+      tx.settlementState ||
+      (requiresSettlement && settlementExpenses.length && !tx.isSettled ? "draft" : undefined);
 
     const finalData = normalizeIssuedCheckPayload(tx, {
       id: txId,
@@ -159,10 +163,10 @@ export function useTreasuryService() {
       settlement_mode: isDirectFinanceType(normalizedType)
         ? "none"
         : tx.settlement_mode || getSettlementMode(normalizedType, requiresSettlement),
+      settlementExpenses,
+      settlementStatus,
+      settlement_state: settlementStatus,
       isSettled: requiresSettlement ? Boolean(tx.isSettled) : false,
-      settlementExpenses: Array.isArray(tx.settlementExpenses)
-        ? tx.settlementExpenses
-        : [],
       updatedAt: new Date().toISOString(),
       createdAt: tx.createdAt || new Date().toISOString(),
     });
@@ -219,87 +223,103 @@ export function useTreasuryService() {
     return { migratedCount, batches };
   }
 
-  const getDeleteDocumentRefs = (tx = {}) => {
+  const addDeleteRef = (refs, collectionName, docId) => {
+    const cleanCollection = normalizeCollectionName(collectionName);
+    const cleanId = String(docId || "").trim();
+    if (!cleanCollection || !cleanId) return;
+    refs.set(`${cleanCollection}/${cleanId}`, doc(db, cleanCollection, cleanId));
+  };
+
+  async function addMatchingCheckRefsByField(refs, collectionName, fieldName, value) {
+    const cleanCollection = normalizeCollectionName(collectionName);
+    const cleanValue = String(value || "").trim();
+    if (!cleanCollection || !fieldName || !cleanValue) return;
+
+    const snap = await getDocs(
+      query(collection(db, cleanCollection), where(fieldName, "==", cleanValue))
+    );
+    snap.docs.forEach((item) => addDeleteRef(refs, cleanCollection, item.id));
+  }
+
+  const getDeleteDocumentRefs = async (tx = {}) => {
     const refs = new Map();
     const id = String(tx?.id || "").trim();
     if (!id) return [];
 
-    const addRef = (collectionName, docId) => {
-      if (!collectionName || !docId) return;
-      refs.set(`${collectionName}/${docId}`, doc(db, collectionName, docId));
-    };
-
     const targetCollection = getTargetCollection(tx);
-    addRef(targetCollection, id);
+    const checkNum = normalizeCheckNum(tx?.checkNum);
+    const sourceIds = unique([
+      id,
+      tx?.legacySourceId,
+      tx?.sourceTransactionId,
+      id.startsWith(LEGACY_ISSUED_CHECK_PREFIX)
+        ? id.slice(LEGACY_ISSUED_CHECK_PREFIX.length)
+        : "",
+    ]);
+
+    addDeleteRef(refs, targetCollection, id);
 
     if (isDirectFinanceType(tx?.type)) {
-      addRef(LEGACY_COLLECTION, id);
+      addDeleteRef(refs, LEGACY_COLLECTION, id);
       return Array.from(refs.values());
     }
 
-    // حماية إضافية: عند حذف شيك نحذف أي نسخة مطابقة في السجل الموحد أو السجل القديم.
-    addRef(ISSUED_CHECKS_COLLECTION, id);
-    addRef(LEGACY_COLLECTION, id);
+    sourceIds.forEach((sourceId) => {
+      addDeleteRef(refs, ISSUED_CHECKS_COLLECTION, sourceId);
+      addDeleteRef(refs, LEGACY_COLLECTION, sourceId);
+      addDeleteRef(refs, ISSUED_CHECKS_COLLECTION, buildLegacyIssuedCheckId(sourceId));
+    });
 
-    const sourceId = String(tx?.legacySourceId || tx?.sourceTransactionId || "").trim();
-    if (sourceId) {
-      addRef(LEGACY_COLLECTION, sourceId);
-      addRef(ISSUED_CHECKS_COLLECTION, buildLegacyIssuedCheckId(sourceId));
+    // حماية مهمة: في بعض مراحل النقل قد يتغير ID بينما يظل رقم الشيك هو الرابط العملي الوحيد.
+    if (checkNum) {
+      await Promise.all([
+        addMatchingCheckRefsByField(refs, ISSUED_CHECKS_COLLECTION, "checkNum", checkNum),
+        addMatchingCheckRefsByField(refs, LEGACY_COLLECTION, "checkNum", checkNum),
+      ]);
     }
 
-    if (id.startsWith(LEGACY_ISSUED_CHECK_PREFIX)) {
-      const legacyId = id.slice(LEGACY_ISSUED_CHECK_PREFIX.length);
-      addRef(LEGACY_COLLECTION, legacyId);
-    }
+    // حماية إضافية لأي سجلات مرحّلة تشير للشيك كمصدر.
+    await Promise.all(
+      sourceIds.flatMap((sourceId) => [
+        addMatchingCheckRefsByField(refs, ISSUED_CHECKS_COLLECTION, "legacySourceId", sourceId),
+        addMatchingCheckRefsByField(refs, ISSUED_CHECKS_COLLECTION, "sourceTransactionId", sourceId),
+      ])
+    );
 
     return Array.from(refs.values());
   };
 
-  // ──────────────────────────────────────────────────────────
-  // حذف سند (مع مرفقاته من Storage)
-  // ──────────────────────────────────────────────────────────
   async function deleteTransaction(tx) {
-    // حذف المرفقات أولًا من Storage
     if (tx?.attachments?.length) {
       await Promise.allSettled(
         tx.attachments.map((att) => deleteAttachment(att.storagePath))
       );
     }
 
-    const refs = getDeleteDocumentRefs(tx);
+    const refs = await getDeleteDocumentRefs(tx);
     if (!refs.length) return;
 
-    const batch = writeBatch(db);
-    refs.forEach((refDoc) => batch.delete(refDoc));
-    await batch.commit();
+    for (let index = 0; index < refs.length; index += BATCH_SIZE) {
+      const slice = refs.slice(index, index + BATCH_SIZE);
+      const batch = writeBatch(db);
+      slice.forEach((refDoc) => batch.delete(refDoc));
+      await batch.commit();
+    }
   }
 
-  // ──────────────────────────────────────────────────────────
-  // فحص تكرار رقم الشيك
-  // ──────────────────────────────────────────────────────────
   async function isChequeDuplicate(chequeNum, currentId = null) {
-    if (!chequeNum) return false;
+    const normalizedChequeNum = normalizeCheckNum(chequeNum);
+    if (!normalizedChequeNum) return false;
 
     const q = query(
       collection(db, ISSUED_CHECKS_COLLECTION),
-      where("checkNum", "==", String(chequeNum))
+      where("checkNum", "==", normalizedChequeNum)
     );
     const snap = await getDocs(q);
 
-    // مكرر فقط إذا وُجد مستند آخر غير الحالي
     return snap.docs.some((d) => d.id !== currentId);
   }
 
-  // ──────────────────────────────────────────────────────────
-  // رفع مرفق مع بيانه إلى Firebase Storage
-  // ──────────────────────────────────────────────────────────
-  /**
-   * @param {File} file - الملف المراد رفعه
-   * @param {string} txId - معرّف السند (مطلوب لتنظيم المسار)
-   * @param {string} description - بيان المرفق (مثال: "صورة الشيك")
-   * @param {function} onProgress - دالة اختيارية للتقدم (0–100)
-   * @returns {object} بيانات المرفق للحفظ في Firestore
-   */
   async function uploadAttachment(
     file,
     txId,
@@ -309,7 +329,6 @@ export function useTreasuryService() {
     if (!txId) throw new Error("txId مطلوب لرفع المرفق");
 
     const timestamp = Date.now();
-    // تعقيم اسم الملف للمسار
     const safeName = file.name.replace(/[^\w.\u0600-\u06FF-]/g, "_");
     const storagePath = `${STORAGE_ROOT}/${txId}/${timestamp}_${safeName}`;
 
@@ -343,15 +362,11 @@ export function useTreasuryService() {
     });
   }
 
-  // ──────────────────────────────────────────────────────────
-  // حذف مرفق من Firebase Storage
-  // ──────────────────────────────────────────────────────────
   async function deleteAttachment(storagePath) {
     if (!storagePath) return;
     try {
       await deleteObject(ref(storage, storagePath));
     } catch (err) {
-      // لا نوقف العملية إذا كان الملف غير موجود بالفعل
       if (err.code !== "storage/object-not-found") {
         console.warn("فشل حذف المرفق من Storage:", err);
       }
