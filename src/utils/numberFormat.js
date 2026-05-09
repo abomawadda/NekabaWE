@@ -1,5 +1,7 @@
 const normalizeArabicDigits = (value = "") =>
-  String(value).replace(/[٠-٩]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
+  String(value)
+    .replace(/[٠-٩]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit))
+    .replace(/[۰-۹]/g, (digit) => "۰۱۲۳۴۵۶۷۸۹".indexOf(digit));
 
 export const toNumericValue = (value) => {
   if (value === null || value === undefined || value === "") return 0;

@@ -29,13 +29,21 @@ import {
   buildLegacyIssuedCheckId,
   getDefaultRequiresSettlement,
   getIssuedCheckDisplayParty,
+  getIssuedCheckSourceKey,
+  getIssuedCheckTypeLabel,
+  getPendingLegacyCheckTransactions,
   getSettlementMode,
+  isDirectFinanceType,
   isGroupedSettlementFollower as isGroupedSettlementFollowerRecord,
   isLegacyCheckType,
+  isLegacyCheckMigrated,
+  isSettlementClosed,
+  isSettlementDraft,
   LEGACY_ISSUED_CHECK_PREFIX,
   mergeIssuedChecksSources,
   normalizeIssuedCheckType,
   normalizeRequiresSettlement,
+  normalizeSettlementOpenState,
 } from "../treasury/helpers/issuedChecks";
 import {
   BOARD_MEMBERSHIPS_COLLECTION,
@@ -47,6 +55,7 @@ import {
 } from "../board/boardLifecycle";
 import { ReceiptText, Plus, Trash2, Printer, CheckCircle2, FileText, Tag, DollarSign, Wallet, History, Search, AlertCircle, Info, ShieldCheck, ArrowDownRight, X, Check, Users, Save, AlertTriangle, Loader2, Edit3, RotateCcw } from "lucide-react";
 import clsx from "clsx";
+import { recoverSingleSettlement, discardDraft } from "./settlementRecovery";
 
 const INITIAL_CATS = ["بدل ضيافة", "أدوات مكتبية", "بدل انتقال", "صيانة", "مشتريات أخرى", "بدل جلسات"];
 const TRAVEL_ALLOWANCE_CATEGORIES = ["بدل انتقال"];
@@ -383,6 +392,483 @@ function InlineDynamicSelect({ label, value, onChange, icon: Icon, defaultOption
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 🩺 DiagnosticPanel — تحليل جميع الشيكات وتصنيفها حسب ظهورها
+// ═══════════════════════════════════════════════════════════════
+function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTransactions, openAdvances, T, formatMoney: fmtMoney, formatInteger: fmtInt }) {
+  const [filterType, setFilterType] = useState("all");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [searchQ, setSearchQ] = useState("");
+  const [actionLoading, setActionLoading] = useState({});
+  const [confirmReset, setConfirmReset] = useState(null);
+  const [dToast, setDToast] = useState(null);
+
+  const showDToast = (msg, type = "success") => {
+    setDToast({ msg, type });
+    setTimeout(() => setDToast(null), 3500);
+  };
+
+  // 🛠️ إعادة تعيين شامل — يحذف كل أثر للتسوية ويعيد الشيك مفتوحاً
+  const handleResetCheck = async (record) => {
+    setActionLoading(prev => ({ ...prev, [record.id]: true }));
+    try {
+      const now = new Date().toISOString();
+      const targetId = record.targetDocId || record.id;
+      const batch = writeBatch(db);
+
+      // · حقل · القيمة بعد المسح
+      // ─────────────────────────────────────────
+      // isSettled          → false
+      // hasDraftSettlement → false
+      // settlementStatus   → "open"
+      // settlement_mode    → حسب النوع
+      // settlementExpenses → [] (محذوفة)
+      // settlementSpent    → 0
+      // settlementReturned → 0
+      // settlementDate     → ""
+      // settlementApprovedAt, CompletedAt, ClosedAt, Finalized → كلها محذوفة
+      // returnMode         → "carry_forward"
+      // returnedActually   → false
+      // returnedCashAmount, bankDepositedAmount, bankDepositDate, bankDepositReference → 0/""
+      // settlementGroupId, LeaderId, MemberIds, Follower → محذوفة
+      // settlement_state   → "open"
+      // settlementDraft    → false
+      // prevBalanceUsed    → 0
+      // collectedSubscriptions → 0
+      // state (إذا كان wrong) → "posted"
+
+      const nowStr = now;
+      const nukePayload = {
+        isSettled: false,
+        hasDraftSettlement: false,
+        settlementExpenses: [],
+        settlementSpent: 0,
+        settlementReturned: 0,
+        settlementDate: "",
+        settlementApprovedAt: "",
+        settlementCompletedAt: "",
+        settlementClosedAt: "",
+        settlementFinalized: false,
+        settlementStatus: "open",
+        settlement_state: "open",
+        settlementDraft: false,
+        settlement_group_id: "",
+        settlementGroupLeaderId: "",
+        settlementGroupMemberIds: [],
+        settlementGroupFollower: false,
+        settlementGroupCount: 1,
+        settlementGroupAdvanceAmountBase: null,
+        settlementGroupPrevBalanceUsed: null,
+        settlementGroupCollectedSubscriptions: null,
+        returnMode: "carry_forward",
+        returnedActually: false,
+        returnedCashAmount: 0,
+        bankDepositedAmount: 0,
+        bankDepositDate: "",
+        bankDepositReference: "",
+        bankDepositTransactionId: "",
+        prevBalanceUsed: 0,
+        collectedSubscriptions: 0,
+        updatedAt: nowStr,
+      };
+
+      if (record.state !== "posted" && record.state !== "approved") {
+        nukePayload.state = "posted";
+      }
+      if (record.type === "advance") {
+        nukePayload.requires_settlement = true;
+        nukePayload.requiresSettlement = true;
+        nukePayload.settlement_mode = "carry_forward";
+      } else if (record.type === "trip") {
+        nukePayload.requires_settlement = true;
+        nukePayload.requiresSettlement = true;
+        nukePayload.settlement_mode = "check_plus_subscriptions";
+      } else {
+        nukePayload.requires_settlement = true;
+        nukePayload.requiresSettlement = true;
+        nukePayload.settlement_mode = "check_only";
+      }
+
+      // الكتابة على issued_checks — بدون merge! نكتب الحقول كاملة
+      batch.set(doc(db, "issued_checks", targetId), nukePayload, { merge: true });
+
+      // إذا المصدر transactions قديم — نمسح التسوية منه أيضاً
+      if (record.source.includes("transactions") && record.key && record.key !== targetId) {
+        batch.set(doc(db, "transactions", record.key), {
+          isSettled: false,
+          hasDraftSettlement: false,
+          settlementExpenses: [],
+          state: "posted",
+          updatedAt: nowStr,
+        }, { merge: true });
+      }
+
+      await batch.commit();
+
+      // تسجيل في audit log
+      try {
+        await logAuditEvent("diagnostic_nuke_reset", {
+          checkId: targetId,
+          sourceId: record.id,
+          source: record.source,
+          party: record.party,
+          type: record.type,
+          reason: record.reason,
+        });
+      } catch (_) {}
+
+      showDToast(`تم حذف كل التسويات وإعادة ${record.party || targetId} مفتوحاً`, "success");
+    } catch (err) {
+      console.error("Nuke reset failed:", err);
+      showDToast("فشلت إعادة التعيين الشامل: " + err.message, "error");
+    } finally {
+      setActionLoading(prev => ({ ...prev, [record.id]: false }));
+      setConfirmReset(null);
+    }
+  };
+
+  // 🛠️ إصلاح الحالة → posted
+  const handleFixState = async (record) => {
+    setActionLoading(prev => ({ ...prev, [record.id]: true }));
+    try {
+      const targetId = record.targetDocId || record.id;
+      await setDoc(doc(db, "issued_checks", targetId), {
+        state: "posted",
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      await logAuditEvent("diagnostic_fix_state", {
+        checkId: targetId, party: record.party,
+        oldState: record.state, newState: "posted",
+      });
+      showDToast(`تم تعديل حالة الشيك إلى posted`, "success");
+    } catch (err) {
+      showDToast("فشل تعديل الحالة: " + err.message, "error");
+    } finally {
+      setActionLoading(prev => ({ ...prev, [record.id]: false }));
+    }
+  };
+
+  // 🛠️ تفعيل التسوية
+  const handleEnableSettlement = async (record) => {
+    setActionLoading(prev => ({ ...prev, [record.id]: true }));
+    try {
+      const targetId = record.targetDocId || record.id;
+      await setDoc(doc(db, "issued_checks", targetId), {
+        requires_settlement: true,
+        requiresSettlement: true,
+        settlement_mode: record.type === "advance" ? "carry_forward" :
+                         record.type === "trip" ? "check_plus_subscriptions" : "check_only",
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      await logAuditEvent("diagnostic_enable_settlement", {
+        checkId: targetId, party: record.party,
+      });
+      showDToast(`تم تفعيل التسوية للشيك`, "success");
+    } catch (err) {
+      showDToast("فشل تفعيل التسوية: " + err.message, "error");
+    } finally {
+      setActionLoading(prev => ({ ...prev, [record.id]: false }));
+    }
+  };
+
+  const analysis = useMemo(() => {
+    const settledKeys = new Set();
+    const draftKeys = new Set();
+    const openKeys = new Set();
+
+    normalizedSourceTransactions.forEach(tx => {
+      const key = getIssuedCheckSourceKey(tx);
+      const req = normalizeRequiresSettlement(tx);
+      if (!req) return;
+      if (Boolean(tx.isSettled) && !isGroupedSettlementFollowerRecord(tx)) settledKeys.add(key);
+      if (tx.hasDraftSettlement && !Boolean(tx.isSettled) && !isGroupedSettlementFollowerRecord(tx)) draftKeys.add(key);
+    });
+
+    openAdvances.forEach(tx => {
+      openKeys.add(getIssuedCheckSourceKey(tx));
+    });
+
+    const allRecords = [];
+    const keyRegistry = new Map();
+
+    const classify = (tx, source) => {
+      const normalizedType = normalizeIssuedCheckType(tx.type);
+      const key = getIssuedCheckSourceKey(tx);
+      const req = normalizeRequiresSettlement(tx);
+      const stateVal = tx.state || "posted";
+      const isDirect = isDirectFinanceType(normalizedType);
+      const isFollower = isGroupedSettlementFollowerRecord(tx);
+      const settledState = normalizeSettlementOpenState({ ...tx, type: normalizedType });
+
+      const inSettled = settledKeys.has(key);
+      const inDraft = draftKeys.has(key);
+      const inOpen = openKeys.has(key);
+      const inAny = inSettled || inDraft || inOpen;
+
+      let category = "";
+      let reason = "";
+
+      if (isDirect) {
+        category = "مستبعد"; reason = "خصم مباشر بنكي — لا يتطلب تسوية";
+      } else if (!req) {
+        category = "مستبعد";
+        reason = normalizedType === "aid" ? "إعانة — لا تتطلب تسوية" : `type: ${normalizedType} — لا يتطلب تسوية`;
+        if (normalizedType === "advance" && tx.requires_settlement === false) reason = "سلفة مع requires_settlement: false (تم إلغاء التسوية يدوي)";
+      } else if (isFollower && !inAny) {
+        category = "مستبعد"; reason = "شيك تابع لتسوية مجموعة";
+      } else if (inSettled) {
+        category = "مسوى";
+      } else if (inDraft) {
+        category = "مسودة";
+      } else if (inOpen) {
+        category = "مفتوح";
+      } else if (Boolean(settledState.isSettled) && !inSettled) {
+        category = "مفقود"; reason = "isSettled=true لكنه ليس في أرشيف التسويات (قد يكون تابعاً لمجموعة)";
+      } else if (stateVal !== "posted" && stateVal !== "approved") {
+        category = "مفقود"; reason = `حالة الشيك: "${stateVal}" — ليس posted أو approved`;
+      } else if (tx.requires_settlement === false) {
+        category = "مفقود"; reason = "requires_settlement: false يمنع ظهوره";
+      } else {
+        category = "مفقود"; reason = "سبب غير معروف — يحتاج مراجعة";
+      }
+
+      if (keyRegistry.has(key)) {
+        const prev = keyRegistry.get(key);
+        if (prev.category === category) reason = reason ? `${reason} | مكرر (نفس key)` : "مكرر (نفس key)";
+        keyRegistry.set(key, { category, reason });
+      } else {
+        keyRegistry.set(key, { category, reason });
+      }
+
+      return { category, reason, inSettled, inDraft, inOpen, inAny, key };
+    };
+
+    // Process issued_checks — targetDocId = id نفسه (معرف Firestore الفعلي)
+    issuedChecks.forEach(tx => {
+      const c = classify(tx, "issued_checks");
+      allRecords.push({
+        id: tx.id, targetDocId: tx.id, key: c.key, source: "issued_checks",
+        party: getIssuedCheckDisplayParty(tx),
+        type: normalizeIssuedCheckType(tx.type),
+        typeLabel: getIssuedCheckTypeLabel(normalizeIssuedCheckType(tx.type)),
+        amount: Number(tx.advanceAmountBase || tx.amount || 0),
+        date: tx.date || "", checkNum: tx.checkNum || "",
+        state: tx.state || "posted",
+        category: c.category, reason: c.reason,
+        inSettled: c.inSettled, inDraft: c.inDraft, inOpen: c.inOpen, inAny: c.inAny,
+      });
+    });
+
+    // Process legacy transactions — targetDocId = legact_tx_{id}
+    legacyTransactions.forEach(tx => {
+      if (!isLegacyCheckType(tx.type)) return;
+      const alreadyMigrated = isLegacyCheckMigrated(tx, issuedChecks);
+      const source = alreadyMigrated ? "transactions (مُهاجر)" : "transactions";
+      const c = classify(tx, source);
+      allRecords.push({
+        id: tx.id, targetDocId: buildLegacyIssuedCheckId(tx.id), key: c.key, source,
+        party: getIssuedCheckDisplayParty(tx),
+        type: normalizeIssuedCheckType(tx.type),
+        typeLabel: getIssuedCheckTypeLabel(normalizeIssuedCheckType(tx.type)),
+        amount: Number(tx.amount || tx.advanceAmountBase || 0),
+        date: tx.date || "", checkNum: tx.checkNum || "",
+        state: tx.state || "posted",
+        category: c.category, reason: c.reason,
+        inSettled: c.inSettled, inDraft: c.inDraft, inOpen: c.inOpen, inAny: c.inAny,
+      });
+    });
+
+    return {
+      records: allRecords,
+      settled: allRecords.filter(r => r.category === "مسوى"),
+      draft: allRecords.filter(r => r.category === "مسودة"),
+      open: allRecords.filter(r => r.category === "مفتوح"),
+      missing: allRecords.filter(r => r.category === "مفقود"),
+      excluded: allRecords.filter(r => r.category === "مستبعد"),
+    };
+  }, [issuedChecks, legacyTransactions, normalizedSourceTransactions, openAdvances]);
+
+  const visible = useMemo(() => {
+    return analysis.records.filter(r => {
+      if (filterType !== "all" && r.type !== filterType) return false;
+      if (filterCategory !== "all" && r.category !== filterCategory) return false;
+      if (searchQ) {
+        const q = searchQ.toLowerCase();
+        const match = (r.party + r.id + r.checkNum + (r.key || "")).toLowerCase().includes(q);
+        if (!match) return false;
+      }
+      return true;
+    });
+  }, [analysis.records, filterType, filterCategory, searchQ]);
+
+  const TY = T;
+
+  return (
+    <div className={clsx("rounded-2xl border shadow-sm overflow-hidden animate-in fade-in duration-500", TY.card)}>
+      {/* header */}
+      <div className="p-4 border-b bg-rose-50/50 dark:bg-rose-900/10">
+        <h3 className="font-black text-[11px] uppercase tracking-widest flex items-center gap-2 mb-3">
+          <AlertCircle size={14} className="text-rose-600"/>
+          تشخيص الشيكات — تحليل الظهور والتصنيف
+        </h3>
+        <div className="flex flex-wrap gap-4 text-[10px] font-black">
+          <span className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800">الإجمالي: {analysis.records.length}</span>
+          <span className="px-3 py-1.5 rounded-xl bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300">مسوى: {analysis.settled.length}</span>
+          <span className="px-3 py-1.5 rounded-xl bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">مسودة: {analysis.draft.length}</span>
+          <span className="px-3 py-1.5 rounded-xl bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">مفتوح: {analysis.open.length}</span>
+          {analysis.missing.length > 0 && (
+            <span className="px-3 py-1.5 rounded-xl bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 animate-pulse">مفقود: {analysis.missing.length}</span>
+          )}
+          <span className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800">مستبعد: {analysis.excluded.length}</span>
+        </div>
+      </div>
+
+      {/* filters */}
+      <div className="p-3 border-b flex flex-wrap gap-2 items-center bg-slate-50/50 dark:bg-slate-900/20">
+        <div className="relative">
+          <Search size={13} className="absolute right-3 top-2.5 text-slate-400"/>
+          <input type="text" value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="بحث..." className={clsx("pr-9 pl-4 py-2 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 w-48", TY.inp)} />
+        </div>
+        <select value={filterType} onChange={e => setFilterType(e.target.value)} className={clsx("px-3 py-2 rounded-xl border text-[11px] font-bold outline-none", TY.sel)}>
+          <option value="all">كل الأنواع</option>
+          {[...new Set(analysis.records.map(r => r.type))].sort().map(t => (
+            <option key={t} value={t}>{analysis.records.find(r => r.type === t)?.typeLabel || t}</option>
+          ))}
+        </select>
+        <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className={clsx("px-3 py-2 rounded-xl border text-[11px] font-bold outline-none", TY.sel)}>
+          <option value="all">كل التصنيفات</option>
+          <option value="مسوى">مسوى</option>
+          <option value="مسودة">مسودة</option>
+          <option value="مفتوح">مفتوح</option>
+          <option value="مفقود">مفقود ⚠️</option>
+          <option value="مستبعد">مستبعد</option>
+        </select>
+        <div className="text-[10px] font-bold text-slate-400">النتائج: {visible.length}</div>
+      </div>
+
+      {/* table */}
+      <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+        <table className="w-full text-right text-[10px]">
+          <thead className="bg-slate-100/80 dark:bg-slate-800/50 border-b-2 border-slate-200 dark:border-slate-700 sticky top-0 z-10">
+            <tr>
+              {["المسؤول","النوع","رقم الشيك","التاريخ","المبلغ","المصدر","الحالة","التصنيف","سبب التصنيف","الإجراءات"].map((h, i) => (
+                <th key={i} className="p-2 font-black text-slate-500 uppercase whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+            {visible.length === 0 ? (
+              <tr><td colSpan={9} className="p-8 text-center text-slate-400 font-bold text-[11px]">لا توجد نتائج</td></tr>
+            ) : visible.map((r, idx) => {
+              const catBg = r.category === "مسوى" ? "bg-teal-50 dark:bg-teal-900/10" :
+                r.category === "مسودة" ? "bg-amber-50 dark:bg-amber-900/10" :
+                r.category === "مفتوح" ? "bg-blue-50 dark:bg-blue-900/10" :
+                r.category === "مفقود" ? "bg-red-50 dark:bg-red-900/10" : "";
+              const catColor = r.category === "مسوى" ? "text-teal-700 dark:text-teal-300 bg-teal-100 dark:bg-teal-900/30" :
+                r.category === "مسودة" ? "text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30" :
+                r.category === "مفتوح" ? "text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/30" :
+                r.category === "مفقود" ? "text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/30 animate-pulse" :
+                "text-slate-500 bg-slate-100 dark:bg-slate-800";
+              return (
+                <tr key={`${r.id}-${r.source}-${idx}`} className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors ${catBg}`}>
+                  <td className="p-2 font-black text-slate-800 dark:text-slate-100 whitespace-nowrap">{r.party || "—"}</td>
+                  <td className="p-2 font-bold text-slate-500">{r.typeLabel}</td>
+                  <td className="p-2 font-bold text-slate-500">{r.checkNum ? fmtInt(r.checkNum) : "—"}</td>
+                  <td className="p-2 font-bold text-slate-400">{r.date || "—"}</td>
+                  <td className="p-2 font-black text-slate-600">{fmtMoney(r.amount)}</td>
+                  <td className="p-2 text-[9px] font-bold text-slate-400">{r.source}</td>
+                  <td className="p-2 font-bold">
+                    <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black", r.state === "posted" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700")}>
+                      {r.state}
+                    </span>
+                  </td>
+                  <td className="p-2">
+                    <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black whitespace-nowrap", catColor)}>
+                      {r.category === "مفقود" ? "⚠️ " : ""}{r.category}
+                    </span>
+                  </td>
+                  <td className="p-2 text-[9px] font-bold text-slate-500 max-w-[200px] leading-tight" title={r.reason}>
+                    {r.reason || "—"}
+                  </td>
+                  <td className="p-2 text-left whitespace-nowrap">
+                    {actionLoading[r.id] ? (
+                      <span className="text-[9px] text-slate-400">جاري...</span>
+                    ) : r.source === "issued_checks" && ["مسوى","مسودة","مفقود","مستبعد"].includes(r.category) ? (
+                      <button
+                        onClick={() => setConfirmReset(r)}
+                        className={clsx("px-2 py-1 text-white rounded-lg text-[9px] font-black transition-all active:scale-95", r.category === "مسوى" ? "bg-red-500 hover:bg-red-600" : "bg-red-500 hover:bg-red-600")}
+                        title="حذف كل التسويات وإعادة الشيك مفتوحاً">
+                        حذف التسويات
+                      </button>
+                    ) : r.category === "مفقود" && r.state !== "posted" && r.state !== "approved" ? (
+                      <button
+                        onClick={() => handleFixState(r)}
+                        className="px-2 py-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-[9px] font-black transition-all active:scale-95"
+                        title="تعديل الحالة إلى posted">
+                        إصلاح الحالة
+                      </button>
+                    ) : r.category === "مستبعد" && r.type === "advance" ? (
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => setConfirmReset(r)}
+                          className="px-2 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-[9px] font-black transition-all active:scale-95"
+                          title="حذف كل التسويات وإعادة الشيك مفتوحاً">
+                          حذف التسويات
+                        </button>
+                        <button
+                          onClick={() => handleEnableSettlement(r)}
+                          className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[9px] font-black transition-all active:scale-95"
+                          title="تفعيل التسوية فقط">
+                          تفعيل التسوية
+                        </button>
+                      </div>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* تأكيد إعادة التعيين */}
+      {confirmReset && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setConfirmReset(null)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle size={20} className="text-red-500 shrink-0"/>
+              <h3 className="font-black text-[13px]">تأكيد إعادة تعيين الشيك</h3>
+            </div>
+            <div className="space-y-2 text-[11px] font-bold mb-5">
+              <p>هل أنت متأكد من إعادة تعيين الشيك التالي؟</p>
+              <div className="bg-red-50 dark:bg-red-900/10 rounded-xl p-3 space-y-1">
+                <p><span className="text-slate-400">المسؤول:</span> {confirmReset.party || "—"}</p>
+                <p><span className="text-slate-400">النوع:</span> {confirmReset.typeLabel} ({confirmReset.type})</p>
+                <p><span className="text-slate-400">المبلغ:</span> {fmtMoney(confirmReset.amount)}</p>
+                <p><span className="text-slate-400">السبب:</span> {confirmReset.reason}</p>
+              </div>
+              <p className="text-[10px] text-red-500">سيتم حذف كل أثر للتسوية (isSettled, hasDraftSettlement, settlementExpenses, settlementSpent, settlementReturned, settlementGroup*) وإعادة الشيك إلى قائمة الغير مسواة للعمل عليها من جديد.</p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmReset(null)} className="px-4 py-2 rounded-xl border text-[11px] font-black text-slate-600 hover:bg-slate-50 transition-colors">إلغاء</button>
+              <button onClick={() => handleResetCheck(confirmReset)} className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-[11px] font-black transition-all active:scale-95 flex items-center gap-2">
+                <RotateCcw size={14}/> تأكيد إعادة التعيين
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast محلي */}
+      {dToast && (
+        <div className={clsx("fixed bottom-6 left-6 z-[9999] px-5 py-3 rounded-2xl text-[11px] font-black shadow-2xl transition-all animate-in slide-in-from-bottom-4 duration-300", dToast.type === "success" ? "bg-emerald-600 text-white" : "bg-red-600 text-white")}>
+          {dToast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettlementTab() {
   const T = useT();
   const [activeTab,     setActiveTab]     = useState("current");
@@ -417,6 +903,13 @@ export default function SettlementTab() {
   const [editingExpense, setEditingExpense] = useState(null);
   const [editingSettlementId, setEditingSettlementId] = useState("");
   const [settlementToDelete, setSettlementToDelete] = useState(null);
+  
+  // 🔄 حالات الاسترجاع والاسترداد
+  const [recoveryModalData, setRecoveryModalData] = useState(null);
+  const [recoveryReason, setRecoveryReason] = useState("");
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [showRecoveryConfirm, setShowRecoveryConfirm] = useState(false);
+  const [discardDraftId, setDiscardDraftId] = useState(null);
   
   const [expAmt,        setExpAmt]        = useState("");
   const [expCat,        setExpCat]        = useState(INITIAL_CATS[0]);
@@ -544,8 +1037,19 @@ export default function SettlementTab() {
         grouped.set(key, tx);
         return;
       }
+      if (!current.isSettled && tx.isSettled) {
+        grouped.set(key, tx);
+        return;
+      }
 
       if (Boolean(current.isSettled) === Boolean(tx.isSettled)) {
+        if (tx.hasDraftSettlement && !current.hasDraftSettlement) {
+          grouped.set(key, tx);
+          return;
+        }
+        if (current.hasDraftSettlement && !tx.hasDraftSettlement) {
+          return;
+        }
         const currentUpdatedAt = String(current.updatedAt || current.settlementDate || current.date || "");
         const nextUpdatedAt = String(tx.updatedAt || tx.settlementDate || tx.date || "");
         if (nextUpdatedAt >= currentUpdatedAt) grouped.set(key, tx);
@@ -558,6 +1062,7 @@ export default function SettlementTab() {
   const getIssuedCheckDocId = (tx) => {
     if (!tx) return "";
     if (tx.legacySourceId) return tx.id;
+    if (tx.sourceCollection === "issued_checks") return tx.id;
     return isLegacyCheckType(tx.type) ? buildLegacyIssuedCheckId(tx.id) : tx.id;
   };
 
@@ -566,7 +1071,7 @@ export default function SettlementTab() {
     const normalizedType = normalizeIssuedCheckType(tx?.type);
     const requiresSettlement = normalizeRequiresSettlement(tx);
     const targetId = getIssuedCheckDocId(tx);
-    const isLegacySource = isLegacyCheckType(tx?.type) && !tx?.legacySourceId;
+    const isLegacySource = isLegacyCheckType(tx?.type) && !tx?.legacySourceId && tx?.sourceCollection !== "issued_checks";
 
     return {
       ...tx,
@@ -766,6 +1271,13 @@ export default function SettlementTab() {
     () =>
       normalizedSourceTransactions.filter(
         (tx) => normalizeRequiresSettlement(tx) && Boolean(tx.isSettled) && !isGroupedSettlementFollowerRecord(tx)
+      ),
+    [normalizedSourceTransactions]
+  );
+  const draftSettlements = useMemo(
+    () =>
+      normalizedSourceTransactions.filter(
+        (tx) => normalizeRequiresSettlement(tx) && !Boolean(tx.isSettled) && tx.hasDraftSettlement && !isGroupedSettlementFollowerRecord(tx)
       ),
     [normalizedSourceTransactions]
   );
@@ -1272,36 +1784,158 @@ export default function SettlementTab() {
     }
   };
 
+  // 🔄 دالة لاسترجاع تسوية من الأرشيف
+  const handleRecoverFromArchive = (settlement) => {
+    setRecoveryModalData(settlement);
+    setRecoveryReason("");
+    setShowRecoveryConfirm(true);
+  };
+
+  // تنفيذ الاسترجاع
+  const executeRecovery = async () => {
+    if (!recoveryModalData) return;
+    setRecoveryLoading(true);
+    try {
+      const result = await recoverSingleSettlement(recoveryModalData.id, {
+        reason: recoveryReason || "استرجاع يدوي من الأرشيف",
+        userId: currentSession?.user?.id || "",
+        userName: currentSession?.user?.displayName || ""
+      });
+
+      if (result.success) {
+        showToast("تم استرجاع التسوية بنجاح - الشيك الآن في قائمة التسويات المفتوحة", "success");
+        // إعادة تحديث قائمة الأرشيف
+        setActiveTab("current");
+        setShowRecoveryConfirm(false);
+        setRecoveryModalData(null);
+      } else {
+        showToast(result.message, "error");
+      }
+    } catch (e) {
+      console.error(e);
+      showToast("حدث خطأ أثناء الاسترجاع", "error");
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
+  // دالة لحذف مسودة
+  const handleDiscardDraftSettlement = async (draftId) => {
+    setSaving(true);
+    try {
+      const result = await discardDraft(draftId, {
+        userId: currentSession?.user?.id || "",
+        userName: currentSession?.user?.displayName || ""
+      });
+
+      if (result.success) {
+        showToast("تم حذف المسودة بنجاح", "success");
+        setEditingSettlementId("");
+        setSettlementSelectionMode("single");
+        setSelAdvId("");
+        setSelectedBatchIds([]);
+        setExpenses([]);
+        setCollectedSubs("");
+        resetSettlementReturnState("carry_forward");
+        resetExpenseForm();
+      } else {
+        showToast(result.message, "error");
+      }
+    } catch (e) {
+      console.error(e);
+      showToast("حدث خطأ أثناء حذف المسودة", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // 🎯 ميزة الحفظ المؤقت للرجوع لها لاحقاً
   const handleSaveDraft = async () => {
     if (!activeSettlementTxn) return;
-    if (settlementSelectionMode === "batch") {
-      return showToast("الحفظ المؤقت غير متاح حاليًا للتسوية المجمعة. اعتمدها مباشرة بعد مراجعة المستندات.", "error");
-    }
     const validationError = validateMeetingAllowanceExpenses();
     if (validationError) return showToast(validationError, "error");
     setSaving(true);
     try {
-      const targetId = getIssuedCheckDocId(activeSettlementTxn);
-      await setDoc(
-        doc(db, "issued_checks", targetId),
-        buildIssuedCheckRecord(activeSettlementTxn, {
-          settlementExpenses: expenses,
-          collectedSubscriptions: SUBS_AMT,
-        }),
-        { merge: true }
-      );
-      await logAuditEvent("settlement_draft_saved", {
-        transactionId: targetId,
-        party: activeSettlementTxn.employeeName || activeSettlementTxn.party || "",
-        expensesCount: expenses.length,
-        type: activeSettlementTxn.type || "",
-      });
+      const isBatchMode = settlementSelectionMode === "batch";
+      if (isBatchMode) {
+        const batch = writeBatch(db);
+        const groupedTxnIds = activeSelectionTransactions
+          .map((tx) => getIssuedCheckDocId(tx))
+          .filter(Boolean);
+        activeSelectionTransactions.forEach((tx, index) => {
+          const txId = getIssuedCheckDocId(tx);
+          const isLeader = index === 0;
+          batch.set(
+            doc(db, "issued_checks", txId),
+            buildIssuedCheckRecord(tx, {
+              isSettled: false,
+              settlementExpenses: isLeader ? expenses : [],
+              collectedSubscriptions: isLeader ? SUBS_AMT : Number(tx?.collectedSubscriptions || tx?.memberSubscriptions || 0),
+              advanceAmountBase: Number(tx?.advanceAmountBase || tx?.amount || 0),
+              settlementGroupId: `group_${txId}`,
+              settlementGroupLeaderId: groupedTxnIds[0],
+              settlementGroupMemberIds: groupedTxnIds,
+              settlementGroupCount: groupedTxnIds.length,
+              settlementGroupFollower: !isLeader,
+              settlementGroupAdvanceAmountBase: activeSelectionTransactions.reduce(
+                (sum, t) => sum + Number(t?.advanceAmountBase || t?.amount || 0), 0
+              ),
+              settlementGroupPrevBalanceUsed: activeSelectionTransactions.reduce(
+                (sum, t) => sum + ((t?.settlement_mode || t?.settlementMode) === "carry_forward" ? Number(t?.prevBalance || 0) : 0), 0
+              ),
+              settlementGroupCollectedSubscriptions: isLeader ? SUBS_AMT : Number(tx?.collectedSubscriptions || tx?.memberSubscriptions || 0),
+            }),
+            { merge: true }
+          );
+        });
+        await batch.commit();
+        setSelAdvId(getIssuedCheckDocId(activeSettlementTxn));
+        await logAuditEvent("settlement_draft_saved", {
+          transactionId: groupedTxnIds[0],
+          party: activeSettlementTxn.employeeName || activeSettlementTxn.party || "",
+          expensesCount: expenses.length,
+          type: activeSettlementTxn.type || "",
+          batchGroup: groupedTxnIds.join(","),
+        });
+      } else {
+        const targetId = getIssuedCheckDocId(activeSettlementTxn);
+        await setDoc(
+          doc(db, "issued_checks", targetId),
+          buildIssuedCheckRecord(activeSettlementTxn, {
+            isSettled: false,
+            settlementExpenses: expenses,
+            collectedSubscriptions: SUBS_AMT,
+          }),
+          { merge: true }
+        );
+        setSelAdvId(targetId);
+        await logAuditEvent("settlement_draft_saved", {
+          transactionId: targetId,
+          party: activeSettlementTxn.employeeName || activeSettlementTxn.party || "",
+          expensesCount: expenses.length,
+          type: activeSettlementTxn.type || "",
+        });
+      }
       showToast("تم حفظ الفواتير في العهدة بنجاح (يمكنك إغلاقها لاحقاً) ✓", "success");
     } catch (e) {
       console.error(e);
       showToast("حدث خطأ أثناء الحفظ المؤقت", "error");
     } finally { setSaving(false); }
+  };
+  const continueDraft = (draft) => {
+    const isBatchDraft = Boolean(
+      Array.isArray(draft?.settlementGroupMemberIds) && draft.settlementGroupMemberIds.length > 1
+    );
+    if (isBatchDraft) {
+      const groupedIds = toEntityIdList(draft.settlementGroupMemberIds);
+      setSettlementSelectionMode("batch");
+      setSelectedBatchIds(groupedIds);
+    } else {
+      setSettlementSelectionMode("single");
+      setSelectedBatchIds([]);
+    }
+    setSelAdvId(toEntityId(draft.id));
+    setActiveTab("current");
   };
 
   const openConfirmModal = () => {
@@ -1424,6 +2058,9 @@ export default function SettlementTab() {
           doc(db, "issued_checks", txId),
           buildIssuedCheckRecord(tx, {
             isSettled: true,
+            hasDraftSettlement: false,
+            settlement_state: "settled",
+            settlementStatus: "settled",
             settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate),
             settlementExpenses: isLeader ? expenses : [],
             settlementSpent: isLeader ? confirmModalData.spent : 0,
@@ -1660,6 +2297,9 @@ export default function SettlementTab() {
         </button>
         <button onClick={() => setActiveTab("archive")} className={clsx("px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2", activeTab === "archive" ? "bg-white dark:bg-slate-700 shadow-md text-teal-600" : "text-slate-500 hover:text-slate-700")}>
           <History size={14}/> أرشيف التقارير
+        </button>
+        <button onClick={() => setActiveTab("diagnostic")} className={clsx("px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2", activeTab === "diagnostic" ? "bg-white dark:bg-slate-700 shadow-md text-rose-600" : "text-slate-500 hover:text-slate-700")}>
+          <AlertCircle size={14}/> تشخيص
         </button>
       </div>
 
@@ -1960,6 +2600,17 @@ export default function SettlementTab() {
         </div>
       )}
 
+      {/* ═══════════════════════ تبويب التشخيص ═══════════════════════ */}
+      {activeTab === "diagnostic" && <DiagnosticPanel
+        issuedChecks={issuedChecks}
+        legacyTransactions={legacyTransactions}
+        normalizedSourceTransactions={normalizedSourceTransactions}
+        openAdvances={openAdvances}
+        T={T}
+        formatMoney={formatMoney}
+        formatInteger={formatInteger}
+      />}
+
       {/* ═══════════════════════ تبويب الأرشيف ═══════════════════════ */}
       {activeTab === "archive" && (
         <div className={clsx("rounded-2xl border shadow-sm overflow-hidden animate-in fade-in duration-500", T.card)}>
@@ -1985,6 +2636,48 @@ export default function SettlementTab() {
               </div>
             </div>
           </div>
+
+          {/* ── المسودات المعلقة ── */}
+          {draftSettlements.length > 0 && (
+            <div className="border-b border-amber-200 dark:border-amber-800/40 bg-amber-50/30 dark:bg-amber-900/10">
+              <div className="px-4 py-3 flex items-center gap-2 border-b border-amber-100 dark:border-amber-800/30">
+                <Save size={14} className="text-amber-600"/>
+                <h4 className="font-black text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400">
+                  مسودات معلقة ({draftSettlements.length})
+                </h4>
+              </div>
+              <table className="w-full text-right text-[11px]">
+                <thead>
+                  <tr className="bg-amber-100/50 dark:bg-amber-900/20">
+                    {["المسؤول","النوع","المبلغ","عدد الفواتير","تاريخ الحفظ",""].map((h, i) => <th key={i} className="p-3 font-black text-amber-700 dark:text-amber-400 text-[9px] uppercase">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-amber-100 dark:divide-amber-800/30">
+                  {draftSettlements.map(d => (
+                    <tr key={d.id} className="hover:bg-amber-50/80 dark:hover:bg-amber-900/20 transition-colors">
+                      <td className="p-3 font-black text-slate-800 dark:text-slate-100">
+                        {d.employeeName || d.party}
+                        {d.settlementGroupMemberIds?.length > 1 && (
+                          <span className="block text-[8px] text-indigo-500 mt-0.5 font-bold">مجموعة {d.settlementGroupMemberIds.length} شيكات</span>
+                        )}
+                      </td>
+                      <td className="p-3 font-bold text-slate-500">
+                        {d.settlement_mode === "check_plus_subscriptions" ? "رحلة" : d.settlement_mode === "carry_forward" ? "سلفة" : "تسوية"}
+                      </td>
+                      <td className="p-3 font-black text-slate-600">{formatMoney(Number(d.advanceAmountBase || d.amount || 0))}</td>
+                      <td className="p-3 font-bold text-slate-500">{d.settlementExpenses?.length || 0}</td>
+                      <td className="p-3 font-bold text-slate-400 text-[9px]">{d.updatedAt?.slice(0, 10) || "—"}</td>
+                      <td className="p-3 text-left">
+                        <button onClick={() => continueDraft(d)} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-[10px] transition-all active:scale-95 shadow-sm flex items-center gap-1">
+                          <Edit3 size={12}/> استكمال
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           
           <div className="overflow-x-auto min-h-[400px]">
             <table className="w-full text-right text-[11px]">
@@ -2026,7 +2719,14 @@ export default function SettlementTab() {
                       <td className="p-3 text-left">
                         <div className="flex items-center justify-end gap-1">
                           <button onClick={() => startEditSettlement(s)} className="p-2 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50 transition-colors" title="تعديل"><Edit3 size={16}/></button>
-                          <button onClick={() => setSettlementToDelete(s)} className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors" title="حذف"><RotateCcw size={16}/></button>
+                          <button 
+                            onClick={() => handleRecoverFromArchive(s)} 
+                            className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors" 
+                            title="استرجاع من الأرشيف"
+                          >
+                            <RotateCcw size={16}/>
+                          </button>
+                          <button onClick={() => setSettlementToDelete(s)} className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors" title="حذف"><Trash2 size={16}/></button>
                           <button
                             onClick={() =>
                               printSettlementLocal({

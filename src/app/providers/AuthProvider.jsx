@@ -339,76 +339,83 @@ export function AuthProvider({ children }) {
       return;
     }
 
+    // 1. التحقق المحلي — إلزامي
+    let localValid = true;
+    let localError = "";
+
+    if (savedSession.fingerprint !== buildDeviceFingerprint()) {
+      localValid = false;
+      localError = "تم اكتشاف تغيير في بصمة الجهاز.";
+    } else if (isSessionExpired(savedSession.expiresAt)) {
+      localValid = false;
+      localError = "انتهت صلاحية الجلسة.";
+    } else {
+      try {
+        const expectedIntegrity = await buildSessionIntegrity({
+          sessionId: savedSession.sessionId,
+          userId: savedSession.user?.id,
+          token: savedSession.token,
+          fingerprint: savedSession.fingerprint,
+          expiresAt: savedSession.expiresAt,
+        });
+        if (expectedIntegrity !== savedSession.integrityHash) {
+          localValid = false;
+          localError = "فشل التحقق من سلامة الجلسة.";
+        }
+      } catch (e) {
+        localValid = false;
+        localError = "فشل حساب integrity hash.";
+      }
+    }
+
+    if (!localValid) {
+      console.error("الجلسة المحلية غير صالحة:", localError);
+      await terminateSession(localError);
+      setSessionIntegrity({ valid: false, hasOtherActiveSessions: false, reason: localError });
+      setLoading(false);
+      return;
+    }
+
+    // 2. التحقق من Firestore — اختياري (إذا فشل نكمل بالبيانات المحلية)
+    let nextUser = savedSession.user;
+    let serverVerified = false;
+
     try {
-      if (savedSession.fingerprint !== buildDeviceFingerprint()) {
-        throw new Error("تم اكتشاف تغيير في بصمة الجهاز.");
-      }
-
-      if (isSessionExpired(savedSession.expiresAt)) {
-        throw new Error("انتهت صلاحية الجلسة.");
-      }
-
-      const expectedIntegrity = await buildSessionIntegrity({
-        sessionId: savedSession.sessionId,
-        userId: savedSession.user?.id,
-        token: savedSession.token,
-        fingerprint: savedSession.fingerprint,
-        expiresAt: savedSession.expiresAt,
-      });
-
-      if (expectedIntegrity !== savedSession.integrityHash) {
-        throw new Error("فشل التحقق من سلامة الجلسة.");
-      }
-
       const sessionDoc = await getDoc(doc(db, SESSIONS_COLLECTION, savedSession.sessionId));
       if (!sessionDoc.exists()) {
-        throw new Error("الجلسة غير موجودة في السجل المركزي.");
-      }
+        console.warn("الجلسة غير موجودة في السجل المركزي — نستمر بالبيانات المحلية.");
+      } else {
+        const sessionData = sessionDoc.data();
+        const tokenHash = await hashValue(savedSession.token);
 
-      const sessionData = sessionDoc.data();
-      const tokenHash = await hashValue(savedSession.token);
-      if (sessionData.status !== "active") {
-        throw new Error("تم إيقاف هذه الجلسة.");
-      }
-      if (sessionData.tokenHash !== tokenHash) {
-        throw new Error("تم تغيير رمز الجلسة.");
-      }
-      if (isSessionExpired(sessionData.expiresAt)) {
-        throw new Error("انتهت صلاحية الجلسة في الخادم.");
-      }
+        if (sessionData.status === "active") {
+          if (sessionData.tokenHash === tokenHash && !isSessionExpired(sessionData.expiresAt)) {
+            serverVerified = true;
+            nextUser = sessionData.userSnapshot || savedSession.user;
 
-      let nextUser = sessionData.userSnapshot || savedSession.user;
-
-      if (savedSession.user?.loginMode === "password" && savedSession.user?.accountId) {
-        const accountDoc = await getDoc(doc(db, ACCOUNTS_COLLECTION, savedSession.user.accountId));
-        if (!accountDoc.exists()) {
-          throw new Error("الحساب لم يعد موجودًا.");
+            // محاولة تحديث بيانات الحساب من user_accounts (اختياري)
+            if (savedSession.user?.loginMode === "password" && savedSession.user?.accountId) {
+              try {
+                const accountDoc = await getDoc(doc(db, ACCOUNTS_COLLECTION, savedSession.user.accountId));
+                if (accountDoc.exists()) {
+                  const account = { id: accountDoc.id, ...accountDoc.data() };
+                  if (account.accountStatus === "active") {
+                    nextUser = buildUserFromAccount(account);
+                  }
+                }
+              } catch (_) {}
+            }
+          }
         }
-        const account = { id: accountDoc.id, ...accountDoc.data() };
-        if (account.accountStatus !== "active") {
-          throw new Error(
-            account.accountStatus === ACCOUNT_STATUS_PENDING
-              ? "الحساب بانتظار موافقة الأدمن وتحديد الصلاحية."
-              : "الحساب غير مفعل حاليًا."
-          );
-        }
-        nextUser = buildUserFromAccount(account);
       }
-
-      setUser(nextUser);
-      setSession(savedSession);
-      await syncSessionIntegrity(nextUser, savedSession);
     } catch (error) {
-      console.error("تعذر استعادة الجلسة:", error);
-      await terminateSession(error.message || "session_invalid");
-      setSessionIntegrity({
-        valid: false,
-        hasOtherActiveSessions: false,
-        reason: error.message || "session_invalid",
-      });
-    } finally {
-      setLoading(false);
+      console.warn("تعذر التحقق من الجلسة في Firestore — نستمر بالجلسة المحلية:", error.message);
     }
+
+    setUser(nextUser);
+    setSession(serverVerified ? { ...savedSession, verified: true } : savedSession);
+    await syncSessionIntegrity(nextUser, savedSession);
+    setLoading(false);
   }, [syncSessionIntegrity, terminateSession]);
 
   useEffect(() => {

@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.claude/
+.vite-check/
+.env
+.env.local

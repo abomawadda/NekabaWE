@@ -23,14 +23,18 @@ import { useT } from "../../app/providers/ThemeProvider";
 import { useAuth } from "../../app/providers/AuthProvider";
 import { ROLE_LABELS, ROLE_OPTIONS } from "../../security/permissions";
 
+const _stat = { teal: "bg-teal-50 border-teal-100", sky: "bg-sky-50 border-sky-100", amber: "bg-amber-50 border-amber-100", rose: "bg-rose-50 border-rose-100" };
+const _statIc = { teal: "bg-teal-100 text-teal-700", sky: "bg-sky-100 text-sky-700", amber: "bg-amber-100 text-amber-700", rose: "bg-rose-100 text-rose-700" };
+const _statTx = { teal: "text-teal-700", sky: "text-sky-700", amber: "text-amber-700", rose: "text-rose-700" };
+
 function Stat({ label, value, icon: Icon, tone = "teal" }) {
   return (
-    <div className={clsx("p-4 rounded-2xl border shadow-sm", `bg-${tone}-50 border-${tone}-100`)}>
-      <div className={clsx("w-10 h-10 rounded-xl flex items-center justify-center mb-3", `bg-${tone}-100 text-${tone}-700`)}>
+    <div className={clsx("p-4 rounded-2xl border shadow-sm", _stat[tone] || "bg-teal-50 border-teal-100")}>
+      <div className={clsx("w-10 h-10 rounded-xl flex items-center justify-center mb-3", _statIc[tone] || "bg-teal-100 text-teal-700")}>
         <Icon size={18} />
       </div>
       <p className="text-[10px] font-black text-slate-500 uppercase">{label}</p>
-      <p className={clsx("text-2xl font-black mt-1", `text-${tone}-700`)}>{value}</p>
+      <p className={clsx("text-2xl font-black mt-1", _statTx[tone] || "text-teal-700")}>{value}</p>
     </div>
   );
 }

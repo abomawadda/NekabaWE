@@ -52,6 +52,11 @@ const TABS = [
   { id:"attachments", label:"المرفقات", icon:FileText,    color:"slate"   },
 ];
 
+const _erpBg = { teal:"bg-teal-500/10", sky:"bg-sky-500/10", amber:"bg-amber-500/10", emerald:"bg-emerald-500/10", purple:"bg-purple-500/10", rose:"bg-rose-500/10", slate:"bg-slate-500/10" };
+const _erpTx = { teal:"text-teal-600", sky:"text-sky-600", amber:"text-amber-600", emerald:"text-emerald-600", purple:"text-purple-600", rose:"text-rose-600", slate:"text-slate-600" };
+const _tabAct = { teal:"bg-teal-600 text-white shadow-sm border-teal-500 scale-105 z-10", sky:"bg-sky-600 text-white shadow-sm border-sky-500 scale-105 z-10", amber:"bg-amber-600 text-white shadow-sm border-amber-500 scale-105 z-10", emerald:"bg-emerald-600 text-white shadow-sm border-emerald-500 scale-105 z-10", purple:"bg-purple-600 text-white shadow-sm border-purple-500 scale-105 z-10", rose:"bg-rose-600 text-white shadow-sm border-rose-500 scale-105 z-10", slate:"bg-slate-600 text-white shadow-sm border-slate-500 scale-105 z-10" };
+const _tabIna = { teal:"bg-teal-50 text-teal-600 hover:bg-teal-100 border-teal-100 dark:bg-teal-900/20 dark:border-teal-900/30", sky:"bg-sky-50 text-sky-600 hover:bg-sky-100 border-sky-100 dark:bg-sky-900/20 dark:border-sky-900/30", amber:"bg-amber-50 text-amber-600 hover:bg-amber-100 border-amber-100 dark:bg-amber-900/20 dark:border-amber-900/30", emerald:"bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-900/30", purple:"bg-purple-50 text-purple-600 hover:bg-purple-100 border-purple-100 dark:bg-purple-900/20 dark:border-purple-900/30", rose:"bg-rose-50 text-rose-600 hover:bg-rose-100 border-rose-100 dark:bg-rose-900/20 dark:border-rose-900/30", slate:"bg-slate-50 text-slate-600 hover:bg-slate-100 border-slate-100 dark:bg-slate-900/20 dark:border-slate-900/30" };
+
 const toEn = (str) => {
   if (!str && str !== 0) return "";
   return str.toString()
@@ -185,8 +190,8 @@ const WorkplaceSelect = ({ value, onChange, employeesDB, T }) => {
 const ERPSection = ({ title, icon: Icon, colorClass, children, T, cols = 4 }) => (
   <div className={clsx("p-4 rounded-xl border shadow-sm space-y-3 transition-all", T.card)}>
     <div className="flex items-center gap-2 border-b pb-2.5 border-slate-100 dark:border-slate-800">
-      <div className={clsx("p-1.5 rounded-lg", `bg-${colorClass}-500/10`)}>
-        <Icon size={14} className={`text-${colorClass}-600`}/>
+      <div className={clsx("p-1.5 rounded-lg", _erpBg[colorClass] || "bg-teal-500/10")}>
+        <Icon size={14} className={_erpTx[colorClass] || "text-teal-600"}/>
       </div>
       <h3 className={clsx("font-black text-xs uppercase tracking-wider", T.text)}>{title}</h3>
     </div>
@@ -430,8 +435,8 @@ const TabBar = ({ activeTab, setActiveTab, completeness, T }) => (
           className={clsx(
             "flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-black whitespace-nowrap transition-all flex-shrink-0 relative border",
             isActive
-              ? `bg-${tab.color}-600 text-white shadow-sm border-${tab.color}-500 scale-105 z-10`
-              : `bg-${tab.color}-50 text-${tab.color}-600 hover:bg-${tab.color}-100 border-${tab.color}-100 dark:bg-${tab.color}-900/20 dark:border-${tab.color}-900/30`
+              ? (_tabAct[tab.color] || "bg-teal-600 text-white shadow-sm border-teal-500 scale-105 z-10")
+              : (_tabIna[tab.color] || "bg-teal-50 text-teal-600 hover:bg-teal-100 border-teal-100 dark:bg-teal-900/20 dark:border-teal-900/30")
           )}>
           <Icon size={13}/>
           <span className="hidden sm:inline">{tab.label}</span>
