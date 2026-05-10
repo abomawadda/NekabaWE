@@ -6,7 +6,6 @@ import { FirebaseProvider } from "./providers/FirebaseProvider";
 import { AlertProvider } from "./providers/AlertProvider";
 import { AuthProvider } from "./providers/AuthProvider";
 import ArabicTextRepairProvider from "./providers/ArabicTextRepairProvider";
-import LogoBanner from "../ui/LogoBanner";
 
 // 🎯 استيراد المزود العالمي الجديد للبطاقة المنبثقة
 import { GlobalEmployeeModalProvider } from "./providers/GlobalEmployeeModal";
@@ -16,9 +15,6 @@ export default function App() {
     <ThemeProvider>
       <FirebaseProvider>
         <AlertProvider>
-          {/* 🎯 Logo Banner at the top */}
-          <LogoBanner />
-          
           {/* 🎯 تغليف التطبيق بالمزود العالمي هنا */}
           <AuthProvider>
             <BrowserRouter>
