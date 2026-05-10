@@ -2,7 +2,6 @@ export const ORG_REPORT_TITLE = "النقابة العامة للعاملين ب
 export const ORG_REPORT_SUBTITLE = "أمانة الصندوق";
 export const ORG_SYSTEM_TITLE = "المنظومة الإدارية والمالية للنقابة العامة بالدقهلية";
 export const ORG_IMPLEMENTATION_CREDIT = "إعداد وتنفيذ أ/ محمود العراقي";
-export const ORG_RIGHT_LOGO_URL = "/brand-right-we.svg";
 export const ORG_LEFT_LOGO_URL = "/brand-left.png";
 export const WE_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/0/0f/We_logo.svg";
 
@@ -34,7 +33,7 @@ export const getPrintBrandStyles = () => `
 export const getPrintBrandHeader = ({ reportTitle = "", reportMeta = "" } = {}) => `
   ${getPrintFrameHtml({ watermark: reportTitle || ORG_REPORT_TITLE })}
   <div class="brand-header">
-    <div class="brand-logo-wrap"><img src="${ORG_RIGHT_LOGO_URL}" alt="logo-right" class="brand-logo"/></div>
+    <div class="brand-logo-wrap"><img src="${WE_LOGO_URL}" alt="we-logo" class="brand-logo"/></div>
     <div class="brand-center">
       <div class="brand-title">${ORG_REPORT_TITLE}</div>
       <div class="brand-subtitle">${ORG_REPORT_SUBTITLE}</div>
