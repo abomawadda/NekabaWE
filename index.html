@@ -5,8 +5,28 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>nekaba_system</title>
+    <!-- Logo Banner -->
+    <style>
+      #logo-banner {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 1rem;
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        border-bottom: 2px solid #0284c7;
+        min-height: 60px;
+      }
+      #logo-banner img {
+        max-height: 50px;
+        width: auto;
+      }
+    </style>
   </head>
   <body>
+    <!-- Logo Banner -->
+    <div id="logo-banner">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/0/0f/We_logo.svg" alt="We Logo" />
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
