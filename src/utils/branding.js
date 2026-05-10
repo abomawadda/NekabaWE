@@ -18,8 +18,6 @@ export const getPrintBrandStyles = () => `
 .brand-subtitle{font-size:11px;font-weight:800;color:#0f766e;margin-top:2px}
 .brand-report-title{font-size:14px;font-weight:900;color:#0f766e;margin-top:6px;line-height:1.25}
 .brand-report-meta{font-size:9px;color:#64748b;font-weight:700;margin-top:4px;line-height:1.5}
-.we-logo-banner{display:flex;justify-content:center;align-items:center;padding:8px;margin-bottom:12px;border-bottom:2px solid #0284c7}
-.we-logo-banner img{max-height:50px;width:auto}
 .print-watermark{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:0}
 .print-watermark span{font-size:68px;font-weight:900;color:rgba(15,118,110,.045);transform:rotate(-28deg);white-space:nowrap;letter-spacing:.04em}
 .print-footer{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 12mm 0;border-top:1px solid #cbd5e1;background:#fff;color:#4[...]
@@ -28,7 +26,6 @@ export const getPrintBrandStyles = () => `
 @media print{
   .brand-header{break-inside:avoid;page-break-inside:avoid}
   .brand-logo{print-color-adjust:exact;-webkit-print-color-adjust:exact}
-  .we-logo-banner{print-color-adjust:exact;-webkit-print-color-adjust:exact;break-inside:avoid}
   .print-footer,.print-watermark{print-color-adjust:exact;-webkit-print-color-adjust:exact}
   .page-counter::before{content:"صفحة " counter(page)}
 }
@@ -36,7 +33,6 @@ export const getPrintBrandStyles = () => `
 
 export const getPrintBrandHeader = ({ reportTitle = "", reportMeta = "" } = {}) => `
   ${getPrintFrameHtml({ watermark: reportTitle || ORG_REPORT_TITLE })}
-  <div class="we-logo-banner"><img src="${WE_LOGO_URL}" alt="We Logo"/></div>
   <div class="brand-header">
     <div class="brand-logo-wrap"><img src="${ORG_RIGHT_LOGO_URL}" alt="logo-right" class="brand-logo"/></div>
     <div class="brand-center">
