@@ -295,6 +295,7 @@ function TypeSelector({ value, onChange }) {
 // ─────────────────────────────────────────────
 export default function TreasuryForm({
   userRole,
+  canPost = false,
   onSubmit,
   nextCheque,
   initialData,
@@ -302,7 +303,6 @@ export default function TreasuryForm({
   showToast
 }) {
   const T = useT();
-  const isTreasurer = userRole === "treasurer";
   const isEdit = Boolean(initialData?.id);
 
   const location = useLocation();
@@ -339,9 +339,9 @@ export default function TreasuryForm({
       memberSubscriptions: "",
       requires_settlement: getDefaultRequiresSettlement(defaultType),
       attachments: [],
-      state: isTreasurer ? "posted" : "draft",
+      state: canPost ? "posted" : "draft",
     }),
-    [defaultType, nextCheque, isTreasurer]
+    [defaultType, nextCheque, canPost]
   );
 
   const [tx, setTx] = useState(() =>
@@ -555,6 +555,7 @@ export default function TreasuryForm({
           settlementExpenses: isDirectCharge ? [] : (requiresSettlement ? (tx.settlementExpenses || []) : []),
           advanceAmountBase: String(tx.amount).trim(),
           employeeName: finalParty,
+          state: canPost ? "posted" : "draft",
         },
         isEdit
       );

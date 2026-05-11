@@ -150,6 +150,7 @@ export default function TreasuryPage() {
   const canCreateFinancial = can(PERMISSIONS.treasuryCreate);
   const canEditFinancial = can(PERMISSIONS.treasuryEdit);
   const canDeleteFinancial = can(PERMISSIONS.treasuryDelete);
+  const canPost = can(PERMISSIONS.treasuryPost);
   const canMigrateLegacy = can(PERMISSIONS.treasuryMigrate);
   const canViewAttachments = can(PERMISSIONS.attachmentsView);
 
@@ -384,7 +385,11 @@ export default function TreasuryPage() {
         setSelectedTx(null);
       }
     } catch (error) {
-      console.error(error);
+      console.error("=== خطأ في حفظ المعاملة المالية ===");
+      console.error("الرسالة:", error?.message || error);
+      console.error("الكود:", error?.code || "N/A");
+      console.error("البيانات المرسلة:", JSON.stringify(data, (k, v) => (k === "attachments" ? `[${v?.length} items]` : v), 2));
+      console.error("التفاصيل الكاملة:", error);
       showToast("حدث خطأ أثناء الحفظ، يرجى المحاولة مرة أخرى", "error");
       throw error;
     }
@@ -535,6 +540,7 @@ export default function TreasuryPage() {
       {showForm ? (
         <TreasuryForm
           userRole={userRole}
+          canPost={canPost}
           onSubmit={handleSave}
           nextCheque={nextCheque}
           initialData={selectedTx}
