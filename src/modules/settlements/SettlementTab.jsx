@@ -10,7 +10,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { collection, query, onSnapshot, doc, setDoc, orderBy, writeBatch, where } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
-import FileUpload from "../treasury/FileUpload"; 
+import FileUpload from "../treasury/FileUpload";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
@@ -250,7 +250,7 @@ const printSettlementLocal = ({
   const invoicesTotalInWords = tafqeet(INVOICES_TOTAL);
   const totalBudgetInWords = tafqeet(TOTAL_AVAILABLE);
 
-  const rowsHtml = expenses?.length > 0 
+  const rowsHtml = expenses?.length > 0
     ? expenses.map((e, i) => `<tr><td style="text-align:center">${i + 1}</td><td style="text-align:center">${e.date}</td><td style="color:#0f766e">${e.category}</td><td>${e.notes || "—"}</td><td style="text-align:left; font-weight:900">${formatMoney(e.amount)}</td></tr>`).join("")
     : `<tr><td colspan="5" style="text-align:center; padding:30px; color:#94a3b8;">لم يتم إدراج فواتير</td></tr>`;
 
@@ -275,8 +275,8 @@ const printSettlementLocal = ({
             </thead>
             <tbody>
               ${groupedChecks
-                .map(
-                  (check, index) => `
+        .map(
+          (check, index) => `
                     <tr>
                       <td style="text-align:center">${index + 1}</td>
                       <td style="text-align:center">${check.date || "-"}</td>
@@ -284,8 +284,8 @@ const printSettlementLocal = ({
                       <td>${check.party || "-"}</td>
                       <td style="text-align:left; font-weight:900">${formatMoney(check.amount || 0)}</td>
                     </tr>`
-                )
-                .join("")}
+        )
+        .join("")}
             </tbody>
           </table>
         </div>
@@ -294,13 +294,12 @@ const printSettlementLocal = ({
 
   const settlementFooter =
     remaining > 0
-      ? `يوجد مبلغ متبقٍ قدره (${formatMoney(remaining)}) — ${
-          returnMode === "bank_deposit"
-            ? `تم إيداعه بالبنك${bankDepositDate ? ` بتاريخ ${bankDepositDate}` : ""}${bankDepositReference ? ` بموجب المرجع ${bankDepositReference}` : ""}.`
-            : returnMode === "cash_return"
-              ? "تم توريده نقداً لخزينة النقابة بموجب إيصال."
-              : "تم ترحيله كـ 'رصيد دائن' ليُخصم من السلفة القادمة."
-        }`
+      ? `يوجد مبلغ متبقٍ قدره (${formatMoney(remaining)}) — ${returnMode === "bank_deposit"
+        ? `تم إيداعه بالبنك${bankDepositDate ? ` بتاريخ ${bankDepositDate}` : ""}${bankDepositReference ? ` بموجب المرجع ${bankDepositReference}` : ""}.`
+        : returnMode === "cash_return"
+          ? "تم توريده نقداً لخزينة النقابة بموجب إيصال."
+          : "تم ترحيله كـ 'رصيد دائن' ليُخصم من السلفة القادمة."
+      }`
       : remaining < 0
         ? `يوجد تجاوز في الصرف قدره (${formatMoney(Math.abs(remaining))}) — يُصرف للموظف.`
         : `تم تسوية العهدة بالكامل (صفر).`;
@@ -373,7 +372,7 @@ function InlineDynamicSelect({ label, value, onChange, icon: Icon, defaultOption
       {label && <label className="text-[10px] font-black text-slate-500 uppercase pr-1">{label}</label>}
       <div className="flex items-center gap-2">
         <div className="relative group flex-1">
-          {Icon && <Icon size={14} className="absolute right-3 top-2.5 text-slate-400 z-10 pointer-events-none"/>}
+          {Icon && <Icon size={14} className="absolute right-3 top-2.5 text-slate-400 z-10 pointer-events-none" />}
           <select value={value} onChange={e => onChange(e.target.value)} className={clsx("w-full px-3 py-2 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-teal-500 transition-all h-[38px] appearance-none", Icon ? "pr-9" : "pr-3", T.sel)}>
             <option value="">-- اختر التصنيف --</option>
             {options.map(o => <option key={o} value={o}>{o}</option>)}
@@ -384,8 +383,8 @@ function InlineDynamicSelect({ label, value, onChange, icon: Icon, defaultOption
       {isAdding && (
         <div className={clsx("absolute top-full right-0 w-full mt-1 p-2 rounded-xl shadow-xl border flex items-center gap-2 z-[200] animate-in fade-in zoom-in-95", T.card)}>
           <input autoFocus type="text" value={newVal} onChange={e => setNewVal(e.target.value)} placeholder="اسم البند الجديد..." className={clsx("flex-1 px-3 py-1.5 text-xs font-bold rounded-lg border outline-none", T.inp)} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
-          <button type="button" onClick={handleAdd} className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 shadow-sm"><Check size={14}/></button>
-          <button type="button" onClick={() => setIsAdding(false)} className="p-2 bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300 rounded-lg hover:bg-rose-500 hover:text-white"><X size={14}/></button>
+          <button type="button" onClick={handleAdd} className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 shadow-sm"><Check size={14} /></button>
+          <button type="button" onClick={() => setIsAdding(false)} className="p-2 bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300 rounded-lg hover:bg-rose-500 hover:text-white"><X size={14} /></button>
         </div>
       )}
     </div>
@@ -415,27 +414,6 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
       const now = new Date().toISOString();
       const targetId = record.targetDocId || record.id;
       const batch = writeBatch(db);
-
-      // · حقل · القيمة بعد المسح
-      // ─────────────────────────────────────────
-      // isSettled          → false
-      // hasDraftSettlement → false
-      // settlementStatus   → "open"
-      // settlement_mode    → حسب النوع
-      // settlementExpenses → [] (محذوفة)
-      // settlementSpent    → 0
-      // settlementReturned → 0
-      // settlementDate     → ""
-      // settlementApprovedAt, CompletedAt, ClosedAt, Finalized → كلها محذوفة
-      // returnMode         → "carry_forward"
-      // returnedActually   → false
-      // returnedCashAmount, bankDepositedAmount, bankDepositDate, bankDepositReference → 0/""
-      // settlementGroupId, LeaderId, MemberIds, Follower → محذوفة
-      // settlement_state   → "open"
-      // settlementDraft    → false
-      // prevBalanceUsed    → 0
-      // collectedSubscriptions → 0
-      // state (إذا كان wrong) → "posted"
 
       const nowStr = now;
       const nukePayload = {
@@ -489,10 +467,8 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
         nukePayload.settlement_mode = "check_only";
       }
 
-      // الكتابة على issued_checks — بدون merge! نكتب الحقول كاملة
       batch.set(doc(db, "issued_checks", targetId), nukePayload, { merge: true });
 
-      // إذا المصدر transactions قديم — نمسح التسوية منه أيضاً
       if (record.source.includes("transactions") && record.key && record.key !== targetId) {
         batch.set(doc(db, "transactions", record.key), {
           isSettled: false,
@@ -505,7 +481,6 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
 
       await batch.commit();
 
-      // تسجيل في audit log
       try {
         await logAuditEvent("diagnostic_nuke_reset", {
           checkId: targetId,
@@ -515,7 +490,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
           type: record.type,
           reason: record.reason,
         });
-      } catch (_) {}
+      } catch (_) { }
 
       showDToast(`تم حذف كل التسويات وإعادة ${record.party || targetId} مفتوحاً`, "success");
     } catch (err) {
@@ -527,7 +502,6 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
     }
   };
 
-  // 🛠️ إصلاح الحالة → posted
   const handleFixState = async (record) => {
     setActionLoading(prev => ({ ...prev, [record.id]: true }));
     try {
@@ -548,7 +522,6 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
     }
   };
 
-  // 🛠️ تفعيل التسوية
   const handleEnableSettlement = async (record) => {
     setActionLoading(prev => ({ ...prev, [record.id]: true }));
     try {
@@ -557,7 +530,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
         requires_settlement: true,
         requiresSettlement: true,
         settlement_mode: record.type === "advance" ? "carry_forward" :
-                         record.type === "trip" ? "check_plus_subscriptions" : "check_only",
+          record.type === "trip" ? "check_plus_subscriptions" : "check_only",
         updatedAt: new Date().toISOString(),
       }, { merge: true });
       await logAuditEvent("diagnostic_enable_settlement", {
@@ -643,7 +616,6 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
       return { category, reason, inSettled, inDraft, inOpen, inAny, key };
     };
 
-    // Process issued_checks — targetDocId = id نفسه (معرف Firestore الفعلي)
     issuedChecks.forEach(tx => {
       const c = classify(tx, "issued_checks");
       allRecords.push({
@@ -659,7 +631,6 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
       });
     });
 
-    // Process legacy transactions — targetDocId = legact_tx_{id}
     legacyTransactions.forEach(tx => {
       if (!isLegacyCheckType(tx.type)) return;
       const alreadyMigrated = isLegacyCheckMigrated(tx, issuedChecks);
@@ -708,7 +679,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
       {/* header */}
       <div className="p-4 border-b bg-rose-50/50 dark:bg-rose-900/10">
         <h3 className="font-black text-[11px] uppercase tracking-widest flex items-center gap-2 mb-3">
-          <AlertCircle size={14} className="text-rose-600"/>
+          <AlertCircle size={14} className="text-rose-600" />
           تشخيص الشيكات — تحليل الظهور والتصنيف
         </h3>
         <div className="flex flex-wrap gap-4 text-[10px] font-black">
@@ -726,7 +697,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
       {/* filters */}
       <div className="p-3 border-b flex flex-wrap gap-2 items-center bg-slate-50/50 dark:bg-slate-900/20">
         <div className="relative">
-          <Search size={13} className="absolute right-3 top-2.5 text-slate-400"/>
+          <Search size={13} className="absolute right-3 top-2.5 text-slate-400" />
           <input type="text" value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="بحث..." className={clsx("pr-9 pl-4 py-2 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 w-48", TY.inp)} />
         </div>
         <select value={filterType} onChange={e => setFilterType(e.target.value)} className={clsx("px-3 py-2 rounded-xl border text-[11px] font-bold outline-none", TY.sel)}>
@@ -751,7 +722,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
         <table className="w-full text-right text-[10px]">
           <thead className="bg-slate-100/80 dark:bg-slate-800/50 border-b-2 border-slate-200 dark:border-slate-700 sticky top-0 z-10">
             <tr>
-              {["المسؤول","النوع","رقم الشيك","التاريخ","المبلغ","المصدر","الحالة","التصنيف","سبب التصنيف","الإجراءات"].map((h, i) => (
+              {["المسؤول", "النوع", "رقم الشيك", "التاريخ", "المبلغ", "المصدر", "الحالة", "التصنيف", "سبب التصنيف", "الإجراءات"].map((h, i) => (
                 <th key={i} className="p-2 font-black text-slate-500 uppercase whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -762,13 +733,13 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
             ) : visible.map((r, idx) => {
               const catBg = r.category === "مسوى" ? "bg-teal-50 dark:bg-teal-900/10" :
                 r.category === "مسودة" ? "bg-amber-50 dark:bg-amber-900/10" :
-                r.category === "مفتوح" ? "bg-blue-50 dark:bg-blue-900/10" :
-                r.category === "مفقود" ? "bg-red-50 dark:bg-red-900/10" : "";
+                  r.category === "مفتوح" ? "bg-blue-50 dark:bg-blue-900/10" :
+                    r.category === "مفقود" ? "bg-red-50 dark:bg-red-900/10" : "";
               const catColor = r.category === "مسوى" ? "text-teal-700 dark:text-teal-300 bg-teal-100 dark:bg-teal-900/30" :
                 r.category === "مسودة" ? "text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30" :
-                r.category === "مفتوح" ? "text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/30" :
-                r.category === "مفقود" ? "text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/30 animate-pulse" :
-                "text-slate-500 bg-slate-100 dark:bg-slate-800";
+                  r.category === "مفتوح" ? "text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/30" :
+                    r.category === "مفقود" ? "text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/30 animate-pulse" :
+                      "text-slate-500 bg-slate-100 dark:bg-slate-800";
               return (
                 <tr key={`${r.id}-${r.source}-${idx}`} className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors ${catBg}`}>
                   <td className="p-2 font-black text-slate-800 dark:text-slate-100 whitespace-nowrap">{r.party || "—"}</td>
@@ -793,7 +764,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
                   <td className="p-2 text-left whitespace-nowrap">
                     {actionLoading[r.id] ? (
                       <span className="text-[9px] text-slate-400">جاري...</span>
-                    ) : r.source === "issued_checks" && ["مسوى","مسودة","مفقود","مستبعد"].includes(r.category) ? (
+                    ) : r.source === "issued_checks" && ["مسوى", "مسودة", "مفقود", "مستبعد"].includes(r.category) ? (
                       <button
                         onClick={() => setConfirmReset(r)}
                         className={clsx("px-2 py-1 text-white rounded-lg text-[9px] font-black transition-all active:scale-95", r.category === "مسوى" ? "bg-red-500 hover:bg-red-600" : "bg-red-500 hover:bg-red-600")}
@@ -836,7 +807,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setConfirmReset(null)}>
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-4">
-              <AlertTriangle size={20} className="text-red-500 shrink-0"/>
+              <AlertTriangle size={20} className="text-red-500 shrink-0" />
               <h3 className="font-black text-[13px]">تأكيد إعادة تعيين الشيك</h3>
             </div>
             <div className="space-y-2 text-[11px] font-bold mb-5">
@@ -852,7 +823,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
             <div className="flex gap-2 justify-end">
               <button onClick={() => setConfirmReset(null)} className="px-4 py-2 rounded-xl border text-[11px] font-black text-slate-600 hover:bg-slate-50 transition-colors">إلغاء</button>
               <button onClick={() => handleResetCheck(confirmReset)} className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-[11px] font-black transition-all active:scale-95 flex items-center gap-2">
-                <RotateCcw size={14}/> تأكيد إعادة التعيين
+                <RotateCcw size={14} /> تأكيد إعادة التعيين
               </button>
             </div>
           </div>
@@ -871,52 +842,52 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
 
 export default function SettlementTab() {
   const T = useT();
-  const [activeTab,     setActiveTab]     = useState("current");
-  const [issuedChecks,  setIssuedChecks]  = useState([]);
+  const [activeTab, setActiveTab] = useState("current");
+  const [issuedChecks, setIssuedChecks] = useState([]);
   const [legacyTransactions, setLegacyTransactions] = useState([]);
-  const [employees,     setEmployees]     = useState([]);
-  const [boardTerms,    setBoardTerms]    = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [boardTerms, setBoardTerms] = useState([]);
   const [boardMemberships, setBoardMemberships] = useState([]);
   const [boardMeetings, setBoardMeetings] = useState([]);
-  const [loading,       setLoading]       = useState(true);
-  const [toast,         setToast]         = useState(null);
-  
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState(null);
+
   const [settlementSelectionMode, setSettlementSelectionMode] = useState("single");
-  const [selAdvId,      setSelAdvId]      = useState("");
+  const [selAdvId, setSelAdvId] = useState("");
   const [selectedBatchIds, setSelectedBatchIds] = useState([]);
-  const [settlementDate,setSettlementDate]= useState(getTodayISO());
-  const [expenses,      setExpenses]      = useState([]);
+  const [settlementDate, setSettlementDate] = useState(getTodayISO());
+  const [expenses, setExpenses] = useState([]);
   const [returnedActually, setReturnedActually] = useState(false);
   const [returnMode, setReturnMode] = useState("carry_forward");
   const [returnDepositDate, setReturnDepositDate] = useState(getTodayISO());
   const [returnDepositReference, setReturnDepositReference] = useState("");
-  const [saving,        setSaving]        = useState(false);
+  const [saving, setSaving] = useState(false);
   const [archiveSearch, setArchiveSearch] = useState("");
-  const [archiveMonth,  setArchiveMonth]  = useState("all");
-  const [archiveYear,   setArchiveYear]   = useState("all");
-  
+  const [archiveMonth, setArchiveMonth] = useState("all");
+  const [archiveYear, setArchiveYear] = useState("all");
+
   // 🎯 الميزانية الإضافية للفاعليات (الاشتراكات المحصلة)
   const [collectedSubs, setCollectedSubs] = useState("");
-  
+
   const [confirmModalData, setConfirmModalData] = useState(null);
-  const [expenseToDelete,  setExpenseToDelete]  = useState(null); 
+  const [expenseToDelete, setExpenseToDelete] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
   const [editingSettlementId, setEditingSettlementId] = useState("");
   const [settlementToDelete, setSettlementToDelete] = useState(null);
-  
+
   // 🔄 حالات الاسترجاع والاسترداد
   const [recoveryModalData, setRecoveryModalData] = useState(null);
   const [recoveryReason, setRecoveryReason] = useState("");
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [showRecoveryConfirm, setShowRecoveryConfirm] = useState(false);
   const [discardDraftId, setDiscardDraftId] = useState(null);
-  
-  const [expAmt,        setExpAmt]        = useState("");
-  const [expCat,        setExpCat]        = useState(INITIAL_CATS[0]);
-  const [expNotes,      setExpNotes]      = useState("");
-  const [expDate,       setExpDate]       = useState(getTodayISO());
-  const [expFiles,      setExpFiles]      = useState([]);
-  const [expMeetingId,  setExpMeetingId]  = useState("");
+
+  const [expAmt, setExpAmt] = useState("");
+  const [expCat, setExpCat] = useState(INITIAL_CATS[0]);
+  const [expNotes, setExpNotes] = useState("");
+  const [expDate, setExpDate] = useState(getTodayISO());
+  const [expFiles, setExpFiles] = useState([]);
+  const [expMeetingId, setExpMeetingId] = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
   const lastLoadedSelectionKeyRef = useRef("");
 
@@ -1073,33 +1044,42 @@ export default function SettlementTab() {
     const targetId = getIssuedCheckDocId(tx);
     const isLegacySource = isLegacyCheckType(tx?.type) && !tx?.legacySourceId && tx?.sourceCollection !== "issued_checks";
 
-    return {
+    const rawRecord = {
       ...tx,
-      ...overrides,
-      id: targetId,
-      type: normalizedType,
-      party: getIssuedCheckDisplayParty(tx),
-      requires_settlement: requiresSettlement,
-      requiresSettlement,
+      id: targetId || "",
+      type: normalizedType || "",
+      party: getIssuedCheckDisplayParty(tx) || "",
+      requires_settlement: requiresSettlement ?? true,
+      requiresSettlement: requiresSettlement ?? true,
       settlement_mode:
         tx?.settlement_mode ||
         tx?.settlementMode ||
         getSettlementMode(
           normalizedType,
           requiresSettlement ?? getDefaultRequiresSettlement(normalizedType)
-        ),
+        ) || "",
       updatedAt: now,
       createdAt: tx?.createdAt || now,
       state: tx?.state || "posted",
-      legacySourceId: tx?.legacySourceId || (isLegacySource ? tx.id : tx?.legacySourceId),
+      legacySourceId: tx?.legacySourceId || (isLegacySource ? tx.id : ""),
       sourceTransactionId:
-        tx?.sourceTransactionId || (isLegacySource ? tx.id : tx?.sourceTransactionId),
+        tx?.sourceTransactionId || (isLegacySource ? tx.id : ""),
       legacySourceCollection:
-        tx?.legacySourceCollection || (isLegacySource ? "transactions" : tx?.legacySourceCollection),
+        tx?.legacySourceCollection || (isLegacySource ? "transactions" : ""),
       migratedFromLegacy: Boolean(tx?.migratedFromLegacy || isLegacySource),
       originalLegacyType:
-        tx?.originalLegacyType || (isLegacySource ? tx.type : tx?.originalLegacyType),
+        tx?.originalLegacyType || (isLegacySource ? tx.type : ""),
+      ...overrides,
     };
+
+    // إزالة أي قيمة undefined لتفادي توقف Firebase
+    Object.keys(rawRecord).forEach(key => {
+      if (rawRecord[key] === undefined) {
+        delete rawRecord[key];
+      }
+    });
+
+    return rawRecord;
   };
 
   const showToast = (msg, type = "success") => {
@@ -1306,7 +1286,7 @@ export default function SettlementTab() {
         return String(getSettlementApprovalDate(b)).localeCompare(String(getSettlementApprovalDate(a)));
       });
   }, [archivedSettlements, archiveMonth, archiveSearch, archiveYear]);
-  
+
   const getPrevBalance = useCallback((empId, currentTxnId, currentTxn = null) => {
     if (!empId) return 0;
     const currentChequeDateTimestamp = getDateTimestamp(getSettlementChequeDate(currentTxn || {}));
@@ -1434,14 +1414,14 @@ export default function SettlementTab() {
   const editingExpenseAmount = Number(editingExpense?.amount || 0);
 
   const toggleBatchTransaction = useCallback((tx) => {
-    const nextId = toEntityId(tx?.id);
+    const nextId = toEntityId(getIssuedCheckDocId(tx) || tx?.id);
     if (!nextId) return;
     setSelectedBatchIds((prev) => {
       const normalizedPrev = prev.map((id) => toEntityId(id)).filter(Boolean);
       if (normalizedPrev.includes(nextId)) return normalizedPrev.filter((id) => id !== nextId);
       if (normalizedPrev.length === 0) return [...normalizedPrev, nextId];
 
-      const anchor = currentTxnOptions.find((item) => toEntityId(item.id) === normalizedPrev[0]) || null;
+      const anchor = currentTxnOptions.find((item) => toEntityId(getIssuedCheckDocId(item) || item.id) === normalizedPrev[0]) || null;
       const sameEmployee = String(anchor?.employeeId || anchor?.party || "") === String(tx.employeeId || tx.party || "");
       const sameMode = String(anchor?.settlement_mode || anchor?.settlementMode || "") === String(tx?.settlement_mode || tx?.settlementMode || "");
       if (!sameEmployee || !sameMode) return normalizedPrev;
@@ -1543,16 +1523,16 @@ export default function SettlementTab() {
   const settlementMode = settlementSelectionMode === "batch"
     ? (activeSettlementTxn?.settlement_mode || "none")
     : (selectedTxn?.settlement_mode || "none");
-  const ADVANCE_AMT    = activeSelectionTransactions.reduce((sum, tx) => sum + Number(tx?.advanceAmountBase || tx?.amount || 0), 0);
-  const PREV_BALANCE   = activeSelectionTransactions.reduce(
+  const ADVANCE_AMT = activeSelectionTransactions.reduce((sum, tx) => sum + Number(tx?.advanceAmountBase || tx?.amount || 0), 0);
+  const PREV_BALANCE = activeSelectionTransactions.reduce(
     (sum, tx) => sum + ((tx?.settlement_mode || tx?.settlementMode) === "carry_forward" ? Number(tx?.prevBalance || 0) : 0),
     0
   );
-  const SUBS_AMT       = settlementMode === "check_plus_subscriptions" ? Number(collectedSubs || 0) : 0;
-  const TOTAL_AVAILABLE= ADVANCE_AMT + PREV_BALANCE + SUBS_AMT;
-  
-  const spent          = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  const remaining      = TOTAL_AVAILABLE - spent;
+  const SUBS_AMT = settlementMode === "check_plus_subscriptions" ? Number(collectedSubs || 0) : 0;
+  const TOTAL_AVAILABLE = ADVANCE_AMT + PREV_BALANCE + SUBS_AMT;
+
+  const spent = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const remaining = TOTAL_AVAILABLE - spent;
   const availableForExpense = remaining + editingExpenseAmount;
   const activeSelectionKey = useMemo(() => {
     const activeTxnId = toEntityId(getIssuedCheckDocId(activeSettlementTxn) || activeSettlementTxn?.id);
@@ -1621,37 +1601,37 @@ export default function SettlementTab() {
   const addExpense = () => {
     if (editingExpense) {
       const normalizedMemberIds = toEntityIdList(selectedMembers);
-      if (!expAmt || Number(expAmt) <= 0) return showToast("ط£ط¯ط®ظ„ ظ…ط¨ظ„ط؛ط§ظ‹ طµط­ظٹط­ط§ظ‹", "error");
-      if (Number(expAmt) > availableForExpense) return showToast(`طھط¬ط§ظˆط²طھ ط§ظ„ظ…طھط§ط­! (${formatMoney(availableForExpense || 0)})`, "error");
-      if (isMeetingAllowanceCategory(expCat) && !selectedMeeting) return showToast("ط§ط®طھط± ط§ظ„ط§ط¬طھظ…ط§ط¹ ط£ظˆظ„ط§ظ‹", "error");
-      if (isBoardAllowanceCategory(expCat) && selectedMembers.length === 0) return showToast("ط§ط®طھط± ط¹ط¶ظˆ ظ…ط¬ظ„ط³ ظˆط§ط­ط¯ ط¹ظ„ظ‰ ط§ظ„ط£ظ‚ظ„", "error");
+      if (!expAmt || Number(expAmt) <= 0) return showToast("أدخل مبلغاً صحيحاً", "error");
+      if (Number(expAmt) > availableForExpense) return showToast(`تجاوزت المتاح! (${formatMoney(availableForExpense || 0)})`, "error");
+      if (isMeetingAllowanceCategory(expCat) && !selectedMeeting) return showToast("اختر الاجتماع أولاً", "error");
+      if (isBoardAllowanceCategory(expCat) && selectedMembers.length === 0) return showToast("اختر عضو مجلس واحد على الأقل", "error");
       if (isMeetingAllowanceCategory(expCat) && blockedMeetingIdsByType[getMeetingAllowanceType(expCat)].has(String(selectedMeeting?.id || "").trim())) {
-        return showToast(`طھظ… طµط±ظپ ${ALLOWANCE_TYPE_LABELS[getMeetingAllowanceType(expCat)] || expCat} ظ„ظ‡ط°ط§ ط§ظ„ط§ط¬طھظ…ط§ط¹ ط¨ط§ظ„ظپط¹ظ„`, "error");
+        return showToast(`تم صرف ${ALLOWANCE_TYPE_LABELS[getMeetingAllowanceType(expCat)] || expCat} لهذا الاجتماع بالفعل`, "error");
       }
 
       setExpenses(prev => prev.map(expense => (
         expense.id === editingExpense.id
           ? {
-              ...expense,
-              date: isMeetingAllowanceCategory(expCat) ? (expDate || selectedMeeting?.date || getTodayISO()) : expDate,
-              amount: expAmt,
-              category: expCat,
-              notes: expNotes,
-              meetingId: isMeetingAllowanceCategory(expCat) ? toEntityId(selectedMeeting?.id) : "",
-              meetingTitle: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.title || "" : "",
-              boardMembers: isBoardAllowanceCategory(expCat) ? normalizedMemberIds : [],
-              boardMemberSnapshots: isBoardAllowanceCategory(expCat)
-                ? buildExpenseBoardMemberSnapshots(normalizedMemberIds)
-                : [],
-              allowancePerMember: isBoardAllowanceCategory(expCat) && normalizedMemberIds.length > 0
-                ? Number(expAmt) / normalizedMemberIds.length
-                : 0,
-              files: expFiles
-            }
+            ...expense,
+            date: isMeetingAllowanceCategory(expCat) ? (expDate || selectedMeeting?.date || getTodayISO()) : expDate,
+            amount: expAmt,
+            category: expCat,
+            notes: expNotes,
+            meetingId: isMeetingAllowanceCategory(expCat) ? toEntityId(selectedMeeting?.id) : "",
+            meetingTitle: isMeetingAllowanceCategory(expCat) ? selectedMeeting?.title || "" : "",
+            boardMembers: isBoardAllowanceCategory(expCat) ? normalizedMemberIds : [],
+            boardMemberSnapshots: isBoardAllowanceCategory(expCat)
+              ? buildExpenseBoardMemberSnapshots(normalizedMemberIds)
+              : [],
+            allowancePerMember: isBoardAllowanceCategory(expCat) && normalizedMemberIds.length > 0
+              ? Number(expAmt) / normalizedMemberIds.length
+              : 0,
+            files: expFiles
+          }
           : expense
       )));
       resetExpenseForm();
-      showToast("طھظ… ط­ظپط¸ طھط¹ط¯ظٹظ„ ط¨ظ†ط¯ ط§ظ„ظ…طµط±ظˆظپ", "success");
+      showToast("تم حفظ تعديل بند المصروف", "success");
       return;
     }
     if (!expAmt || Number(expAmt) <= 0) return showToast("أدخل مبلغاً صحيحاً", "error");
@@ -1864,15 +1844,17 @@ export default function SettlementTab() {
           .filter(Boolean);
         activeSelectionTransactions.forEach((tx, index) => {
           const txId = getIssuedCheckDocId(tx);
+          if (!txId) return; // 🔴 تأمين إضافي لمنع تمرير ID فارغ
           const isLeader = index === 0;
           batch.set(
             doc(db, "issued_checks", txId),
             buildIssuedCheckRecord(tx, {
               isSettled: false,
+              state: "posted",
               settlementExpenses: isLeader ? expenses : [],
               collectedSubscriptions: isLeader ? SUBS_AMT : Number(tx?.collectedSubscriptions || tx?.memberSubscriptions || 0),
               advanceAmountBase: Number(tx?.advanceAmountBase || tx?.amount || 0),
-              settlementGroupId: `group_${txId}`,
+              settlementGroupId: `group_${groupedTxnIds[0]}`,
               settlementGroupLeaderId: groupedTxnIds[0],
               settlementGroupMemberIds: groupedTxnIds,
               settlementGroupCount: groupedTxnIds.length,
@@ -1899,10 +1881,12 @@ export default function SettlementTab() {
         });
       } else {
         const targetId = getIssuedCheckDocId(activeSettlementTxn);
+        if (!targetId) throw new Error("Missing target ID");
         await setDoc(
           doc(db, "issued_checks", targetId),
           buildIssuedCheckRecord(activeSettlementTxn, {
             isSettled: false,
+            state: "posted",
             settlementExpenses: expenses,
             collectedSubscriptions: SUBS_AMT,
           }),
@@ -1922,6 +1906,7 @@ export default function SettlementTab() {
       showToast("حدث خطأ أثناء الحفظ المؤقت", "error");
     } finally { setSaving(false); }
   };
+
   const continueDraft = (draft) => {
     const isBatchDraft = Boolean(
       Array.isArray(draft?.settlementGroupMemberIds) && draft.settlementGroupMemberIds.length > 1
@@ -1941,21 +1926,21 @@ export default function SettlementTab() {
   const openConfirmModal = () => {
     const groupedTxnIdsForModal = settlementSelectionMode === "batch"
       ? Array.from(
-          new Set(
-            [
-              ...activeSelectionTransactions.map((tx) => getIssuedCheckDocId(tx)),
-              ...(Array.isArray(activeSettlementTxn?.settlementGroupMemberIds)
-                ? activeSettlementTxn.settlementGroupMemberIds
-                : []),
-            ]
-              .map((id) => String(id || "").trim())
-              .filter(Boolean)
-          )
+        new Set(
+          [
+            ...activeSelectionTransactions.map((tx) => getIssuedCheckDocId(tx)),
+            ...(Array.isArray(activeSettlementTxn?.settlementGroupMemberIds)
+              ? activeSettlementTxn.settlementGroupMemberIds
+              : []),
+          ]
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
         )
+      )
       : activeSelectionTransactions
-          .map((tx) => getIssuedCheckDocId(tx))
-          .map((id) => String(id || "").trim())
-          .filter(Boolean);
+        .map((tx) => getIssuedCheckDocId(tx))
+        .map((id) => String(id || "").trim())
+        .filter(Boolean);
 
     if (settlementSelectionMode === "batch" && groupedTxnIdsForModal.length < 2) {
       return showToast("اختر شيكين أو أكثر من نفس المسؤول ونفس نمط التسوية لاستخدام التسوية المجمعة.", "error");
@@ -1996,7 +1981,7 @@ export default function SettlementTab() {
     if (confirmModalData.remaining > 0 && returnMode === "bank_deposit" && !returnDepositDate) {
       return showToast("حدد تاريخ الإيداع البنكي قبل اعتماد التسوية", "error");
     }
-    
+
     setSaving(true);
     try {
       const batch = writeBatch(db);
@@ -2053,6 +2038,8 @@ export default function SettlementTab() {
 
       activeSelectionTransactions.forEach((tx, index) => {
         const txId = getIssuedCheckDocId(tx);
+        if (!txId) return; // 🔴 تأمين إضافي لمنع تمرير ID فارغ
+
         const isLeader = index === 0;
         batch.set(
           doc(db, "issued_checks", txId),
@@ -2061,7 +2048,8 @@ export default function SettlementTab() {
             hasDraftSettlement: false,
             settlement_state: "settled",
             settlementStatus: "settled",
-            settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate),
+            state: "posted",
+            settlementDate: getLatestSettlementExpenseDate(expenses, settlementDate) || "",
             settlementExpenses: isLeader ? expenses : [],
             settlementSpent: isLeader ? confirmModalData.spent : 0,
             settlementReturned: isLeader ? carryForwardAmount : 0,
@@ -2078,7 +2066,7 @@ export default function SettlementTab() {
             prevBalanceUsed: isLeader ? confirmModalData.prevBalance : Number(tx?.prevBalance || 0),
             advanceAmountBase: Number(tx?.advanceAmountBase || tx?.amount || 0),
             collectedSubscriptions: isLeader ? confirmModalData.collectedSubs : Number(tx?.collectedSubscriptions || tx?.memberSubscriptions || 0),
-            employeeName: confirmModalData.party,
+            employeeName: confirmModalData.party || "",
             settlementGroupId: isBatchSettlement ? `group_${confirmModalData.txnId}` : "",
             settlementGroupLeaderId: isBatchSettlement ? confirmModalData.txnId : "",
             settlementGroupMemberIds: isBatchSettlement ? groupedTxnIds : [],
@@ -2111,7 +2099,7 @@ export default function SettlementTab() {
       });
 
       showToast("تم إغلاق العهدة واعتماد البدلات داخل التسوية بنجاح ✓", "success");
-      
+
       setConfirmModalData(null);
       setEditingSettlementId("");
       setSettlementSelectionMode("single");
@@ -2123,7 +2111,14 @@ export default function SettlementTab() {
       setActiveTab("archive");
 
     } catch (e) {
-      console.error(e);
+      console.error("=== خطأ في اعتماد التسوية ===");
+      console.error("الرسالة:", e?.message || e);
+      console.error("الكود:", e?.code || "N/A");
+      console.error("المعاملة الرئيسية:", confirmModalData?.txnId);
+      console.error("عدد المعاملات:", activeSelectionTransactions?.length);
+      console.error("عدد المصروفات:", expenses?.length);
+      console.error("طريقة الإرجاع:", normalizedReturnMode);
+      console.error("التفاصيل الكاملة:", e);
       showToast("حدث خطأ أثناء الاعتماد", "error");
     } finally { setSaving(false); }
   };
@@ -2133,10 +2128,10 @@ export default function SettlementTab() {
   return (
     <div className={clsx("flex flex-col gap-4 max-w-7xl mx-auto pb-10", T.text)} dir="rtl">
       <BrandHeader sectionTitle="تسوية الشيكات" sectionHint="اعتماد التسويات ومتابعة الأرشيف للشيكات التي تتطلب تسوية" />
-      
+
       {toast && (
         <div className={clsx("fixed top-20 left-1/2 -translate-x-1/2 z-[5000] px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 text-white font-bold animate-in fade-in slide-in-from-top-4", toast.type === "error" ? "bg-rose-600" : "bg-teal-600")}>
-          {toast.type === "error" ? <AlertCircle size={16}/> : <CheckCircle2 size={16}/>}
+          {toast.type === "error" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
           <span className="text-xs">{toast.msg}</span>
         </div>
       )}
@@ -2145,7 +2140,7 @@ export default function SettlementTab() {
         <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
           <div className={clsx("w-full max-w-md p-6 rounded-3xl shadow-2xl border space-y-5 animate-in zoom-in-95", T.card)}>
             <div className="flex items-center gap-3 text-rose-600 border-b border-rose-100 pb-3">
-              <div className="p-2.5 bg-rose-100 rounded-xl"><AlertTriangle size={20}/></div>
+              <div className="p-2.5 bg-rose-100 rounded-xl"><AlertTriangle size={20} /></div>
               <div><h2 className="font-black text-sm">حذف تسوية معتمدة</h2><p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">سيتم إعادة العهدة إلى القائمة المفتوحة</p></div>
             </div>
             <p className="text-xs font-bold leading-relaxed">
@@ -2154,7 +2149,7 @@ export default function SettlementTab() {
             <div className="flex gap-2 pt-2">
               <button onClick={() => setSettlementToDelete(null)} className={clsx("flex-1 py-2.5 rounded-xl font-bold text-xs border shadow-sm", T.btn)}>إلغاء</button>
               <button onClick={executeDeleteSettlement} disabled={saving} className="flex-1 py-2.5 rounded-xl font-black text-xs bg-rose-600 text-white hover:bg-rose-700 shadow-md active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50">
-                {saving ? <Loader2 size={14} className="animate-spin"/> : <Trash2 size={14}/>} حذف التسوية
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} حذف التسوية
               </button>
             </div>
           </div>
@@ -2165,7 +2160,7 @@ export default function SettlementTab() {
         <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
           <div className={clsx("w-full max-w-sm p-6 rounded-3xl shadow-2xl border space-y-5 animate-in zoom-in-95", T.card)}>
             <div className="flex items-center gap-3 text-rose-600 border-b border-rose-100 pb-3">
-              <div className="p-2.5 bg-rose-100 rounded-xl"><AlertTriangle size={20}/></div>
+              <div className="p-2.5 bg-rose-100 rounded-xl"><AlertTriangle size={20} /></div>
               <div><h2 className="font-black text-sm">حذف بند مصروف</h2><p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">إجراء غير قابل للتراجع</p></div>
             </div>
             <p className="text-xs font-bold leading-relaxed">
@@ -2174,7 +2169,7 @@ export default function SettlementTab() {
             <div className="flex gap-2 pt-2">
               <button onClick={() => setExpenseToDelete(null)} className={clsx("flex-1 py-2.5 rounded-xl font-bold text-xs border shadow-sm", T.btn)}>إلغاء</button>
               <button onClick={executeRemoveExpense} className="flex-1 py-2.5 rounded-xl font-black text-xs bg-rose-600 text-white hover:bg-rose-700 shadow-md active:scale-95 flex items-center justify-center gap-2">
-                <Trash2 size={14}/> تأكيد الحذف
+                <Trash2 size={14} /> تأكيد الحذف
               </button>
             </div>
           </div>
@@ -2185,10 +2180,10 @@ export default function SettlementTab() {
         <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
           <div className={clsx("w-full max-w-md p-5 rounded-2xl shadow-2xl border space-y-5 animate-in zoom-in-95", T.card)}>
             <div className="flex items-center gap-3 text-teal-600 border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div className="p-2.5 bg-teal-100 dark:bg-teal-900/30 rounded-xl"><ShieldCheck size={20}/></div>
+              <div className="p-2.5 bg-teal-100 dark:bg-teal-900/30 rounded-xl"><ShieldCheck size={20} /></div>
               <div><h2 className="font-black text-sm">{editingSettlementId ? "تأكيد حفظ تعديلات التسوية" : "تأكيد إغلاق العهدة نهائياً"}</h2><p className="text-[10px] font-bold text-slate-500 uppercase mt-0.5">التاريخ: {settlementDate}</p></div>
             </div>
-            
+
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700"><p className="text-[9px] font-black text-slate-400 mb-1">المتاح الكلي</p><p className="text-xs font-black text-slate-700 dark:text-slate-300">{formatMoney(confirmModalData.totalAvailable || 0)}</p></div>
               <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-800"><p className="text-[9px] font-black text-rose-400 mb-1">المصروف الفعلي</p><p className="text-xs font-black text-rose-600">{formatMoney(confirmModalData.spent || 0)}</p></div>
@@ -2283,7 +2278,7 @@ export default function SettlementTab() {
             <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button onClick={() => setConfirmModalData(null)} className={clsx("flex-1 py-2.5 rounded-xl font-bold text-xs border shadow-sm", T.btn)}>رجوع</button>
               <button onClick={handleFinalSettle} disabled={saving} className="flex-[2] py-2.5 rounded-xl font-black text-xs bg-teal-600 text-white hover:bg-teal-700 flex items-center justify-center gap-2 shadow-md active:scale-95 disabled:opacity-50">
-                {saving ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>} {editingSettlementId ? "حفظ التعديلات" : "اعتماد نهائي وإغلاق"}
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} {editingSettlementId ? "حفظ التعديلات" : "اعتماد نهائي وإغلاق"}
               </button>
             </div>
           </div>
@@ -2293,13 +2288,13 @@ export default function SettlementTab() {
       {/* التبويبات العلوية */}
       <div className="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-xl w-fit shadow-inner">
         <button onClick={() => setActiveTab("current")} className={clsx("px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2", activeTab === "current" ? "bg-white dark:bg-slate-700 shadow-md text-teal-600" : "text-slate-500 hover:text-slate-700")}>
-          <ReceiptText size={14}/> تسوية شيك {openAdvances.length > 0 && <span className="bg-amber-500 text-white text-[9px] rounded-full px-1.5 py-0.5 shadow-sm">{openAdvances.length}</span>}
+          <ReceiptText size={14} /> تسوية شيك {openAdvances.length > 0 && <span className="bg-amber-500 text-white text-[9px] rounded-full px-1.5 py-0.5 shadow-sm">{openAdvances.length}</span>}
         </button>
         <button onClick={() => setActiveTab("archive")} className={clsx("px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2", activeTab === "archive" ? "bg-white dark:bg-slate-700 shadow-md text-teal-600" : "text-slate-500 hover:text-slate-700")}>
-          <History size={14}/> أرشيف التقارير
+          <History size={14} /> أرشيف التقارير
         </button>
         <button onClick={() => setActiveTab("diagnostic")} className={clsx("px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2", activeTab === "diagnostic" ? "bg-white dark:bg-slate-700 shadow-md text-rose-600" : "text-slate-500 hover:text-slate-700")}>
-          <AlertCircle size={14}/> تشخيص
+          <AlertCircle size={14} /> تشخيص
         </button>
       </div>
 
@@ -2350,7 +2345,7 @@ export default function SettlementTab() {
                 ) : (
                   <div className="space-y-2 max-h-44 overflow-y-auto rounded-2xl border border-slate-200 p-2 bg-slate-50/80">
                     {currentTxnOptions.map((tx) => {
-                      const txId = toEntityId(tx.id);
+                      const txId = toEntityId(getIssuedCheckDocId(tx) || tx.id);
                       const sameEmployee =
                         !batchAnchorTxn ||
                         String(batchSelectionConstraint.employeeId) === String(tx.employeeId || tx.party || "");
@@ -2396,8 +2391,8 @@ export default function SettlementTab() {
                   <div className="mt-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-xl space-y-1.5 animate-in fade-in">
                     <label className="text-[9px] font-black text-indigo-700 uppercase">اشتراكات الأعضاء</label>
                     <div className="relative">
-                      <DollarSign size={14} className="absolute right-3 top-2.5 text-indigo-400"/>
-                      <input type="number" value={collectedSubs} onChange={e => setCollectedSubs(e.target.value)} placeholder="مثال: 5000" className={clsx("w-full px-3 py-2 rounded-lg border text-xs font-bold outline-none focus:ring-2 focus:border-indigo-400 h-[38px] bg-white", T.inp)}/>
+                      <DollarSign size={14} className="absolute right-3 top-2.5 text-indigo-400" />
+                      <input type="number" value={collectedSubs} onChange={e => setCollectedSubs(e.target.value)} placeholder="مثال: 5000" className={clsx("w-full px-3 py-2 rounded-lg border text-xs font-bold outline-none focus:ring-2 focus:border-indigo-400 h-[38px] bg-white", T.inp)} />
                     </div>
                   </div>
                 )}
@@ -2405,17 +2400,17 @@ export default function SettlementTab() {
 
               {activeSettlementTxn && (
                 <div className={clsx("flex-1 w-full grid gap-2", settlementMode === "check_plus_subscriptions" ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-3")}>
-                  <FinanceCard label={settlementMode === "carry_forward" ? "أصل السلفة" : "قيمة الشيك"} value={ADVANCE_AMT} color="slate" icon={ArrowDownRight}/>
-                  
+                  <FinanceCard label={settlementMode === "carry_forward" ? "أصل السلفة" : "قيمة الشيك"} value={ADVANCE_AMT} color="slate" icon={ArrowDownRight} />
+
                   {settlementMode === "check_plus_subscriptions" ? (
-                    <FinanceCard label="اشتراكات الأعضاء" value={SUBS_AMT} color="indigo" icon={Plus}/>
+                    <FinanceCard label="اشتراكات الأعضاء" value={SUBS_AMT} color="indigo" icon={Plus} />
                   ) : (
-                    <FinanceCard label="رصيد مرحل" value={PREV_BALANCE} color="amber" icon={History}/>
+                    <FinanceCard label="رصيد مرحل" value={PREV_BALANCE} color="amber" icon={History} />
                   )}
 
                   {/* 🎯 المتبقي الديناميكي */}
-                  <FinanceCard label="إجمالي الميزانية" value={TOTAL_AVAILABLE} color="teal" icon={Wallet} isTotal/>
-                  <FinanceCard label="المتبقي للرد" value={remaining} color={remaining >= 0 ? "emerald" : "rose"} icon={ReceiptText}/>
+                  <FinanceCard label="إجمالي الميزانية" value={TOTAL_AVAILABLE} color="teal" icon={Wallet} isTotal />
+                  <FinanceCard label="المتبقي للرد" value={remaining} color={remaining >= 0 ? "emerald" : "rose"} icon={ReceiptText} />
                 </div>
               )}
             </div>
@@ -2424,16 +2419,16 @@ export default function SettlementTab() {
           {/* ── 2. إدراج الفواتير ── */}
           <div className={clsx("lg:col-span-4 p-4 rounded-2xl border shadow-sm space-y-4 h-fit", T.card, !activeSettlementTxn && "opacity-50 pointer-events-none")}>
             <h3 className="font-black text-xs flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2 text-amber-600">
-              <Plus size={14}/> إدراج فاتورة جديدة
+              <Plus size={14} /> إدراج فاتورة جديدة
             </h3>
-            
+
             <div className="space-y-3">
               <InlineDynamicSelect label="تصنيف المصروف (+ جديد)" defaultOptions={INITIAL_CATS} value={expCat} onChange={setExpCat} icon={Tag} />
-              
+
               {isMeetingAllowanceCategory(expCat) && (
                 <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-xl space-y-2 animate-in fade-in">
                   <label className="text-[10px] font-black text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5">
-                    <FileText size={14}/> اختر الاجتماع المنعقد
+                    <FileText size={14} /> اختر الاجتماع المنعقد
                   </label>
                   <select value={expMeetingId} onChange={e => setExpMeetingId(e.target.value)} className={clsx("w-full px-2 py-2 rounded-lg border text-[10px] font-bold outline-none", T.sel)}>
                     <option value="">
@@ -2447,7 +2442,7 @@ export default function SettlementTab() {
                   </select>
                   {selectedMeeting && (
                     <p className="text-[9px] font-black text-indigo-600 mt-1 flex gap-1 bg-indigo-100/50 dark:bg-indigo-900/50 p-1.5 rounded">
-                      <Info size={10} className="shrink-0"/>
+                      <Info size={10} className="shrink-0" />
                       {expCat === "بدل جلسات"
                         ? `سيتم توزيع ${formatMoney(expAmt || 0)} على ${selectableBoardMembers.length || selectedMeeting.attendees?.length || 0} من الحاضرين`
                         : `سيتم ربط ${ALLOWANCE_TYPE_LABELS[getMeetingAllowanceType(expCat)] || expCat} بالاجتماع: ${selectedMeeting.title || "—"}`}
@@ -2459,31 +2454,32 @@ export default function SettlementTab() {
               {isBoardAllowanceCategory(expCat) && (
                 <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-xl space-y-2 animate-in fade-in">
                   <label className="text-[10px] font-black text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5">
-                    <Users size={14}/> {selectedMeeting ? "أعضاء الاجتماع المستحقون" : `تحديد أعضاء المجلس المستحقين لـ ${expCat}`}
+                    <Users size={14} /> {selectedMeeting ? "أعضاء الاجتماع المستحقون" : `تحديد أعضاء المجلس المستحقين لـ ${expCat}`}
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto p-2 bg-white dark:bg-slate-800 rounded-lg border border-indigo-100 dark:border-indigo-800">
                     {selectableBoardMembers.map(m => {
                       const memberId = toEntityId(m.id);
                       return (
-                      <label key={memberId || m.id} className="flex items-center gap-2 text-[10px] font-bold cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-1 rounded transition-colors">
-                        <input 
-                          type="checkbox" 
-                          checked={selectedMembers.includes(memberId)}
-                          disabled={false}
-                          onChange={(e) => {
-                            if (e.target.checked) setSelectedMembers(p => toEntityIdList([...p, memberId]));
-                            else setSelectedMembers(p => p.filter(id => id !== memberId));
-                          }}
-                          className="accent-indigo-600"
-                        />
-                        {String(m?.name || "—").split(" ").slice(0,2).join(" ")}
-                      </label>
-                    )})}
+                        <label key={memberId || m.id} className="flex items-center gap-2 text-[10px] font-bold cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-1 rounded transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={selectedMembers.includes(memberId)}
+                            disabled={false}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedMembers(p => toEntityIdList([...p, memberId]));
+                              else setSelectedMembers(p => p.filter(id => id !== memberId));
+                            }}
+                            className="accent-indigo-600"
+                          />
+                          {String(m?.name || "—").split(" ").slice(0, 2).join(" ")}
+                        </label>
+                      )
+                    })}
                     {selectableBoardMembers.length === 0 && <p className="text-[9px] text-slate-400 p-1">لا يوجد أعضاء مجلس مستحقون لهذا التاريخ</p>}
                   </div>
                   {expAmt && selectedMembers.length > 0 && (
                     <p className="text-[9px] font-black text-indigo-600 mt-1 flex gap-1 bg-indigo-100/50 dark:bg-indigo-900/50 p-1.5 rounded">
-                      <Info size={10} className="shrink-0"/> {expCat}: نصيب العضو {formatMoney(Number(expAmt) / selectedMembers.length)}
+                      <Info size={10} className="shrink-0" /> {expCat}: نصيب العضو {formatMoney(Number(expAmt) / selectedMembers.length)}
                     </p>
                   )}
                 </div>
@@ -2504,7 +2500,7 @@ export default function SettlementTab() {
                 <input type="text" value={expNotes} onChange={e => setExpNotes(e.target.value)} placeholder="مثال: فاتورة صيانة..." className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-amber-500 h-[38px]", T.inp)} />
               </div>
 
-              <FileUpload txId={`tmp_${selAdvId}`} existingFiles={expFiles} onChange={setExpFiles}/>
+              <FileUpload txId={`tmp_${selAdvId}`} existingFiles={expFiles} onChange={setExpFiles} />
 
               {editingExpense && (
                 <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40">
@@ -2516,7 +2512,7 @@ export default function SettlementTab() {
               )}
 
               <button onClick={addExpense} disabled={!expAmt || Number(expAmt) <= 0 || Number(expAmt) > (editingExpense ? availableForExpense : remaining)} className="w-full py-2.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl font-black text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-40">
-                <Plus size={14}/> إدراج للكشف
+                <Plus size={14} /> إدراج للكشف
               </button>
             </div>
           </div>
@@ -2524,7 +2520,7 @@ export default function SettlementTab() {
           {/* ─── 3. كشف الفواتير ─── */}
           <div className={clsx("lg:col-span-8 p-4 rounded-2xl border shadow-sm flex flex-col", T.card, !activeSettlementTxn && "opacity-50 pointer-events-none")}>
             <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3 mb-3">
-              <h3 className="font-black text-[11px] uppercase tracking-widest flex items-center gap-2"><ReceiptText size={16} className="text-teal-600"/> الفواتير المدرجة ({expenses.length})</h3>
+              <h3 className="font-black text-[11px] uppercase tracking-widest flex items-center gap-2"><ReceiptText size={16} className="text-teal-600" /> الفواتير المدرجة ({expenses.length})</h3>
               <div className="flex items-center gap-3">
                 <div className="z-[100] w-32"><ArabicDatePicker value={settlementDate} onChange={setSettlementDate} maxVal={getTodayISO()} /></div>
                 <div className="text-left bg-rose-50 dark:bg-rose-900/20 px-3 py-1.5 rounded-xl border border-rose-100 dark:border-rose-800 text-rose-600">
@@ -2537,7 +2533,7 @@ export default function SettlementTab() {
             <div className="flex-1 overflow-x-auto min-h-[250px]">
               <table className="w-full text-right text-[11px]">
                 <thead className="bg-slate-50/80 dark:bg-slate-800/50 border-b">
-                  <tr>{["التصنيف","البيان والتاريخ","المبلغ","إجراء"].map((h, i) => <th key={i} className="p-2.5 text-slate-400 font-black">{h}</th>)}</tr>
+                  <tr>{["التصنيف", "البيان والتاريخ", "المبلغ", "إجراء"].map((h, i) => <th key={i} className="p-2.5 text-slate-400 font-black">{h}</th>)}</tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
                   {expenses.length === 0 ? (
@@ -2563,14 +2559,14 @@ export default function SettlementTab() {
                             className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
                             title="تعديل الفاتورة"
                           >
-                            <Edit3 size={14}/>
+                            <Edit3 size={14} />
                           </button>
                           <button
                             onClick={(event) => { event.stopPropagation(); setExpenseToDelete(e); }}
                             className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                             title="حذف الفاتورة"
                           >
-                            <Trash2 size={14}/>
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
@@ -2589,10 +2585,10 @@ export default function SettlementTab() {
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={handleSaveDraft} disabled={saving || expenses.length === 0} className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 rounded-xl font-black text-xs transition-all flex items-center gap-1.5 border shadow-sm active:scale-95 disabled:opacity-40">
-                  <Save size={14}/> حفظ مؤقت
+                  <Save size={14} /> حفظ مؤقت
                 </button>
                 <button onClick={openConfirmModal} disabled={expenses.length === 0} className="px-6 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-black text-xs shadow-md active:scale-95 transition-all disabled:opacity-50 flex items-center gap-1.5">
-                  <CheckCircle2 size={16}/> {editingSettlementId ? "حفظ التعديلات" : "اعتماد نهائي"}
+                  <CheckCircle2 size={16} /> {editingSettlementId ? "حفظ التعديلات" : "اعتماد نهائي"}
                 </button>
               </div>
             </div>
@@ -2615,10 +2611,10 @@ export default function SettlementTab() {
       {activeTab === "archive" && (
         <div className={clsx("rounded-2xl border shadow-sm overflow-hidden animate-in fade-in duration-500", T.card)}>
           <div className="p-4 border-b flex flex-wrap justify-between items-center gap-3 bg-slate-50/50 dark:bg-slate-900/20">
-            <h3 className="font-black text-[11px] uppercase tracking-widest flex items-center gap-2"><History size={14} className="text-teal-600"/> أرشيف وتسويات العهد والأنشطة</h3>
+            <h3 className="font-black text-[11px] uppercase tracking-widest flex items-center gap-2"><History size={14} className="text-teal-600" /> أرشيف وتسويات العهد والأنشطة</h3>
             <div className="flex flex-wrap gap-2 items-center">
               <div className="relative">
-                <Search size={14} className="absolute right-3 top-2.5 text-slate-400"/>
+                <Search size={14} className="absolute right-3 top-2.5 text-slate-400" />
                 <input type="text" value={archiveSearch} onChange={e => setArchiveSearch(e.target.value)} placeholder="بحث بالمسؤول أو الشيك..." className={clsx("pr-9 pl-4 py-2 rounded-xl border text-[11px] font-bold outline-none focus:ring-2 w-56", T.inp)} />
               </div>
               <select value={archiveMonth} onChange={e => setArchiveMonth(e.target.value)} className={clsx("px-3 py-2 rounded-xl border text-[11px] font-bold outline-none", T.sel)}>
@@ -2641,7 +2637,7 @@ export default function SettlementTab() {
           {draftSettlements.length > 0 && (
             <div className="border-b border-amber-200 dark:border-amber-800/40 bg-amber-50/30 dark:bg-amber-900/10">
               <div className="px-4 py-3 flex items-center gap-2 border-b border-amber-100 dark:border-amber-800/30">
-                <Save size={14} className="text-amber-600"/>
+                <Save size={14} className="text-amber-600" />
                 <h4 className="font-black text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400">
                   مسودات معلقة ({draftSettlements.length})
                 </h4>
@@ -2649,7 +2645,7 @@ export default function SettlementTab() {
               <table className="w-full text-right text-[11px]">
                 <thead>
                   <tr className="bg-amber-100/50 dark:bg-amber-900/20">
-                    {["المسؤول","النوع","المبلغ","عدد الفواتير","تاريخ الحفظ",""].map((h, i) => <th key={i} className="p-3 font-black text-amber-700 dark:text-amber-400 text-[9px] uppercase">{h}</th>)}
+                    {["المسؤول", "النوع", "المبلغ", "عدد الفواتير", "تاريخ الحفظ", ""].map((h, i) => <th key={i} className="p-3 font-black text-amber-700 dark:text-amber-400 text-[9px] uppercase">{h}</th>)}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-amber-100 dark:divide-amber-800/30">
@@ -2668,8 +2664,8 @@ export default function SettlementTab() {
                       <td className="p-3 font-bold text-slate-500">{d.settlementExpenses?.length || 0}</td>
                       <td className="p-3 font-bold text-slate-400 text-[9px]">{d.updatedAt?.slice(0, 10) || "—"}</td>
                       <td className="p-3 text-left">
-                        <button onClick={() => continueDraft(d)} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-[10px] transition-all active:scale-95 shadow-sm flex items-center gap-1">
-                          <Edit3 size={12}/> استكمال
+                        <button onClick={() => continueDraft(d)} className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 rounded-xl font-black text-[10px] transition-all active:scale-95 border border-amber-200 dark:border-amber-800 shadow-sm flex items-center gap-1">
+                          <Edit3 size={12} /> استكمال
                         </button>
                       </td>
                     </tr>
@@ -2678,21 +2674,21 @@ export default function SettlementTab() {
               </table>
             </div>
           )}
-          
+
           <div className="overflow-x-auto min-h-[400px]">
             <table className="w-full text-right text-[11px]">
               <thead className="bg-slate-100/80 dark:bg-slate-800/50 border-b-2 border-slate-200 dark:border-slate-700">
-                <tr>{["الاعتماد","المسؤول (النوع)","التمويل","متاح","منصرف","المتبقي / الإغلاق",""].map((h, i) => <th key={i} className="p-3 font-black text-slate-500 uppercase">{h}</th>)}</tr>
+                <tr>{["الاعتماد", "المسؤول (النوع)", "التمويل", "متاح", "منصرف", "المتبقي / الإغلاق", ""].map((h, i) => <th key={i} className="p-3 font-black text-slate-500 uppercase">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                 {filteredArchivedSettlements.map(s => {
                   const sAdvance = Number(s.settlementGroupAdvanceAmountBase || s.advanceAmountBase || s.amount || 0);
                   const sPrevBal = Number(s.settlementGroupPrevBalanceUsed || s.prevBalanceUsed || 0);
-                  const sSubs    = Number(s.settlementGroupCollectedSubscriptions || s.collectedSubscriptions || 0);
+                  const sSubs = Number(s.settlementGroupCollectedSubscriptions || s.collectedSubscriptions || 0);
                   const sAvailable = sAdvance + sPrevBal + sSubs;
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors">
-      <td className="p-3 font-bold text-slate-500 whitespace-nowrap">{getSettlementApprovalDate(s) || "—"}</td>
+                      <td className="p-3 font-bold text-slate-500 whitespace-nowrap">{getSettlementApprovalDate(s) || "—"}</td>
                       <td className="p-3 font-black text-slate-800 dark:text-slate-100">
                         {s.employeeName || s.party}
                         <span className="block text-[8px] text-slate-400 mt-0.5">
@@ -2718,15 +2714,15 @@ export default function SettlementTab() {
                       </td>
                       <td className="p-3 text-left">
                         <div className="flex items-center justify-end gap-1">
-                          <button onClick={() => startEditSettlement(s)} className="p-2 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50 transition-colors" title="تعديل"><Edit3 size={16}/></button>
-                          <button 
-                            onClick={() => handleRecoverFromArchive(s)} 
-                            className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors" 
+                          <button onClick={() => startEditSettlement(s)} className="p-2 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50 transition-colors" title="تعديل"><Edit3 size={16} /></button>
+                          <button
+                            onClick={() => handleRecoverFromArchive(s)}
+                            className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
                             title="استرجاع من الأرشيف"
                           >
-                            <RotateCcw size={16}/>
+                            <RotateCcw size={16} />
                           </button>
-                          <button onClick={() => setSettlementToDelete(s)} className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors" title="حذف"><Trash2 size={16}/></button>
+                          <button onClick={() => setSettlementToDelete(s)} className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors" title="حذف"><Trash2 size={16} /></button>
                           <button
                             onClick={() =>
                               printSettlementLocal({
@@ -2745,7 +2741,7 @@ export default function SettlementTab() {
                             className="p-2 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50 transition-colors"
                             title="طباعة"
                           >
-                            <Printer size={16}/>
+                            <Printer size={16} />
                           </button>
                         </div>
                       </td>
