@@ -58,6 +58,14 @@ const normalizeCheckNum = (value = "") =>
 const unique = (values = []) =>
   Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
 
+const removeUndefined = (obj) => {
+  const clean = {};
+  Object.keys(obj || {}).forEach((key) => {
+    if (obj[key] !== undefined) clean[key] = obj[key];
+  });
+  return clean;
+};
+
 const isMigratedLegacyIssuedCheck = (tx = {}) => {
   const id = String(tx?.id || "");
   return Boolean(
@@ -100,7 +108,7 @@ function normalizeIssuedCheckPayload(tx = {}, options = {}) {
     tx.settlementState ||
     (requiresSettlement && settlementExpenses.length && !tx.isSettled ? "draft" : undefined);
 
-  return {
+  const raw = {
     ...tx,
     ...options,
     type,
@@ -116,7 +124,10 @@ function normalizeIssuedCheckPayload(tx = {}, options = {}) {
     settlement_state: settlementStatus,
     party: tx.party || getIssuedCheckDisplayParty(tx) || "",
     attachments: Array.isArray(tx.attachments) ? tx.attachments : [],
+    state: tx.state || "posted",
   };
+
+  return removeUndefined(raw);
 }
 
 export function useTreasuryService() {
