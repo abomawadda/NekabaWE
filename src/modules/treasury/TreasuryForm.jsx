@@ -339,9 +339,9 @@ export default function TreasuryForm({
       memberSubscriptions: "",
       requires_settlement: getDefaultRequiresSettlement(defaultType),
       attachments: [],
-      state: "posted",
+      state: canPost ? "posted" : "draft",
     }),
-    [defaultType, nextCheque]
+    [defaultType, nextCheque, canPost]
   );
 
   const [tx, setTx] = useState(() =>
@@ -555,7 +555,7 @@ export default function TreasuryForm({
           settlementExpenses: isDirectCharge ? [] : (requiresSettlement ? (tx.settlementExpenses || []) : []),
           advanceAmountBase: String(tx.amount).trim(),
           employeeName: finalParty,
-      state: "posted",
+          state: "posted",
         },
         isEdit
       );

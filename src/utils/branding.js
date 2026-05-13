@@ -2,7 +2,7 @@ export const ORG_REPORT_TITLE = "النقابة العامة للعاملين ب
 export const ORG_REPORT_SUBTITLE = "أمانة الصندوق";
 export const ORG_SYSTEM_TITLE = "المنظومة الإدارية والمالية للنقابة العامة بالدقهلية";
 export const ORG_IMPLEMENTATION_CREDIT = "إعداد وتنفيذ أ/ محمود العراقي";
-export const ORG_RIGHT_LOGO_URL = "/brand-right-we.svg";
+export const ORG_RIGHT_LOGO_URL = "/brand-right.png";
 export const ORG_LEFT_LOGO_URL = "/brand-left.png";
 
 export const getReportTitleHtml = () =>
