@@ -150,12 +150,11 @@ export const renderPrintReport = ({
           .summary-section-items{display:grid;gap:5px}
           .summary-section-item{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:9px;color:#475569}
           .summary-section-item strong{font-size:9px;color:#0f172a}
-          table{width:100%;border-collapse:collapse;table-layout:fixed}
-          th{background:#0f172a;color:#fff;padding:6px 5px;border:1px solid #334155;font-size:9px;text-align:right;line-height:1.4}
-          td{border:1px solid #cbd5e1;padding:5px 4px;font-size:9px;vertical-align:top;line-height:1.45;word-break:break-word;overflow-wrap:anywhere;white-space:normal}
-          tbody tr:nth-child(even){background:#f8fafc}
-          .cell-index{text-align:center;font-weight:900;width:38px}
-          .cell-text{text-align:right}
+          table{width:100%;border-collapse:collapse}
+          th{background:#0f172a;color:#fff;padding:6px 8px;border:1px solid #334155;font-size:9px;text-align:right;line-height:1.4;white-space:nowrap}
+          td{border:1px solid #cbd5e1;padding:5px 6px;font-size:9px;vertical-align:middle;line-height:1.5;word-break:normal;overflow-wrap:break-word;white-space:normal}
+          .cell-index{text-align:center;font-weight:900;width:38px;min-width:30px}
+          .cell-text{text-align:right;white-space:normal}
           .cell-amount{text-align:left;font-weight:900;color:#047857;white-space:nowrap}
           .totals-row td{background:#eef2ff;font-weight:900}
           .amount-words{margin-top:8px;border:1px solid #bfdbfe;border-radius:10px;padding:8px;background:#f8fbff;display:grid;gap:5px}
