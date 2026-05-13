@@ -1579,7 +1579,7 @@ export default function SettlementTab() {
   useEffect(() => {
     if (settlementSelectionMode !== "batch") return;
     if (selectedBatchIds.length === 0) return;
-    const validIds = new Set(currentTxnOptions.map((tx) => toEntityId(tx.id)));
+    const validIds = new Set(currentTxnOptions.map((tx) => toEntityId(getIssuedCheckDocId(tx) || tx.id)));
     const normalizedSelected = selectedBatchIds.map((id) => toEntityId(id)).filter(Boolean);
     const filtered = normalizedSelected.filter((id) => validIds.has(id));
     if (filtered.join("|") !== normalizedSelected.join("|")) {
