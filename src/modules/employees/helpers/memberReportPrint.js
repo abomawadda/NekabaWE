@@ -10,15 +10,6 @@ const GROUP_LABELS = {
   gender: "الجنس",
 };
 
-const STATE_LABELS = {
-  "نشط": { label: "نشط", color: "#059669" },
-  "معاش": { label: "معاش", color: "#d97706" },
-  "وفاة": { label: "وفاة", color: "#dc2626" },
-  "استقالة": { label: "استقالة", color: "#9333ea" },
-  "موقوف": { label: "موقوف", color: "#ea580c" },
-  "إجازة بدون أجر": { label: "إجازة", color: "#0891b2" },
-};
-
 const escapeHtml = (value = "") =>
   String(value || "")
     .replaceAll("&", "&amp;")
@@ -27,7 +18,7 @@ const escapeHtml = (value = "") =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-export function printMemberReport({ employees, groupBy, title, filters = {} }) {
+export function printMemberReport({ employees, groupBy, title, subtitle }) {
   const win = openPrintWindow("member-report");
   if (!win) return;
 
@@ -51,7 +42,6 @@ export function printMemberReport({ employees, groupBy, title, filters = {} }) {
   const activeCount = employees.filter((e) => getEffectiveMemberState(e) === "نشط").length;
   const maleCount = employees.filter((e) => e.gender === "ذكر").length;
   const femaleCount = employees.filter((e) => e.gender === "أنثى").length;
-
   const groupLabel = GROUP_LABELS[groupKey] || "";
 
   const groupSections = sortedGroups
@@ -66,7 +56,8 @@ export function printMemberReport({ employees, groupBy, title, filters = {} }) {
             <th class="nowrap">الاسم</th>
             <th class="nowrap">الرقم الوظيفي</th>
             <th class="nowrap">جهة العمل</th>
-            <th class="nowrap">المسمى الوظيفي</th>
+            <th class="nowrap">رقم الموبايل</th>
+            <th class="nowrap">الرقم القومي</th>
             <th class="nowrap">الدرجة</th>
             <th class="nowrap">الحالة</th>
             <th class="nowrap">نوع العضوية</th>
@@ -81,7 +72,8 @@ export function printMemberReport({ employees, groupBy, title, filters = {} }) {
             <td class="nowrap">${escapeHtml(emp.name || "—")}</td>
             <td class="nowrap">${escapeHtml(emp.jobId || "—")}</td>
             <td class="nowrap">${escapeHtml(emp.workplace || "—")}</td>
-            <td class="nowrap">${escapeHtml(emp.jobTitle || "—")}</td>
+            <td class="nowrap">${escapeHtml(emp.phone || emp.mobile || "—")}</td>
+            <td class="nowrap">${escapeHtml(emp.nationalId || emp.national_id || "—")}</td>
             <td class="nowrap">${escapeHtml(emp.jobGrade || "—")}</td>
             <td class="nowrap">${escapeHtml(getEffectiveMemberState(emp) || "—")}</td>
             <td class="nowrap">${escapeHtml(emp.membershipStatus || "—")}</td>
@@ -96,7 +88,7 @@ export function printMemberReport({ employees, groupBy, title, filters = {} }) {
 
   win.document.write(
     `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8" />
-    <title>كشف أعضاء الجمعية العمومية</title>
+    <title>${escapeHtml(title || "كشف أعضاء")}</title>
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
     @page{size:A4 portrait;margin:8mm}
@@ -108,9 +100,9 @@ export function printMemberReport({ employees, groupBy, title, filters = {} }) {
     .summary-item{border:1px solid #e2e8f0;border-radius:8px;padding:8px;text-align:center}
     .summary-value{font-size:18px;font-weight:900;color:#0f172a}
     .summary-label{font-size:8px;color:#64748b;font-weight:800}
-    table{width:100%;border-collapse:collapse;margin-top:4px;font-size:9px}
-    th,td{border:1px solid #cbd5e1;padding:4px 6px;text-align:right}
-    th{background:#0f172a;color:#fff;font-size:8px}
+    table{width:100%;border-collapse:collapse;margin-top:4px;font-size:8px}
+    th,td{border:1px solid #cbd5e1;padding:3px 4px;text-align:right}
+    th{background:#0f172a;color:#fff;font-size:7px}
     tr:nth-child(even) td{background:#f8fafc}
     .nowrap{white-space:nowrap}
     @media print{
@@ -122,8 +114,8 @@ export function printMemberReport({ employees, groupBy, title, filters = {} }) {
     ${getPrintBrandStyles()}
     </style></head><body>
     ${getPrintBrandHeader({
-      reportTitle: `كشف أعضاء الجمعية العمومية${groupLabel ? ` • حسب ${groupLabel}` : ""}`,
-      reportMeta: `إجمالي الأعضاء: ${totalCount} | نشط: ${activeCount} | ذكور: ${maleCount} | إناث: ${femaleCount}`,
+      reportTitle: `${escapeHtml(title || "كشف أعضاء")}${groupLabel ? ` • حسب ${groupLabel}` : ""}`,
+      reportMeta: subtitle ? escapeHtml(subtitle) : `إجمالي الأعضاء: ${totalCount} | نشط: ${activeCount} | ذكور: ${maleCount} | إناث: ${femaleCount}`,
     })}
     <div class="summary">
       <div class="summary-item"><div class="summary-value">${totalCount}</div><div class="summary-label">إجمالي الأعضاء</div></div>
