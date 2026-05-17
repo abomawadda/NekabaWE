@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { collection, query, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
@@ -19,6 +19,7 @@ import clsx from "clsx";
 
 import EmployeeForm from "./EmployeeForm";
 import EmployeeProfile from "./EmployeeProfileFund";
+import { processAutoRetirements } from "./helpers/autoRetirement";
 import ExcelImporter from "./components/ExcelImporter";
 import MemberReports from "./components/MemberReports";
 
@@ -42,6 +43,7 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   const [selectedEmp, setSelectedEmp] = useState(null);
   const [showImporter, setShowImporter] = useState(false);
   const [showReports, setShowReports] = useState(false);
+  const autoRetirementExecutedRef = useRef(false);
 
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
@@ -59,6 +61,16 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
     });
     return () => unsubEmp();
   }, [user]);
+
+  useEffect(() => {
+    if (loading || employees.length === 0 || autoRetirementExecutedRef.current) return;
+    autoRetirementExecutedRef.current = true;
+    processAutoRetirements(employees).then((res) => {
+      if (res.retired > 0) {
+        showToast(`تمت إحالة ${res.retired} أعضاء للمعاش تلقائيًا (بلوغ سن ${60}).`, "success");
+      }
+    });
+  }, [loading, employees, showToast]);
 
   useEffect(() => {
     if (!forcedEmployeeId || loading) return;
