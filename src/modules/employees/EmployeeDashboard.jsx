@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { collection, query, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useT } from "../../app/providers/ThemeProvider";
 import { useAuth } from "../../app/providers/AuthProvider";
@@ -14,6 +14,7 @@ import {
   ShieldCheck, Briefcase, Phone, UserCircle, MessageSquare, 
   Cake, GraduationCap, HeartHandshake, Mail, ArrowRight, CalendarClock, 
   PieChart, Award, Activity, Building, Hash, RefreshCw, Upload, BarChart3,
+  LayoutGrid, List, Table2, Filter,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -39,7 +40,7 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   const [filterMemberState, setFilterMemberState] = useState("all");
   const [filterMembershipStatus, setFilterMembershipStatus] = useState("all");
   const [filterGender, setFilterGender] = useState("all");
-  const [visibleCount, setVisibleCount] = useState(10); 
+  const [visibleCount, setVisibleCount] = useState(20);
 
   const [toast, setToast] = useState(null);
   
@@ -49,22 +50,46 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   const [showReports, setShowReports] = useState(false);
   const autoRetirementExecutedRef = useRef(false);
 
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem("emp_view_mode") || "cards");
+  const [activeOnly, setActiveOnly] = useState(true);
+
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  useEffect(() => {
-    const unsubEmp = onSnapshot(query(collection(db, "employees")), (snap) => {
-      const nextEmployees = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setEmployees(filterDataByScope(nextEmployees, "employees", user));
-      setLoading(false);
-    }, (err) => {
+  const fetchEmployees = useCallback(async (onlyActive) => {
+    setLoading(true);
+    try {
+      const cacheKey = `emp_cache_${onlyActive ? "active" : "all"}`;
+      const cached = sessionStorage.getItem(cacheKey);
+      const cacheTime = sessionStorage.getItem(`${cacheKey}_time`);
+      if (cached && cacheTime && Date.now() - Number(cacheTime) < 30000) {
+        const parsed = JSON.parse(cached);
+        setEmployees(filterDataByScope(parsed, "employees", user));
+        setLoading(false);
+        return;
+      }
+
+      let q = collection(db, "employees");
+      if (onlyActive) {
+        q = query(q, where("memberState", "==", "نشط"));
+      }
+      const snap = await getDocs(q);
+      const result = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      sessionStorage.setItem(cacheKey, JSON.stringify(result));
+      sessionStorage.setItem(`${cacheKey}_time`, String(Date.now()));
+      setEmployees(filterDataByScope(result, "employees", user));
+    } catch (err) {
       console.error(err);
+    } finally {
       setLoading(false);
-    });
-    return () => unsubEmp();
+    }
   }, [user]);
+
+  useEffect(() => {
+    fetchEmployees(activeOnly);
+  }, [fetchEmployees, activeOnly]);
 
   useEffect(() => {
     if (loading || employees.length === 0 || autoRetirementExecutedRef.current) return;
@@ -648,12 +673,107 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
           <h2 className="text-sm font-black flex items-center gap-2 text-teal-600 dark:text-teal-400">
             <Users size={18}/> دليل الأعضاء <span className="bg-teal-100 text-teal-700 dark:bg-teal-900/50 px-2 py-0.5 rounded-lg text-xs">{searchResults.length}</span>
           </h2>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setActiveOnly(prev => !prev)}
+              className={clsx("px-3 py-1.5 rounded-xl border text-[10px] font-black transition-all flex items-center gap-1.5",
+                activeOnly
+                  ? "bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400"
+                  : "bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400"
+              )}>
+              <Filter size={12}/> {activeOnly ? "نشط فقط" : "الكل"}
+            </button>
+            <div className="flex border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+              {[
+                { key: "cards", icon: LayoutGrid, label: "بطاقات" },
+                { key: "table", icon: Table2, label: "جدول" },
+                { key: "compact", icon: List, label: "سريع" },
+              ].map(({ key, icon: Icon, label }) => (
+                <button key={key} onClick={() => { setViewMode(key); localStorage.setItem("emp_view_mode", key); }}
+                  className={clsx("px-2.5 py-1.5 text-[10px] font-black transition-all flex items-center gap-1",
+                    viewMode === key
+                      ? "bg-teal-600 text-white"
+                      : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  )}>
+                  <Icon size={13}/> {label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {searchResults.length === 0 ? (
           <div className={clsx("p-10 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center text-slate-400", T.card)}>
             <Search size={40} className="opacity-20 mb-3"/>
             <p className="text-sm font-black">لم يتم العثور على أعضاء</p>
+          </div>
+        ) : viewMode === "table" ? (
+          <div className="overflow-x-auto">
+            <table className={clsx("w-full text-xs rounded-2xl overflow-hidden border", T.card)}>
+              <thead className="bg-slate-100 dark:bg-slate-800">
+                <tr>
+                  {["#", "الاسم", "الرقم الوظيفي", "جهة العمل", "رقم الموبايل", "الرقم القومي", "الحالة", "نوع العضوية"].map((h) => (
+                    <th key={h} className="py-2.5 px-3 text-right font-black text-[10px] text-slate-500 border-b dark:border-slate-700 whitespace-nowrap">{h}</th>
+                  ))}
+                  <th className="py-2.5 px-3 text-center font-black text-[10px] text-slate-500 border-b dark:border-slate-700">إجراءات</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {searchResults.slice(0, visibleCount).map((emp, idx) => (
+                  <tr key={emp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                    <td className="py-2.5 px-3 font-bold text-slate-400">{idx + 1}</td>
+                    <td className="py-2.5 px-3">
+                      <span className="font-black text-slate-800 dark:text-slate-100 cursor-pointer hover:text-teal-600" onClick={() => openProfile(emp)}>{emp.name}</span>
+                    </td>
+                    <td className="py-2.5 px-3 font-bold">{emp.jobId || "—"}</td>
+                    <td className="py-2.5 px-3 font-bold text-slate-500">{emp.workplace || "—"}</td>
+                    <td className="py-2.5 px-3 font-bold" dir="ltr">{emp.phone || "—"}</td>
+                    <td className="py-2.5 px-3 font-bold text-slate-500">{emp.nationalId || emp.national_id || "—"}</td>
+                    <td className="py-2.5 px-3">
+                      <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black",
+                        emp.memberState === "نشط" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                      )}>{emp.memberState || "نشط"}</span>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black",
+                        emp.membershipStatus === "نقابة مستقلة" ? "bg-amber-100 text-amber-700" : "bg-teal-100 text-teal-700"
+                      )}>{emp.membershipStatus || "—"}</span>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => openProfile(emp)} className="p-1.5 rounded-lg bg-teal-50 text-teal-600 hover:bg-teal-600 hover:text-white transition-colors"><Eye size={12}/></button>
+                        <button onClick={() => openEditForm(emp)} className="p-1.5 rounded-lg bg-sky-50 text-sky-600 hover:bg-sky-600 hover:text-white transition-colors"><Edit3 size={12}/></button>
+                        <button onClick={() => handleDelete(emp)} className="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white transition-colors"><Trash2 size={12}/></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : viewMode === "compact" ? (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 border rounded-2xl overflow-hidden">
+            {searchResults.slice(0, visibleCount).map((emp, idx) => (
+              <div key={emp.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer" onClick={() => openProfile(emp)}>
+                <span className="text-[10px] font-bold text-slate-400 w-6 text-center">{idx + 1}</span>
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 overflow-hidden">
+                  {emp.photo ? <img src={emp.photo} className="w-full h-full object-cover" alt=""/> : <UserCircle size={18} className="text-slate-400"/>}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">{emp.name}</p>
+                  <p className="text-[9px] font-bold text-slate-500 truncate">{emp.jobId} • {emp.workplace || "—"}</p>
+                </div>
+                <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black shrink-0",
+                  emp.membershipStatus === "نقابة مستقلة" ? "bg-amber-100 text-amber-700" : "bg-teal-100 text-teal-700"
+                )}>{emp.membershipStatus || "عضو"}</span>
+                <span className={clsx("px-2 py-0.5 rounded-lg text-[9px] font-black shrink-0",
+                  emp.memberState === "نشط" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                )}>{emp.memberState || "نشط"}</span>
+                <div className="flex gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <button onClick={() => openEditForm(emp)} className="p-1.5 rounded-lg bg-sky-50 text-sky-600 hover:bg-sky-600 hover:text-white transition-colors"><Edit3 size={12}/></button>
+                  <button onClick={() => handleDelete(emp)} className="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white transition-colors"><Trash2 size={12}/></button>
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -710,7 +830,7 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
 
         {visibleCount < searchResults.length && (
           <div className="flex justify-center mt-6">
-            <button onClick={() => setVisibleCount(v => v + 10)}
+            <button onClick={() => setVisibleCount(v => v + 20)}
               className="px-8 py-3 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 hover:border-teal-500 hover:text-teal-600 text-slate-500 rounded-xl font-black text-xs transition-all shadow-sm active:scale-95 flex items-center gap-2">
               <RefreshCw size={16}/> تحميل المزيد من الأعضاء ({searchResults.length - visibleCount} متبقي)
             </button>
