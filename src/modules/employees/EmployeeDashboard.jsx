@@ -13,13 +13,14 @@ import {
   Users, X, CheckCircle2, AlertCircle, 
   ShieldCheck, Briefcase, Phone, UserCircle, MessageSquare, 
   Cake, GraduationCap, HeartHandshake, Mail, ArrowRight, CalendarClock, 
-  PieChart, Award, Activity, Building, Hash, RefreshCw, Upload,
+  PieChart, Award, Activity, Building, Hash, RefreshCw, Upload, BarChart3,
 } from "lucide-react";
 import clsx from "clsx";
 
 import EmployeeForm from "./EmployeeForm";
 import EmployeeProfile from "./EmployeeProfileFund";
 import ExcelImporter from "./components/ExcelImporter";
+import MemberReports from "./components/MemberReports";
 
 export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   const T = useT();
@@ -40,6 +41,7 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   const [currentView, setCurrentView] = useState(forcedEmployeeId ? "profile" : "dashboard"); 
   const [selectedEmp, setSelectedEmp] = useState(null);
   const [showImporter, setShowImporter] = useState(false);
+  const [showReports, setShowReports] = useState(false);
 
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
@@ -391,7 +393,10 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
             <UserPlus size={16}/> تسجيل عضو جديد
           </button>
           <button onClick={() => setShowImporter(true)} className="px-4 py-2.5 bg-white/20 backdrop-blur-sm border border-white/30 hover:bg-white/30 rounded-xl font-black text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 flex-1 md:flex-none text-white">
-            <Upload size={14}/> استيراد Excel
+            <Upload size={14}/> استيراد
+          </button>
+          <button onClick={() => setShowReports(true)} className="px-4 py-2.5 bg-white/20 backdrop-blur-sm border border-white/30 hover:bg-white/30 rounded-xl font-black text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 flex-1 md:flex-none text-white">
+            <BarChart3 size={14}/> تقارير
           </button>
         </div>
       </div>
@@ -658,6 +663,7 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
       </div>
 
       {showImporter && <ExcelImporter onClose={() => setShowImporter(false)} />}
+      {showReports && <MemberReports employees={employees} onClose={() => setShowReports(false)} />}
     </div>
   );
 }
