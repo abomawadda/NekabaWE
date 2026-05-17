@@ -35,6 +35,10 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   const [loading, setLoading] = useState(true);
   
   const [searchQ, setSearchQ] = useState("");
+  const [filterWorkplace, setFilterWorkplace] = useState("all");
+  const [filterMemberState, setFilterMemberState] = useState("all");
+  const [filterMembershipStatus, setFilterMembershipStatus] = useState("all");
+  const [filterGender, setFilterGender] = useState("all");
   const [visibleCount, setVisibleCount] = useState(10); 
 
   const [toast, setToast] = useState(null);
@@ -224,20 +228,36 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
     };
   }, [employees]);
 
+  const filterOptions = useMemo(() => {
+    const workplaces = [...new Set(employees.map((e) => e.workplace).filter(Boolean))].sort();
+    const states = [...new Set(employees.map((e) => e.memberState?.trim()).filter(Boolean))].sort();
+    const statuses = [...new Set(employees.map((e) => e.membershipStatus).filter(Boolean))].sort();
+    return { workplaces, states, statuses };
+  }, [employees]);
+
   const searchResults = useMemo(() => {
-    if (!searchQ.trim()) return sortMembersByAgeThenJobId(employees.filter((e) => !isRetiredMember(e) && !isDeceasedMember(e)));
-    const lowerQ = searchQ.toLowerCase().trim();
-    return sortMembersByAgeThenJobId(
-      employees.filter(e =>
-        (
-          e.name?.toLowerCase().includes(lowerQ) ||
-          e.jobId?.toString().includes(lowerQ) ||
-          e.nationalId?.includes(lowerQ) ||
-          e.phone?.includes(lowerQ)
-        )
-      )
-    );
-  }, [searchQ, employees]);
+    const base = !searchQ.trim()
+      ? employees
+      : employees.filter((e) => {
+          const q = searchQ.toLowerCase().trim();
+          return (
+            e.name?.toLowerCase().includes(q) ||
+            e.jobId?.toString().includes(q) ||
+            e.nationalId?.includes(q) ||
+            e.phone?.includes(q)
+          );
+        });
+
+    const filtered = base.filter((e) => {
+      if (filterWorkplace !== "all" && e.workplace !== filterWorkplace) return false;
+      if (filterMemberState !== "all" && (e.memberState?.trim() || "") !== filterMemberState) return false;
+      if (filterMembershipStatus !== "all" && e.membershipStatus !== filterMembershipStatus) return false;
+      if (filterGender !== "all" && e.gender !== filterGender) return false;
+      return true;
+    });
+
+    return sortMembersByAgeThenJobId(filtered);
+  }, [searchQ, employees, filterWorkplace, filterMemberState, filterMembershipStatus, filterGender]);
 
   const openAddForm = () => {
     if (!canCreateMember) return showToast("ليس لديك صلاحية إضافة أعضاء جدد.", "error");
@@ -590,12 +610,36 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
 
       </div>
 
-      <div className={clsx("p-3 rounded-2xl border shadow-sm flex flex-col md:flex-row gap-3 items-center", T.card)}>
+        <div className={clsx("p-3 rounded-2xl border shadow-sm flex flex-col gap-3", T.card)}>
         <div className="relative w-full">
           <Search size={16} className="absolute right-4 top-3 text-slate-400 pointer-events-none"/>
           <input value={searchQ} onChange={e => { setSearchQ(e.target.value); setVisibleCount(10); }}
             placeholder="بحث سريع بالاسم، الكود، الرقم القومي، الهاتف..."
             className={clsx("w-full pr-10 pl-4 py-2.5 rounded-xl border text-sm font-bold outline-none focus:ring-2 focus:border-teal-500 transition-all", T.inp)}/>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <select value={filterWorkplace} onChange={e => { setFilterWorkplace(e.target.value); setVisibleCount(10); }} className={clsx("px-3 py-1.5 rounded-xl border text-[10px] font-black outline-none", T.inp)}>
+            <option value="all">كل جهات العمل</option>
+            {filterOptions.workplaces.map((w) => <option key={w} value={w}>{w}</option>)}
+          </select>
+          <select value={filterMemberState} onChange={e => { setFilterMemberState(e.target.value); setVisibleCount(10); }} className={clsx("px-3 py-1.5 rounded-xl border text-[10px] font-black outline-none", T.inp)}>
+            <option value="all">كل الحالات</option>
+            {filterOptions.states.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={filterMembershipStatus} onChange={e => { setFilterMembershipStatus(e.target.value); setVisibleCount(10); }} className={clsx("px-3 py-1.5 rounded-xl border text-[10px] font-black outline-none", T.inp)}>
+            <option value="all">كل أنواع العضوية</option>
+            {filterOptions.statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={filterGender} onChange={e => { setFilterGender(e.target.value); setVisibleCount(10); }} className={clsx("px-3 py-1.5 rounded-xl border text-[10px] font-black outline-none", T.inp)}>
+            <option value="all">الكل</option>
+            <option value="ذكر">ذكور</option>
+            <option value="أنثى">إناث</option>
+          </select>
+          {(filterWorkplace !== "all" || filterMemberState !== "all" || filterMembershipStatus !== "all" || filterGender !== "all") && (
+            <button onClick={() => { setFilterWorkplace("all"); setFilterMemberState("all"); setFilterMembershipStatus("all"); setFilterGender("all"); }} className="px-3 py-1.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-[10px] font-black transition-all flex items-center gap-1">
+              <X size={12}/> إلغاء الفلترة
+            </button>
+          )}
         </div>
       </div>
 
