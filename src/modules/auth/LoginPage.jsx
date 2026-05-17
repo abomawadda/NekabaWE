@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { LockKeyhole, ShieldCheck, UserSquare2 } from "lucide-react";
+import { LockKeyhole, ShieldCheck, UserSquare2, UserCheck } from "lucide-react";
 import clsx from "clsx";
 import { useT } from "../../app/providers/ThemeProvider";
 import { useAuth } from "../../app/providers/AuthProvider";
@@ -103,6 +103,12 @@ export default function LoginPage() {
           لا تملك حسابًا؟
           <Link to="/register" className="text-teal-700 font-black mr-1 hover:underline">
             طلب حساب جديد
+          </Link>
+        </div>
+
+        <div className="mt-3 text-center">
+          <Link to="/member-portal" className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-400 text-[11px] font-black hover:bg-teal-100 dark:hover:bg-teal-900/40 transition-all">
+            <UserCheck size={14} /> بوابة العضو (بدون تسجيل دخول)
           </Link>
         </div>
       </div>

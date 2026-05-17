@@ -17,6 +17,7 @@ import ReportBuilder from "../modules/reports/ReportBuilder";
 import LoginPage from "../modules/auth/LoginPage";
 import RegistrationPage from "../modules/auth/RegistrationPage";
 import SecurityCenter from "../modules/security/SecurityCenter";
+import MemberPortal from "../modules/portal/MemberPortal";
 
 function NotFoundPage() {
   return (
@@ -60,6 +61,8 @@ export default function Router() {
           </PublicOnly>
         }
       />
+
+      <Route path="/member-portal" element={<MemberPortal />} />
 
       <Route
         element={
