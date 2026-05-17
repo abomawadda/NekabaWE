@@ -6,15 +6,17 @@ import { X, Printer, Users, UserX, UserMinus, List } from "lucide-react";
 
 const GENERAL_TYPES = ["عضو جمعية عمومية", "رئيس المجلس", "الأمين العام", "أمين الصندوق", "نائب الرئيس", "عضو مجلس إدارة", "عضو مجلس"];
 
+const ACTIVE_STATES = ["نشط", "موقوف", "إجازة بدون أجر"];
+
 const PRESETS = [
   {
     id: "general",
     label: "الجمعية العمومية",
-    desc: "الأعضاء النشطين فقط (بدون مستقلة ومعاش/وفاة)",
+    desc: "أعضاء الجمعية العمومية النشطون",
     icon: Users,
     filter: (emp) => {
       const state = emp.memberState?.trim() || "نشط";
-      return !["معاش", "وفاة", "استقالة"].includes(state) && emp.membershipStatus !== "نقابة مستقلة";
+      return ACTIVE_STATES.includes(state) && emp.membershipStatus !== "نقابة مستقلة";
     },
     color: "bg-teal-500 text-white border-teal-500",
     hoverColor: "hover:border-teal-400 hover:text-teal-600",
@@ -23,11 +25,11 @@ const PRESETS = [
   {
     id: "independent",
     label: "نقابة مستقلة",
-    desc: "أعضاء النقابة المستقلة (نشطون)",
+    desc: "أعضاء النقابة المستقلة النشطون",
     icon: UserMinus,
     filter: (emp) => {
       const state = emp.memberState?.trim() || "نشط";
-      return !["معاش", "وفاة", "استقالة"].includes(state) && emp.membershipStatus === "نقابة مستقلة";
+      return ACTIVE_STATES.includes(state) && emp.membershipStatus === "نقابة مستقلة";
     },
     color: "bg-amber-500 text-white border-amber-500",
     hoverColor: "hover:border-amber-400 hover:text-amber-600",
@@ -49,19 +51,21 @@ const PRESETS = [
   {
     id: "all",
     label: "كشف كامل",
-    desc: "جميع الأعضاء بدون استثناء",
+    desc: "جميع الأعضاء النشطون فقط",
     icon: List,
-    filter: () => true,
+    filter: (emp) => {
+      const state = emp.memberState?.trim() || "نشط";
+      return ACTIVE_STATES.includes(state);
+    },
     color: "bg-indigo-500 text-white border-indigo-500",
     hoverColor: "hover:border-indigo-400 hover:text-indigo-600",
-    title: "كشف جميع الأعضاء",
+    title: "كشف جميع الأعضاء النشطين",
   },
 ];
 
 const GROUP_OPTIONS = [
   { value: "none", label: "بدون تجميع" },
   { value: "workplace", label: "جهة العمل" },
-  { value: "jobGrade", label: "الدرجة الوظيفية" },
   { value: "memberState", label: "الحالة" },
   { value: "membershipStatus", label: "نوع العضوية" },
   { value: "gender", label: "الجنس" },
@@ -132,26 +136,21 @@ export default function MemberReports({ employees, onClose }) {
           </div>
 
           <div className="grid grid-cols-4 gap-2">
-            <div className={clsx("p-2 rounded-xl border text-center", preset.id === PRESETS[0].id ? "border-teal-200 bg-teal-50" : "border-slate-200")}>
-              <div className="text-lg font-black text-slate-700">{counts.total}</div>
-              <div className="text-[8px] font-bold text-slate-400">إجمالي</div>
-            </div>
-            <div className={clsx("p-2 rounded-xl border text-center", preset.id === PRESETS[0].id ? "border-teal-200 bg-teal-50" : "border-slate-200")}>
-              <div className="text-lg font-black text-emerald-600">{counts.active}</div>
-              <div className="text-[8px] font-bold text-slate-400">نشط</div>
-            </div>
-            <div className="p-2 rounded-xl border border-sky-200 bg-sky-50 text-center">
-              <div className="text-lg font-black text-sky-600">{counts.male}</div>
-              <div className="text-[8px] font-bold text-slate-400">ذكور</div>
-            </div>
-            <div className="p-2 rounded-xl border border-rose-200 bg-rose-50 text-center">
-              <div className="text-lg font-black text-rose-600">{counts.female}</div>
-              <div className="text-[8px] font-bold text-slate-400">إناث</div>
-            </div>
+            {[
+              { label: "إجمالي", value: counts.total, color: "text-slate-700" },
+              { label: "نشط", value: counts.active, color: "text-emerald-600" },
+              { label: "ذكور", value: counts.male, color: "text-sky-600" },
+              { label: "إناث", value: counts.female, color: "text-rose-600" },
+            ].map((s, i) => (
+              <div key={i} className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-center">
+                <div className={clsx("text-lg font-black", s.color)}>{s.value}</div>
+                <div className="text-[8px] font-bold text-slate-400">{s.label}</div>
+              </div>
+            ))}
           </div>
 
           <div className="space-y-2 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border">
-            <p className="font-black text-[10px] text-slate-500">خيارات التقرير</p>
+            <p className="font-black text-[10px] text-slate-500">تجميع حسب</p>
             <div className="flex gap-1.5 flex-wrap">
               {GROUP_OPTIONS.map((opt) => (
                 <button
