@@ -44,6 +44,7 @@ import {
   normalizeSettlementOpenState,
 } from "../treasury/helpers/issuedChecks";
 import {
+  BOARD_MEETINGS_COLLECTION,
   BOARD_MEMBERSHIPS_COLLECTION,
   BOARD_TERMS_COLLECTION,
   buildLegacyBoardMemberships,
@@ -974,7 +975,7 @@ export default function SettlementTab() {
       finishLoading();
     });
 
-    const qMeetings = query(collection(db, "board_meetings"), where("status", "==", "held"));
+    const qMeetings = query(collection(db, BOARD_MEETINGS_COLLECTION), where("status", "==", "held"));
     const unsubMeetings = onSnapshot(qMeetings, snap => {
       setBoardMeetings(
         snap.docs

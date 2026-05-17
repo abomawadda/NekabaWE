@@ -10,6 +10,7 @@ import {
 
 export const BOARD_TERMS_COLLECTION = "board_terms";
 export const BOARD_MEMBERSHIPS_COLLECTION = "board_memberships";
+export const BOARD_MEETINGS_COLLECTION = "board_meetings";
 export const VIRTUAL_ACTIVE_TERM_ID = "__legacy_active_term__";
 
 const normalizeText = (value = "") => String(value || "").trim();

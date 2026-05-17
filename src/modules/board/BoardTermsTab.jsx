@@ -15,6 +15,7 @@ import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import {
   BOARD_MEMBERSHIPS_COLLECTION,
   BOARD_TERMS_COLLECTION,
+  VIRTUAL_ACTIVE_TERM_ID,
   buildBoardMembershipSnapshot,
   buildBoardMemberViewsFromMemberships,
   normalizeBoardMembership,
@@ -351,7 +352,15 @@ export default function BoardTermsTab({
   };
 
   const removeTerm = async (term) => {
-    if (!term?.id) return;
+    if (!term?.id) {
+      alert("لا يمكن حذف هذه الدورة لأنها غير موجودة في قاعدة البيانات.");
+      return;
+    }
+    if (term.id === VIRTUAL_ACTIVE_TERM_ID) {
+      alert("لا يمكن حذف الدورة الافتراضية. أضف دورة حقيقية أولاً.");
+      return;
+    }
+
     const linkedMemberships = normalizedMemberships
       .filter((membership) => membership.termId === term.id);
     const confirmationMessage = linkedMemberships.length > 0
@@ -362,11 +371,13 @@ export default function BoardTermsTab({
 
     setDeletingTermId(term.id);
     try {
-      await Promise.all(
-        linkedMemberships.map((membership) =>
-          deleteDoc(doc(db, BOARD_MEMBERSHIPS_COLLECTION, membership.id))
-        )
-      );
+      if (linkedMemberships.length > 0) {
+        await Promise.all(
+          linkedMemberships.map((membership) =>
+            deleteDoc(doc(db, BOARD_MEMBERSHIPS_COLLECTION, membership.id))
+          )
+        );
+      }
       await deleteDoc(doc(db, BOARD_TERMS_COLLECTION, term.id));
       await logAuditEvent("board_term_deleted", {
         termId: term.id,
@@ -375,7 +386,8 @@ export default function BoardTermsTab({
       });
       if (selectedTermId === term.id) setSelectedTermId("");
     } catch (error) {
-      console.error(error);
+      console.error("فشل حذف الدورة:", error);
+      alert("حدث خطأ أثناء حذف الدورة. تحقق من صلاحيات قاعدة البيانات وحاول مرة أخرى.");
     } finally {
       setDeletingTermId("");
     }

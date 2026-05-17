@@ -13,6 +13,7 @@ import {
   normalizeRequiresSettlement,
 } from "../treasury/helpers/issuedChecks";
 // 🎯 استدعاء أداة البطاقة السريعة لتعمل في الشاشة الرئيسية أيضاً
+import { BOARD_MEETINGS_COLLECTION } from "../board/boardLifecycle";
 import { useEmployeeModal } from "../../app/providers/GlobalEmployeeModal";
 import clsx from "clsx";
 import {
@@ -221,7 +222,7 @@ export default function DashboardPage() {
       setEmpCount(snap.size);
     });
 
-    const qMeet = query(collection(db, "board_meetings"), orderBy("date", "desc"));
+    const qMeet = query(collection(db, BOARD_MEETINGS_COLLECTION), orderBy("date", "desc"));
     const unsubMeet = onSnapshot(qMeet, snap => {
       setMeetings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });

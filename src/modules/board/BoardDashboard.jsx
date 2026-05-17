@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
 import {
   collection, query, onSnapshot, orderBy,
   addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
@@ -25,12 +24,16 @@ import ResponsiveTable from "../../ui/ResponsiveTable";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
 import {
+  printAllMemberAllowanceSheets,
   printBoardAllowancesReport,
   printBoardMeetingAttendanceReport,
   printBoardMeetingsReport,
   printBoardOverview,
+  printMeetingMinutes,
+  printMemberAllowanceSheet,
 } from "./BoardPrints";
 import {
+  BOARD_MEETINGS_COLLECTION,
   BOARD_MEMBERSHIPS_COLLECTION,
   BOARD_TERMS_COLLECTION,
   buildBoardMemberViewsFromMemberships,
@@ -43,6 +46,7 @@ import {
   isBoardMembershipActiveOnDate,
 } from "./boardLifecycle";
 import BoardTermsTab from "./BoardTermsTab";
+import ErrorBoundary from "../../ui/ErrorBoundary";
 import clsx from "clsx";
 import {
   ShieldCheck, Users, CalendarDays, Coins, PieChart, Activity,
@@ -50,6 +54,7 @@ import {
   MapPin, Clock, BadgeCheck, X, Save, Plus, Gavel, BarChart3,
   UserCheck, UserX, FileText, AlertTriangle, ChevronRight,
   Printer, Download, RefreshCw, Filter, Search,
+  Upload, Bell, Calendar, BarChart4, Flag, ScrollText, FileUp, UsersRound, Vote, ListChecks,
 } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════
@@ -100,6 +105,19 @@ const STATUS_COLORS = {
   held:       "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300",
   cancelled:  "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300",
   postponed:  "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300",
+};
+
+const DECISION_STATUSES = {
+  new: "جديد",
+  in_progress: "قيد التنفيذ",
+  completed: "منفذ",
+  stalled: "متعثر",
+};
+const DECISION_STATUS_COLORS = {
+  new: "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-300",
+  in_progress: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300",
+  completed: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300",
+  stalled: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300",
 };
 
 const MEMBER_STATE_COLORS = {
@@ -372,7 +390,7 @@ function ConfirmDelete({ open, onClose, onConfirm, label }) {
 // §3  تبويب النظرة العامة (Dashboard)
 // ═══════════════════════════════════════════════════════════════
 
-function DashboardTab({ members, meetings, allEmployees, settlementTransactions, activeTerm, T, setActiveTab, openEmployeeModal }) {
+function DashboardTab({ members, meetings, allEmployees, memberships, settlementTransactions, activeTerm, T, setActiveTab, openEmployeeModal }) {
   const activeMembers = members.filter((member) => isActiveMember(member)).length;
   const heldMeetings  = meetings.filter(m => m.status === "held").length;
   const decisionsCount = meetings.reduce((acc, m) => acc + (m.decisions?.length || 0), 0);
@@ -442,23 +460,47 @@ function DashboardTab({ members, meetings, allEmployees, settlementTransactions,
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Attendance bars */}
+          {/* Attendance tracker with visual chart */}
         <div className={clsx("p-5 rounded-2xl border shadow-sm", T.card)}>
-          <h2 className="text-sm font-black flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
-            <Target size={16} className="text-purple-500"/> نسب حضور الأعضاء
-          </h2>
-          <div className="space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+            <h2 className="text-sm font-black flex items-center gap-2">
+              <BarChart4 size={16} className="text-purple-500"/> نسب حضور الأعضاء
+            </h2>
+            <div className="flex gap-2 text-[9px] font-black">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"/> ≥85%</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"/> 70-84%</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500"/> &lt;70%</span>
+            </div>
+          </div>
+          <div className="space-y-2.5">
             {members.length === 0 && <p className="text-xs text-slate-400 font-bold">لا توجد بيانات</p>}
-            {members.map(m => {
-              const attended = meetings.filter(mt => mt.status === "held" && mt.attendees?.includes(m.id)).length;
-              const pct = heldMeetings === 0 ? 0 : Math.round((attended / heldMeetings) * 100);
+            {sortBoardMembers(members).map(m => {
+              const memberEligibleCount = meetings.filter(mt =>
+                mt.status === "held" &&
+                getEligibleBoardMembersForDate({
+                  memberships, allEmployees, members, termId: activeTerm?.id,
+                  onDate: mt.date || new Date(),
+                }).some((em) => em.id === m.id)
+              ).length;
+              const attendedRecords = meetings.filter(mt =>
+                mt.status === "held" &&
+                getMeetingAttendanceRecords(mt).some((r) => r.memberId === m.id && r.attendanceStatus === "present")
+              ).length;
+              const attendedLegacy = meetings.filter(mt =>
+                mt.status === "held" && mt.attendees?.includes(m.id) &&
+                !getMeetingAttendanceRecords(mt).some((r) => r.memberId === m.id)
+              ).length;
+              const attended = attendedRecords + attendedLegacy;
+              const totalMeetings = Math.max(memberEligibleCount || heldMeetings, heldMeetings);
+              const pct = totalMeetings === 0 ? 0 : Math.round((attended / totalMeetings) * 100);
               return (
-                <div key={m.id} className="flex items-center gap-3">
-                  <span className="text-[11px] font-black text-slate-600 dark:text-slate-300">{m.name || "—"}</span>
-                  <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                <div key={m.id} className="flex items-center gap-2.5">
+                  <span className="text-[10px] font-black text-slate-600 dark:text-slate-300 min-w-[80px] truncate">{m.name || "—"}</span>
+                  <div className="flex-1 h-3 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden relative">
                     <div className={clsx("h-full rounded-full transition-all duration-1000", pct>=85?"bg-emerald-500":pct>=70?"bg-amber-500":"bg-rose-500")} style={{width:`${pct}%`}}/>
+                    <span className="absolute inset-0 flex items-center justify-center text-[8px] font-black text-white mix-blend-difference">{pct}%</span>
                   </div>
-                  <span className="text-[11px] font-black w-8">{pct}%</span>
+                  <span className="text-[10px] font-bold text-slate-400 min-w-[40px] text-left">{attended}/{totalMeetings}</span>
                 </div>
               );
             })}
@@ -515,6 +557,55 @@ function DashboardTab({ members, meetings, allEmployees, settlementTransactions,
         </div>
       </div>
 
+      {/* تقييم الأداء الدوري */}
+      <div className={clsx("p-5 rounded-2xl border shadow-sm", T.card)}>
+        <h2 className="text-sm font-black flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+          <Target size={16} className="text-amber-500"/> تقييم الأداء الدوري للأعضاء
+        </h2>
+        <div className="space-y-3">
+          {sortBoardMembers(members).map(m => {
+            const memberEligibleCount = Math.max(meetings.filter(mt =>
+              mt.status === "held" &&
+              (mt.attendees?.length > 0 || getMeetingAttendanceRecords(mt).length > 0)
+            ).length, 1);
+            const attendedRecords = meetings.filter(mt =>
+              mt.status === "held" &&
+              getMeetingAttendanceRecords(mt).some((r) => r.memberId === m.id && r.attendanceStatus === "present")
+            ).length;
+            const attendedLegacy = meetings.filter(mt =>
+              mt.status === "held" && mt.attendees?.includes(m.id) &&
+              !getMeetingAttendanceRecords(mt).some((r) => r.memberId === m.id)
+            ).length;
+            const attended = attendedRecords + attendedLegacy;
+            const attendPct = Math.round((attended / memberEligibleCount) * 100);
+            const decisionCount = meetings.reduce((sum, mt) =>
+              sum + (mt.decisions?.filter(d => d.text && d.status !== "stalled").length || 0), 0);
+            const score = Math.min(100, Math.round((attendPct * 0.6) + (Math.min(decisionCount, 20) / 20 * 40)));
+            const scoreColor = score >= 85 ? "text-emerald-600" : score >= 70 ? "text-amber-600" : "text-rose-600";
+            const scoreBarColor = score >= 85 ? "bg-emerald-500" : score >= 70 ? "bg-amber-500" : "bg-rose-500";
+            return (
+              <div key={m.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-700/50">
+                <Avatar member={m} size="sm" idx={members.indexOf(m)}/>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-black text-slate-700 dark:text-slate-200">{m.name}</p>
+                  <p className="text-[9px] font-bold text-amber-600">{getBoardRoleLabel(m)}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-center">
+                    <div className="text-[9px] font-black text-slate-400">الحضور</div>
+                    <div className="text-xs font-black">{attendPct}%</div>
+                  </div>
+                  <div className="w-20 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                    <div className={clsx("h-full rounded-full transition-all", scoreBarColor)} style={{width:`${score}%`}}/>
+                  </div>
+                  <div className={clsx("text-sm font-black min-w-[36px] text-center", scoreColor)}>{score}%</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* ERB – وثيقة السجل الإلكتروني (مدمجة في اللوحة) */}
       <div className={clsx("p-5 rounded-2xl border shadow-sm bg-gradient-to-br from-amber-500/5 to-transparent", T.card)}>
         <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 mb-5">
@@ -525,7 +616,7 @@ function DashboardTab({ members, meetings, allEmployees, settlementTransactions,
           </div>
           <div className="sm:mr-auto flex gap-2">
             <button
-              onClick={() => printBoardMeetingsReport({ meetings, members: allEmployees })}
+              onClick={() => printBoardMeetingsReport({ meetings, members })}
               className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 text-[10px] font-black hover:bg-amber-500/20 transition-all flex items-center gap-1"
             >
               <Printer size={12}/> طباعة
@@ -887,9 +978,12 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
   const [attendanceRecords, setAttendanceRecords] = useState(getMeetingAttendanceRecords(meeting));
   const [newDecision, setNewDecision] = useState("");
   const [newDecisionVotes, setNewDecisionVotes] = useState({for:"",against:"",abstain:""});
+  const [newDecisionStatus, setNewDecisionStatus] = useState("new");
   const [attendees, setAttendees] = useState(getMeetingAttendeeIds(meeting));
   const [saving, setSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [attachments, setAttachments] = useState(meeting.attachments||[]);
+  const [proxies, setProxies] = useState(meeting.proxies||{});
   const meetingDate = meeting?.date || "";
   const resolvedTermId = meeting?.termId || activeTerm?.id || "";
   const eligibleMembers = useMemo(() => {
@@ -948,6 +1042,9 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
     setAttendees(getMeetingAttendeeIds(meeting));
     setNewDecision("");
     setNewDecisionVotes({ for: "", against: "", abstain: "" });
+    setNewDecisionStatus("new");
+    setAttachments(meeting.attachments||[]);
+    setProxies(meeting.proxies||{});
   }, [meeting]);
 
   const persistAttendees = async (updated) => {
@@ -962,7 +1059,7 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
     setAttendees(attendancePayload.attendees);
     setAttendanceRecords(attendancePayload.attendanceRecords);
     try {
-      await updateDoc(doc(db,"board_meetings",meeting.id), attendancePayload);
+      await updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id), attendancePayload);
     } catch (e) {
       console.error(e);
     }
@@ -986,7 +1083,14 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
     await persistAttendees([]);
   };
 
-  // Add decision
+  // Proxy system
+  const setProxy = useCallback(async (absentMemberId, proxyMemberId) => {
+    const updated = { ...proxies, [absentMemberId]: proxyMemberId === "none" ? null : proxyMemberId };
+    setProxies(updated);
+    try { await updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id),{proxies:updated}); } catch(e){console.error(e);}
+  }, [proxies, meeting.id]);
+
+  // Add decision with status
   const addDecision = async () => {
     if (!newDecision.trim()) return;
     const againstVotes = parseInt(newDecisionVotes.against) || 0;
@@ -1000,25 +1104,36 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
       return;
     }
 
-    const d = { text: newDecision.trim(), votes:{for:inferredForVotes,against:againstVotes,abstain:abstainVotes}};
+    const d = { text: newDecision.trim(), status: newDecisionStatus, votes:{for:inferredForVotes,against:againstVotes,abstain:abstainVotes}, createdAt: new Date().toISOString() };
     const updated = [...decisions, d];
     setDecisions(updated);
-    setNewDecision(""); setNewDecisionVotes({for:"",against:"",abstain:""});
-    try { await updateDoc(doc(db,"board_meetings",meeting.id),{decisions:updated}); } catch(e){console.error(e);}
+    setNewDecision(""); setNewDecisionVotes({for:"",against:"",abstain:""}); setNewDecisionStatus("new");
+    try { await updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id),{decisions:updated}); } catch(e){console.error(e);}
+  };
+
+  // Update decision status
+  const updateDecisionStatus = async (i, newStatus) => {
+    const updated = decisions.map((d, idx) => idx === i ? { ...d, status: newStatus } : d);
+    setDecisions(updated);
+    try { await updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id),{decisions:updated}); } catch(e){console.error(e);}
   };
 
   // Remove decision
   const removeDecision = async (i) => {
     const updated = decisions.filter((_,idx)=>idx!==i);
     setDecisions(updated);
-    try { await updateDoc(doc(db,"board_meetings",meeting.id),{decisions:updated}); } catch(e){console.error(e);}
+    try { await updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id),{decisions:updated}); } catch(e){console.error(e);}
   };
 
-  // Mark meeting as held
+  // Mark meeting as held with quorum check
   const markHeld = async () => {
+    const quorumNeeded = Math.ceil(eligibleMembers.length / 2) + 1;
+    if (attendees.length < quorumNeeded) {
+      if (!window.confirm(`⚠️ عدد الحضور (${attendees.length}) أقل من النصاب القانوني (${quorumNeeded}). هل تريد متابعة تأكيد الانعقاد رغم ذلك؟`)) return;
+    }
     setSaving(true);
     try {
-      await updateDoc(doc(db,"board_meetings",meeting.id),{
+      await updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id),{
         status:"held",
         termId: resolvedTermId,
         attendees,
@@ -1036,7 +1151,7 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
   return (
     <>
       <ConfirmDelete open={deleteOpen} onClose={()=>setDeleteOpen(false)} label={meeting.title}
-        onConfirm={async()=>{try{await deleteDoc(doc(db,"board_meetings",meeting.id)); await logAuditEvent("board_meeting_deleted", { meetingId: meeting.id, title: meeting.title || "", date: meeting.date || "" }); onDelete();}catch(e){console.error(e);}}}/>
+        onConfirm={async()=>{try{await deleteDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id)); await logAuditEvent("board_meeting_deleted", { meetingId: meeting.id, title: meeting.title || "", date: meeting.date || "" }); onDelete();}catch(e){console.error(e);}}}/>
       <div className="space-y-5 animate-in slide-in-from-right-4 duration-300">
         {/* Info header */}
         <div className="flex flex-col sm:flex-row gap-4 p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-transparent border border-amber-200/30 dark:border-amber-800/20">
@@ -1122,18 +1237,37 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
             {visibleMembers.map((m,i)=>{
               const present = attendees.includes(m.id);
               const selectable = eligibleMemberIds.includes(m.id) || present;
+              const hasProxy = proxies[m.id] && !present;
+              const proxyName = hasProxy ? visibleMembers.find(vm => vm.id === proxies[m.id])?.name : null;
               return (
-                <div key={m.id} onClick={()=>selectable && toggleAttendee(m.id)} className={clsx("flex items-center gap-3 p-2.5 rounded-xl border transition-all select-none",
-                  selectable ? "cursor-pointer" : "opacity-60 cursor-not-allowed",
-                  present?"bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800/40 hover:bg-emerald-100":"bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-800")}>
-                  <Avatar member={m} size="sm" idx={i}/>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-black text-slate-800 dark:text-slate-200 leading-5">{m.name || "—"}</p>
-                    <p className="text-[9px] font-bold text-slate-400">{getBoardRoleLabel(m)}</p>
+                <div key={m.id} className={clsx("flex items-center gap-3 p-2.5 rounded-xl border transition-all",
+                  present || selectable ? "" : "opacity-60",
+                  present?"bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800/40":"bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-700/50")}>
+                  <div className={clsx("flex-1 min-w-0", selectable ? "cursor-pointer" : "")} onClick={()=>selectable && toggleAttendee(m.id)}>
+                    <div className="flex items-center gap-2">
+                      <Avatar member={m} size="sm" idx={i}/>
+                      <div>
+                        <p className="text-[11px] font-black text-slate-800 dark:text-slate-200 leading-5">{m.name || "—"}</p>
+                        <p className="text-[9px] font-bold text-slate-400">{getBoardRoleLabel(m)}</p>
+                        {hasProxy && <p className="text-[8px] font-bold text-amber-600">وكيل: {proxyName}</p>}
+                      </div>
+                    </div>
                   </div>
-                  <div className={clsx("w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
-                    present?"bg-emerald-500 border-emerald-500":"border-slate-300 dark:border-slate-600")}>
-                    {present && <CheckCircle2 size={12} className="text-white"/>}
+                  <div className="flex items-center gap-2">
+                    {!present && eligibleMemberIds.includes(m.id) && (
+                      <select value={proxies[m.id]||"none"} onChange={e=>setProxy(m.id, e.target.value)}
+                        onMouseDown={e=>e.stopPropagation()}
+                        className="text-[8px] font-black rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1 py-0.5 max-w-[80px]">
+                        <option value="none">بدون وكيل</option>
+                        {eligibleMembers.filter(vm => vm.id !== m.id).map(vm => (
+                          <option key={vm.id} value={vm.id}>{vm.name?.slice(0,12)||"—"}</option>
+                        ))}
+                      </select>
+                    )}
+                    <div onClick={()=>selectable && toggleAttendee(m.id)} className={clsx("w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all cursor-pointer",
+                      present?"bg-emerald-500 border-emerald-500":"border-slate-300 dark:border-slate-600")}>
+                      {present && <CheckCircle2 size={12} className="text-white"/>}
+                    </div>
                   </div>
                 </div>
               );
@@ -1142,34 +1276,54 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
           {members.length===0 && <p className="text-xs text-slate-400 font-bold">لا يوجد أعضاء</p>}
         </div>
 
-        {/* Decisions */}
+        {/* Decisions with status workflow */}
         <div>
-          <h4 className="text-xs font-black text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5"><Gavel size={13}/> القرارات الصادرة</h4>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-xs font-black text-slate-500 uppercase tracking-wide flex items-center gap-1.5"><Gavel size={13}/> القرارات الصادرة</h4>
+            <div className="flex gap-1.5 text-[9px] font-black">
+              {Object.entries(DECISION_STATUSES).map(([k,v])=>(
+                <span key={k} className={clsx("px-2 py-0.5 rounded-md border", DECISION_STATUS_COLORS[k])}>{v}</span>
+              ))}
+            </div>
+          </div>
           <div className="space-y-2 mb-3">
             {decisions.map((d,i)=>(
               <div key={i} className="p-3 rounded-xl bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-800/30 group">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex gap-2 items-start flex-1">
+                  <div className="flex gap-2 items-start flex-1 min-w-0">
                     <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[9px] font-black flex items-center justify-center shrink-0 mt-0.5">{i+1}</span>
-                    <p className="text-[11px] font-black text-slate-700 dark:text-slate-200">{d.text}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-black text-slate-700 dark:text-slate-200">{d.text}</p>
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                        <select value={d.status||"new"} onChange={e=>updateDecisionStatus(i, e.target.value)}
+                          className={clsx("px-2 py-0.5 rounded-md text-[9px] font-black border cursor-pointer", DECISION_STATUS_COLORS[d.status]||DECISION_STATUS_COLORS.new)}>
+                          {Object.entries(DECISION_STATUSES).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                        </select>
+                        <span className="text-emerald-600 text-[9px] font-bold">✓ {d.votes?.for??0}</span>
+                        <span className="text-rose-600 text-[9px] font-bold">✗ {d.votes?.against??0}</span>
+                        <span className="text-slate-400 text-[9px] font-bold">○ {d.votes?.abstain??0}</span>
+                      </div>
+                    </div>
                   </div>
                   <button onClick={()=>removeDecision(i)} className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-lg bg-rose-100 dark:bg-rose-900/30 text-rose-500 hover:bg-rose-200 transition-all flex items-center justify-center shrink-0">
                     <X size={11}/>
                   </button>
-                </div>
-                <div className="flex gap-3 mt-1.5 mr-7 text-[9px] font-bold">
-                  <span className="text-emerald-600">✓ موافق: {d.votes?.for??0}</span>
-                  <span className="text-rose-600">✗ معارض: {d.votes?.against??0}</span>
-                  <span className="text-slate-400">○ ممتنع: {d.votes?.abstain??0}</span>
                 </div>
               </div>
             ))}
             {decisions.length===0 && <p className="text-[11px] text-slate-400 font-bold py-2">لا توجد قرارات مسجلة</p>}
           </div>
 
-          {/* Add decision */}
+          {/* Add decision with status selector */}
           <div className="p-3 rounded-xl border border-dashed border-amber-300 dark:border-amber-800/50 bg-amber-50/30 dark:bg-amber-900/10 space-y-2">
             <textarea className={clsx(inputCls,"resize-none text-[11px]")} rows={2} placeholder="نص القرار الجديد..." value={newDecision} onChange={e=>setNewDecision(e.target.value)}/>
+            <div className="flex items-center gap-2">
+              <label className="text-[9px] font-black text-slate-400 shrink-0">حالة القرار:</label>
+              <select value={newDecisionStatus} onChange={e=>setNewDecisionStatus(e.target.value)}
+                className={clsx("px-2.5 py-1.5 rounded-lg text-[10px] font-black border", DECISION_STATUS_COLORS[newDecisionStatus])}>
+                {Object.entries(DECISION_STATUSES).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
             <p className="text-[9px] font-black text-slate-500">عدد الحاضرين الحالي: {presentCount}. إذا تُركت خانة "موافق" فارغة فسيتم احتسابها تلقائيًا من الباقي.</p>
             <div className="grid grid-cols-3 gap-2">
               {["for","against","abstain"].map(k=>(
@@ -1185,6 +1339,57 @@ function MeetingDetail({ meeting, members, allEmployees, memberships, activeTerm
             </button>
           </div>
         </div>
+
+        {/* Attachments */}
+        <div>
+          <h4 className="text-xs font-black text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-1.5"><FileUp size={13}/> المرفقات</h4>
+          <div className="space-y-2 mb-3">
+            {attachments.map((att, i) => (
+              <div key={i} className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-700/50">
+                <span className="text-[10px] font-black text-slate-600 dark:text-slate-300 flex-1 truncate">{att.name}</span>
+                <span className="text-[9px] font-bold text-slate-400 shrink-0">{att.size}</span>
+                {att.url && (
+                  <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700">
+                    <Download size={13}/>
+                  </a>
+                )}
+                <button onClick={async()=>{
+                  const updated = attachments.filter((_,idx)=>idx!==i);
+                  setAttachments(updated);
+                  try{await updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id),{attachments:updated});}catch(e){console.error(e);}
+                }} className="text-rose-500 hover:text-rose-600"><X size={13}/></button>
+              </div>
+            ))}
+            {attachments.length === 0 && <p className="text-[10px] text-slate-400 font-bold">لا توجد مرفقات</p>}
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="file" id="file-upload" className="hidden" onChange={(e)=>{
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                const dataUrl = ev.target?.result;
+                const newAtt = { name: file.name, size: `${(file.size/1024).toFixed(1)}KB`, url: dataUrl };
+                const updated = [...attachments, newAtt];
+                setAttachments(updated);
+                updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,meeting.id),{attachments:updated}).catch(console.error);
+              };
+              reader.readAsDataURL(file);
+              e.target.value = "";
+            }}/>
+            <label htmlFor="file-upload" className="px-3 py-1.5 rounded-xl text-[10px] font-black bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 hover:bg-sky-200 dark:hover:bg-sky-900/50 transition-all flex items-center gap-1 cursor-pointer">
+              <Upload size={12}/> إضافة مرفق
+            </label>
+          </div>
+        </div>
+
+        {/* Meeting Minutes Print */}
+        <button
+          onClick={() => printMeetingMinutes({ meeting: { ...meeting, decisions, attendees, attendanceRecords, attachments }, decisions, attendanceRecords })}
+          className="w-full py-2.5 rounded-xl text-[11px] font-black bg-amber-500 text-white hover:bg-amber-600 transition-all flex items-center justify-center gap-2"
+        >
+          <Printer size={14}/> طباعة محضر الاجتماع الرسمي
+        </button>
 
         {meeting.notes && (
           <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
@@ -1205,6 +1410,9 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
   const [editMeeting,  setEditMeeting]  = useState(null);
   const [detailMeeting,setDetailMeeting]= useState(null);
   const [saving,       setSaving]       = useState(false);
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
+  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
 
   const filtered = meetings.filter(m=>{
     const matchStatus = filterStatus==="all" || m.status===filterStatus;
@@ -1228,7 +1436,7 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
         updatedAt: serverTimestamp(),
       };
       if (editMeeting) {
-        await updateDoc(doc(db,"board_meetings",editMeeting.id), payload);
+        await updateDoc(doc(db,BOARD_MEETINGS_COLLECTION,editMeeting.id), payload);
         await logAuditEvent("board_meeting_updated", {
           meetingId: editMeeting.id,
           title: form.title || "",
@@ -1236,7 +1444,7 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
           status: form.status || "",
         });
       } else {
-        await addDoc(collection(db,"board_meetings"), {
+        await addDoc(collection(db,BOARD_MEETINGS_COLLECTION), {
           ...payload,
           decisions:[],
           attendees:[],
@@ -1312,6 +1520,12 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
       {/* Controls */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div className="flex flex-wrap gap-2 items-center">
+          {/* View toggle */}
+          <button onClick={()=>setShowCalendar(!showCalendar)} className={clsx("px-3 py-1.5 rounded-full text-[11px] font-black transition-all border flex items-center gap-1",
+            showCalendar?"bg-violet-500 text-white border-violet-500 shadow-sm":"bg-transparent text-slate-500 border-slate-200 dark:border-slate-700 hover:border-violet-400 hover:text-violet-600")}>
+            <Calendar size={13}/> {showCalendar?"قائمة":"تقويم"}
+          </button>
+          <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 hidden sm:block"/>
           {/* Status filter */}
           {[{k:"all",l:"الكل"},{k:"held",l:"منعقد"},{k:"scheduled",l:"مجدول"},{k:"cancelled",l:"ملغي"}].map(f=>(
             <button key={f.k} onClick={()=>setFilterStatus(f.k)} className={clsx("px-3 py-1.5 rounded-full text-[11px] font-black transition-all border",
@@ -1339,8 +1553,48 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
         </div>
       </div>
 
+      {/* Calendar View */}
+      {showCalendar && (
+        <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
+          <div className="flex items-center justify-between mb-4">
+            <button onClick={()=>{if(calendarMonth===0){setCalendarMonth(11);setCalendarYear(y=>y-1);}else setCalendarMonth(m=>m-1);}} className="px-3 py-1.5 rounded-lg border text-xs font-black hover:bg-slate-50 transition-all">{'<'}</button>
+            <div className="text-sm font-black">{ARABIC_MONTHS[calendarMonth]} {calendarYear}</div>
+            <button onClick={()=>{if(calendarMonth===11){setCalendarMonth(0);setCalendarYear(y=>y+1);}else setCalendarMonth(m=>m+1);}} className="px-3 py-1.5 rounded-lg border text-xs font-black hover:bg-slate-50 transition-all">{'>'}</button>
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {["سبت","أحد","اثنين","ثلاثاء","أربعاء","خميس","جمعة"].map(d=><div key={d} className="text-center text-[9px] font-black text-slate-400 py-1">{d}</div>)}
+            {(()=>{
+              const firstDay = new Date(calendarYear, calendarMonth, 1);
+              const lastDate = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+              const startOffset = (firstDay.getDay() + 1) % 7;
+              const cells = [];
+              for (let i = 0; i < startOffset; i++) cells.push(<div key={`e-${i}`} className="aspect-square rounded-xl bg-transparent"/>);
+              for (let d = 1; d <= lastDate; d++) {
+                const dateStr = `${calendarYear}-${String(calendarMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+                const dayMeetings = filtered.filter(m => String(m.date||"").startsWith(dateStr));
+                const today = new Date();
+                const isToday = d === today.getDate() && calendarMonth === today.getMonth() && calendarYear === today.getFullYear();
+                cells.push(
+                  <div key={d} className={clsx("aspect-square rounded-xl border p-1 flex flex-col gap-0.5 overflow-hidden", isToday ? "border-amber-400 bg-amber-50/50" : "border-slate-100 dark:border-slate-700/50 bg-slate-50/30")}>
+                    <span className={clsx("text-[9px] font-black", isToday ? "text-amber-600" : "text-slate-500")}>{d}</span>
+                    {dayMeetings.slice(0,2).map(m=>(
+                      <button key={m.id} onClick={()=>setDetailMeeting(m)} className={clsx("text-[7px] font-black leading-tight truncate rounded px-1 py-0.5 text-right",
+                        m.status==="held"?"bg-emerald-100 text-emerald-700":m.status==="scheduled"?"bg-sky-100 text-sky-700":m.status==="cancelled"?"bg-rose-100 text-rose-600":"bg-amber-100 text-amber-700")}>
+                        {m.title?.slice(0,18)}
+                      </button>
+                    ))}
+                    {dayMeetings.length > 2 && <span className="text-[7px] font-black text-slate-400">+{dayMeetings.length-2}</span>}
+                  </div>
+                );
+              }
+              return cells;
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* Meetings list */}
-      {filtered.length===0 && (
+      {!showCalendar && filtered.length===0 && (
         <div className="text-center py-16 border-2 border-dashed rounded-2xl">
           <CalendarDays size={36} className="text-slate-300 mx-auto mb-3"/>
           <p className="font-black text-slate-400 text-sm">لا توجد اجتماعات</p>
@@ -1348,8 +1602,9 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
         </div>
       )}
 
-      <div className="space-y-3">
-        {filtered.map(m=>{
+      {!showCalendar && (
+        <div className="space-y-3">
+          {filtered.map(m=>{
           const {day,month,year} = getMeetingDay(m.date);
           const eligibleMembersCount = getEligibleBoardMembersForDate({
             memberships,
@@ -1410,7 +1665,7 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
                   <button onClick={()=>openEdit(m)} className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-900/30 text-amber-600 hover:bg-amber-200 transition-all flex items-center justify-center">
                     <Edit3 size={13}/>
                   </button>
-                  <button onClick={async()=>{try{await deleteDoc(doc(db,"board_meetings",m.id)); await logAuditEvent("board_meeting_deleted", { meetingId: m.id, title: m.title || "", date: m.date || "" });}catch(e){console.error(e);}}}
+                  <button onClick={async()=>{try{await deleteDoc(doc(db,BOARD_MEETINGS_COLLECTION,m.id)); await logAuditEvent("board_meeting_deleted", { meetingId: m.id, title: m.title || "", date: m.date || "" });}catch(e){console.error(e);}}}
                     className="w-7 h-7 rounded-lg bg-rose-100 dark:bg-rose-900/30 text-rose-500 hover:bg-rose-200 transition-all flex items-center justify-center">
                     <Trash2 size={13}/>
                   </button>
@@ -1434,7 +1689,8 @@ function MeetingsTab({ members, allEmployees, memberships, activeTerm, meetings,
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1490,21 +1746,20 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
       .forEach((tx) => {
         (tx.settlementExpenses || []).forEach((expense) => {
           if (!matchesPeriod(expense.date || tx.settlementDate || tx.date || "")) return;
-          const allowanceKey =
-            expense.category === "بدل انتقال"
-              ? "travel"
-              : expense.category === "بدل جلسات"
-                ? "sessions"
-                : ["ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category)
-                  ? "hospitality"
-                  : null;
-
-          if (!allowanceKey || !Array.isArray(expense.boardMembers) || expense.boardMembers.length === 0) return;
+          if (!Array.isArray(expense.boardMembers) || expense.boardMembers.length === 0) return;
 
           const perMember = Number(expense.allowancePerMember || 0) || (Number(expense.amount || 0) / expense.boardMembers.length);
           expense.boardMembers.forEach((memberId) => {
-            if (!result[memberId]) result[memberId] = { travel: 0, sessions: 0, hospitality: 0 };
-            result[memberId][allowanceKey] += perMember;
+            if (!result[memberId]) {
+              result[memberId] = { travel: 0, sessions: 0, hospitality: 0, other: {} };
+            }
+            if (expense.category === "بدل انتقال") result[memberId].travel += perMember;
+            else if (expense.category === "بدل جلسات") result[memberId].sessions += perMember;
+            else if (["ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category)) result[memberId].hospitality += perMember;
+            else {
+              if (!result[memberId].other[expense.category]) result[memberId].other[expense.category] = 0;
+              result[memberId].other[expense.category] += perMember;
+            }
           });
         });
       });
@@ -1512,9 +1767,11 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
   }, [matchesPeriod, settlementTransactions]);
 
   const memberRows = rosterMembers.map((m) => {
-    const allowances = settlementAllowanceMap[m.id] || { travel: 0, sessions: 0, hospitality: 0 };
-    const total = Number(allowances.sessions || 0) + Number(allowances.travel || 0) + Number(allowances.hospitality || 0);
-    return { member: m, allowances, total };
+    const allowances = settlementAllowanceMap[m.id] || { travel: 0, sessions: 0, hospitality: 0, other: {} };
+    const otherArr = Object.entries(allowances.other || {}).map(([category, amount]) => ({ category, amount }));
+    const otherTotal = otherArr.reduce((s, o) => s + o.amount, 0);
+    const total = Number(allowances.sessions || 0) + Number(allowances.travel || 0) + Number(allowances.hospitality || 0) + otherTotal;
+    return { member: m, allowances, otherAllowances: otherArr, total };
   }).sort((a, b) => b.total - a.total);
 
   const detailedRows = settlementTransactions
@@ -1551,7 +1808,7 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
     if (row.sourceMode === "individual_travel") return "انتقال فردي / مهمة مستقلة";
     return "بدل مباشر بدون اجتماع";
   }, []);
-  const handleDetailedExport = useCallback(() => {
+  const handleDetailedExport = useCallback(async () => {
     const rows = filteredDetailedRows.map((row) => ({
       "نوع البدل": row.category,
       "مصدر البدل": getAllowanceSourceLabel(row),
@@ -1570,6 +1827,7 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
       "البيان": row.notes || row.sourceName || "",
     }));
 
+    const XLSX = await import("xlsx");
     const ws = XLSX.utils.json_to_sheet(rows);
     ws["!cols"] = [
       { wch: 18 },
@@ -1787,10 +2045,17 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
         <div className="space-y-3">
           {rosterMembers.map((m,i)=>{
             const memberRow = memberRows.find(r => r.member.id === m.id);
-            const meetTotal = memberRow?.allowances.sessions || 0;
-            const travelTotal = memberRow?.allowances.travel || 0;
-            const hospitalityTotal = memberRow?.allowances.hospitality || 0;
-            const memberGrandTotal = meetTotal + travelTotal + hospitalityTotal;
+            const standardItems = [
+              {l:"بدل الجلسات",v:memberRow?.allowances?.sessions || 0,c:"text-sky-600"},
+              {l:"بدل الانتقال",v:memberRow?.allowances?.travel || 0,c:"text-indigo-600"},
+              {l:"بدل الضيافة",v:memberRow?.allowances?.hospitality || 0,c:"text-emerald-600"},
+            ];
+            const otherItems = (memberRow?.otherAllowances || []).map(o => ({
+              l: o.category, v: o.amount, c: "text-amber-600",
+            }));
+            const allItems = [...standardItems, ...otherItems];
+            const memberGrandTotal = memberRow?.total || 0;
+            const cols = Math.min(allItems.length, 4);
             return (
               <div key={m.id} className={clsx("p-4 rounded-2xl border shadow-sm",T.card)}>
                 <div className="flex items-center gap-3 mb-3">
@@ -1804,15 +2069,11 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
                     <div className="text-[9px] font-bold text-slate-400 text-left">إجمالي معتمد</div>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    {l:"بدل الجلسات",v:meetTotal,c:"text-sky-600"},
-                    {l:"بدل الانتقال",v:travelTotal,c:"text-indigo-600"},
-                    {l:"بدل الضيافة",v:hospitalityTotal,c:"text-emerald-600"},
-                  ].map((s,j)=>(
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                  {allItems.map((s,j)=>(
                     <div key={j} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50 text-center">
                       <div className={clsx("font-black text-sm",s.c)}>{formatMoney(s.v)}</div>
-                      <div className="text-[9px] font-bold text-slate-400 mt-0.5">{s.l}</div>
+                      <div className="text-[9px] font-bold text-slate-400 mt-0.5 truncate">{s.l}</div>
                     </div>
                   ))}
                 </div>
@@ -1830,6 +2091,9 @@ function AllowancesTab({ members, memberships, allEmployees, activeTerm, settlem
 // ═══════════════════════════════════════════════════════════════
 
 function ReportsTab({ members, meetings, memberships, allEmployees, settlementTransactions, activeTerm, T }) {
+  const [reportSubTab, setReportSubTab] = useState("overview");
+  const [decisionSearch, setDecisionSearch] = useState("");
+  const [decisionArchiveFilter, setDecisionArchiveFilter] = useState("all");
   const heldMeetings = meetings.filter(m=>m.status==="held");
   const termEnd = parseBoardDate(activeTerm?.endDate || BOARD_TERM_END);
   const termStart = parseBoardDate(activeTerm?.startDate || BOARD_TERM_START);
@@ -1845,8 +2109,36 @@ function ReportsTab({ members, meetings, memberships, allEmployees, settlementTr
     historicalMembers.length > 0 ? historicalMembers : members,
     settlementTransactions
   );
+
+  // Decision archive data
+  const allDecisions = useMemo(() => {
+    const result = [];
+    heldMeetings.forEach(m => {
+      (m.decisions||[]).forEach((d, i) => {
+        result.push({
+          id: `${m.id}-${i}`,
+          meetingTitle: m.title,
+          meetingDate: m.date,
+          meetingId: m.id,
+          text: d.text,
+          status: d.status || "new",
+          votes: d.votes || {for:0, against:0, abstain:0},
+          index: i,
+        });
+      });
+    });
+    return result;
+  }, [heldMeetings]);
+  const filteredDecisions = useMemo(() => {
+    return allDecisions.filter(d => {
+      const matchFilter = decisionArchiveFilter === "all" || d.status === decisionArchiveFilter;
+      const matchSearch = !decisionSearch || d.text?.includes(decisionSearch) || d.meetingTitle?.includes(decisionSearch);
+      return matchFilter && matchSearch;
+    });
+  }, [allDecisions, decisionArchiveFilter, decisionSearch]);
   const allowanceRows = rosterMembers.map((member) => {
     const totals = { sessions: 0, travel: 0, hospitality: 0 };
+    const otherAllowances = [];
     settlementTransactions
       .filter((transaction) => transaction.isSettled)
       .forEach((transaction) => {
@@ -1856,15 +2148,21 @@ function ReportsTab({ members, meetings, memberships, allEmployees, settlementTr
             Number(expense.amount || 0) / Math.max(expense.boardMembers.length || 1, 1)
           );
           if (expense.category === "بدل جلسات") totals.sessions += perMember;
-          if (expense.category === "بدل انتقال") totals.travel += perMember;
-          if (["ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category)) totals.hospitality += perMember;
+          else if (expense.category === "بدل انتقال") totals.travel += perMember;
+          else if (["ضيافة وبوفيه", "بدل ضيافة"].includes(expense.category)) totals.hospitality += perMember;
+          else {
+            const existing = otherAllowances.find((o) => o.category === expense.category);
+            if (existing) existing.amount += perMember;
+            else otherAllowances.push({ category: expense.category, amount: perMember });
+          }
         });
       });
 
     return {
       member,
       allowances: totals,
-      total: totals.sessions + totals.travel + totals.hospitality,
+      otherAllowances,
+      total: totals.sessions + totals.travel + totals.hospitality + otherAllowances.reduce((s, o) => s + o.amount, 0),
     };
   });
   let totalAttendancePct = 0;
@@ -1894,6 +2192,21 @@ function ReportsTab({ members, meetings, memberships, allEmployees, settlementTr
         </button>
       </div>
 
+      {/* Sub-tabs: overview | decisions archive */}
+      <div className="flex gap-2 flex-wrap">
+        {[
+          {k:"overview", l:"نظرة عامة", icon:BarChart3},
+          {k:"decisions", l:"أرشيف القرارات", icon:ListChecks},
+          {k:"allowances", l:"البدلات", icon:Coins},
+        ].map(t=>(
+          <button key={t.k} onClick={()=>setReportSubTab(t.k)} className={clsx("px-3 py-1.5 rounded-xl text-[11px] font-black transition-all border flex items-center gap-1",
+            reportSubTab===t.k?"bg-purple-500 text-white border-purple-500 shadow-sm":"bg-transparent text-slate-500 border-slate-200 dark:border-slate-700 hover:border-purple-400 hover:text-purple-600")}>
+            <t.icon size={13}/> {t.l}
+          </button>
+        ))}
+      </div>
+
+      {reportSubTab === "overview" && (<>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {[
           {
@@ -1904,7 +2217,7 @@ function ReportsTab({ members, meetings, memberships, allEmployees, settlementTr
           {
             title: "سجل الاجتماعات والقرارات",
             desc: "تقرير مطبوع للاجتماعات المنعقدة والحاضرين والقرارات.",
-            action: () => printBoardMeetingsReport({ meetings, members: allEmployees }),
+            action: () => printBoardMeetingsReport({ meetings, members: rosterMembers }),
           },
           {
             title: "تقرير البدلات المعتمدة",
@@ -1980,6 +2293,135 @@ function ReportsTab({ members, meetings, memberships, allEmployees, settlementTr
           </div>
         </div>
       </div>
+    </>)}
+
+      {/* Decision Archive */}
+      {reportSubTab === "decisions" && (
+        <div className="space-y-4">
+          <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+              <h3 className="text-sm font-black flex items-center gap-2"><ListChecks size={16} className="text-amber-500"/> أرشيف القرارات ({allDecisions.length})</h3>
+              <div className="flex gap-2 items-center">
+                <div className="relative">
+                  <Search size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                  <input className={clsx(inputCls,"pr-8 py-1.5 text-xs w-48")} placeholder="بحث في القرارات..." value={decisionSearch} onChange={e=>setDecisionSearch(e.target.value)}/>
+                </div>
+                <select value={decisionArchiveFilter} onChange={e=>setDecisionArchiveFilter(e.target.value)} className={clsx(inputCls,"w-auto py-1.5 text-xs")}>
+                  <option value="all">كل الحالات</option>
+                  {Object.entries(DECISION_STATUSES).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {filteredDecisions.map(d => (
+              <div key={d.id} className={clsx("p-3 rounded-2xl border shadow-sm", T.card)}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-black text-slate-800 dark:text-slate-100">{d.text}</p>
+                    <div className="flex flex-wrap gap-2 mt-1.5 text-[10px] font-bold text-slate-400">
+                      <span>{d.meetingTitle}</span>
+                      <span>•</span>
+                      <span>{formatDate(d.meetingDate)}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={clsx("px-2 py-0.5 rounded-md text-[9px] font-black border", DECISION_STATUS_COLORS[d.status])}>{DECISION_STATUSES[d.status]}</span>
+                  </div>
+                </div>
+                <div className="flex gap-3 mt-1.5 text-[9px] font-bold">
+                  <span className="text-emerald-600">✓ موافق: {d.votes.for}</span>
+                  <span className="text-rose-600">✗ معارض: {d.votes.against}</span>
+                  <span className="text-slate-400">○ ممتنع: {d.votes.abstain}</span>
+                </div>
+              </div>
+            ))}
+            {filteredDecisions.length === 0 && (
+              <div className="text-center py-12 border-2 border-dashed rounded-2xl">
+                <ScrollText size={36} className="text-slate-300 mx-auto mb-2"/>
+                <p className="font-black text-slate-400">لا توجد قرارات مطابقة</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Allowances subtab */}
+      {reportSubTab === "allowances" && (
+        <div className={clsx("p-5 rounded-2xl border shadow-sm", T.card)}>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+            <h3 className="text-sm font-black flex items-center gap-2"><Coins size={16} className="text-amber-500"/> ملخص البدلات</h3>
+            <div className="flex gap-2">
+              <button onClick={() => printBoardAllowancesReport({ allowances: allowanceRows, termStart: activeTerm?.startDate || BOARD_TERM_START, termEnd: activeTerm?.endDate || BOARD_TERM_END })}
+                className="px-3 py-1.5 rounded-xl text-[10px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 transition-all flex items-center gap-1"><Printer size={12}/> طباعة</button>
+              <button onClick={async() => {
+                const XLSX = await import("xlsx");
+                const rows = allowanceRows.map(r => ({
+                  "الاسم": r.member.name || "—",
+                  "الصفة": getBoardRoleLabel(r.member),
+                  "بدل الجلسات": r.allowances.sessions || 0,
+                  "بدل الانتقال": r.allowances.travel || 0,
+                  "بدل الضيافة": r.allowances.hospitality || 0,
+                  "الإجمالي": r.total,
+                }));
+                const ws = XLSX.utils.json_to_sheet(rows);
+                ws["!cols"] = [{wch:24},{wch:18},{wch:14},{wch:14},{wch:14},{wch:14}];
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "بدلات المجلس");
+                XLSX.writeFile(wb, `بدلات_المجلس_${activeTerm?.title||"الدورة_الحالية"}.xlsx`);
+              }} className="px-3 py-1.5 rounded-xl text-[10px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-emerald-600 transition-all flex items-center gap-1"><Download size={12}/> تصدير Excel للرواتب</button>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[500px]">
+              <thead><tr className="border-b border-slate-100 dark:border-slate-800">
+                <th className="p-3 text-right text-[10px] font-black text-slate-500">العضو</th>
+                <th className="p-3 text-center text-[10px] font-black text-slate-500">بدل الجلسات</th>
+                <th className="p-3 text-center text-[10px] font-black text-slate-500">بدل الانتقال</th>
+                <th className="p-3 text-center text-[10px] font-black text-slate-500">بدل الضيافة</th>
+                <th className="p-3 text-center text-[10px] font-black text-slate-500">الإجمالي</th>
+              </tr></thead>
+              <tbody>
+                {allowanceRows.map((r,i)=>(
+                  <tr key={r.member.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-amber-500/3">
+                    <td className="p-3">
+                      <div className="flex items-center gap-2">
+                        <Avatar member={r.member} size="sm" idx={i}/>
+                        <div><p className="font-black text-xs">{r.member.name}</p><p className="text-[9px] font-bold text-amber-600">{getBoardRoleLabel(r.member)}</p></div>
+                      </div>
+                    </td>
+                    <td className="p-3 text-center text-xs font-bold text-sky-600">{formatMoney(r.allowances.sessions||0)}</td>
+                    <td className="p-3 text-center text-xs font-bold text-indigo-600">{formatMoney(r.allowances.travel||0)}</td>
+                    <td className="p-3 text-center text-xs font-bold text-emerald-600">{formatMoney(r.allowances.hospitality||0)}</td>
+                    <td className="p-3 text-center font-black text-base text-amber-600">{formatMoney(r.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button onClick={() => {
+            printAllMemberAllowanceSheets({
+              memberRows: allowanceRows,
+              termInfo: `${activeTerm?.startDate || BOARD_TERM_START} - ${activeTerm?.endDate || BOARD_TERM_END}`,
+            });
+          }} className="mt-3 w-full py-2.5 rounded-xl text-[11px] font-black bg-amber-500 text-white hover:bg-amber-600 transition-all flex items-center justify-center gap-2">
+            <Printer size={14}/> طباعة كشوف بدلات كل الأعضاء PDF
+          </button>
+          <button onClick={() => {
+            allowanceRows.forEach((r, i) => {
+              setTimeout(() => printMemberAllowanceSheet({
+                member: r.member,
+                allowances: r.allowances,
+                otherAllowances: r.otherAllowances,
+                total: r.total,
+                termInfo: `${activeTerm?.startDate || BOARD_TERM_START} - ${activeTerm?.endDate || BOARD_TERM_END}`,
+              }), i * 500);
+            });
+          }} className="mt-2 w-full py-2 rounded-xl text-[11px] font-black border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 transition-all flex items-center justify-center gap-2">
+            <Printer size={13}/> طباعة كشف فردي لكل عضو (نوافذ منفصلة)
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2025,7 +2467,7 @@ export default function BoardDashboard() {
     );
 
     const unsubMeet = onSnapshot(
-      query(collection(db,"board_meetings"), orderBy("date","desc")),
+      query(collection(db,BOARD_MEETINGS_COLLECTION), orderBy("date","desc")),
       snap => { setMeetings(snap.docs.map(d=>({id:d.id,...d.data()}))); meetOk=true; check(); },
       err  => { console.error("board_meetings:",err); meetOk=true; check(); }
     );
@@ -2110,14 +2552,6 @@ export default function BoardDashboard() {
     { id: "reports", label: "التقارير", icon: PieChart },
   ];
 
-  const navTabs = [
-    { id:"dashboard",  label:"نظرة عامة",    icon:ShieldCheck },
-    { id:"members",    label:"أعضاء المجلس", icon:Users        },
-    { id:"meetings",   label:"الاجتماعات",   icon:CalendarDays },
-    { id:"allowances", label:"البدلات",       icon:Coins        },
-    { id:"reports",    label:"التقارير",      icon:PieChart     },
-  ];
-
   if (loading) return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
       <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"/>
@@ -2126,11 +2560,12 @@ export default function BoardDashboard() {
   );
 
   return (
+    <ErrorBoundary fallback="حدث خطأ في تحميل شاشة مجلس الإدارة">
     <div className={clsx("max-w-[1600px] mx-auto pb-20 animate-in fade-in duration-500",T.text)} dir="rtl">
       <BrandHeader sectionTitle="منظومة مجلس الإدارة والبدلات" sectionHint="المتابعة الإدارية والمالية والقرارات" className="mb-4" />
 
       <div className={clsx(
-        "px-4 pt-4 pb-0 rounded-[2rem] border shadow-sm mb-5 sticky top-0 z-[120] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl overflow-hidden",
+        "px-4 pt-4 pb-0 rounded-[2rem] border shadow-sm mb-5 bg-white dark:bg-slate-900 overflow-hidden",
         T.card
       )}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -2140,7 +2575,18 @@ export default function BoardDashboard() {
               اللجنة النقابية • {currentBoardMembers.length} من {TARGET_BOARD_SIZE} عضو حاليًا • {meetings.filter(m=>m.status==="held").length} اجتماعات • مع الاحتفاظ بالأعضاء المنتهية عضويتهم لأغراض التاريخ المالي والإداري
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {(()=>{
+              const termEndDate = parseBoardDate(activeTerm?.endDate || BOARD_TERM_END);
+              const daysLeft = termEndDate ? Math.max(0, Math.ceil((termEndDate - new Date())/(1000*60*60*24))) : 0;
+              if (daysLeft <= 90 && daysLeft > 0) return (
+                <div className={clsx("px-3 py-1.5 rounded-xl text-[10px] font-black border flex items-center gap-1.5",
+                  daysLeft <= 30 ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-amber-50 border-amber-200 text-amber-700")}>
+                  <Bell size={12}/> {daysLeft <= 30 ? `⚠️` : `🕐`} ينتهي任期 الدورة بعد {daysLeft} يوم
+                </div>
+              );
+              return null;
+            })()}
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>
             <span className="text-[10px] font-black text-slate-400">مزامنة مباشرة</span>
           </div>
@@ -2200,7 +2646,7 @@ export default function BoardDashboard() {
 
       {/* ── محتوى التبويبات ── */}
       <div className="mt-2">
-        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} allEmployees={allEmployees} settlementTransactions={settlementTransactions} activeTerm={activeTerm} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
+        {activeTab==="dashboard"  && <DashboardTab  members={boardMembers} meetings={meetings} allEmployees={allEmployees} memberships={effectiveBoardMemberships} settlementTransactions={settlementTransactions} activeTerm={activeTerm} T={T} setActiveTab={setActiveTab} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="members"    && <MembersTab    members={boardMembers} meetings={meetings} allEmployees={allEmployees} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="terms"      && <BoardTermsTab boardTerms={boardTerms} memberships={boardMemberships} allEmployees={allEmployees} activeTerm={activeTerm} T={T} openEmployeeModal={openEmployeeModal}/>}
         {activeTab==="meetings"   && <MeetingsTab   members={boardMembers} allEmployees={allEmployees} memberships={effectiveBoardMemberships} activeTerm={activeTerm} meetings={meetings} T={T}/>}
@@ -2208,5 +2654,6 @@ export default function BoardDashboard() {
         {activeTab==="reports"    && <ReportsTab    members={boardMembers} meetings={meetings} memberships={effectiveBoardMemberships} allEmployees={allEmployees} settlementTransactions={settlementTransactions} activeTerm={activeTerm} T={T}/>}
       </div>
     </div>
+    </ErrorBoundary>
   );
 }
