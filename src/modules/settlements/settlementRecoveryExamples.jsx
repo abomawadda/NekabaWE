@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 /**
  * مثال عملي: نموذج التحكم والاسترجاع للتسويات
  * 
@@ -13,7 +15,6 @@ import {
   getSettlementReport,
   validateSettlement,
   findAllDrafts,
-  findSettledByEmployee,
   getEmployeeSettlementHistory
 } from "./settlementRecovery";
 import { formatMoney } from "../../utils/numberFormat";
@@ -138,31 +139,28 @@ export function SettlementRecoveryPanel() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [drafts, setDrafts] = useState([]);
-  const [settlements, setSettlements] = useState([]);
   const [report, setReport] = useState(null);
 
   // تحميل المسودات عند فتح التبويب
   useEffect(() => {
-    if (activeTab === "drafts") {
-      loadDrafts();
-    } else if (activeTab === "report") {
-      loadReport();
+    let cancelled = false;
+    async function fetchData() {
+      setLoading(true);
+      try {
+        if (activeTab === "drafts") {
+          const items = await findAllDrafts();
+          if (!cancelled) setDrafts(items);
+        } else if (activeTab === "report") {
+          const reportData = await getSettlementReport();
+          if (!cancelled) setReport(reportData);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
+    fetchData();
+    return () => { cancelled = true; };
   }, [activeTab]);
-
-  const loadDrafts = async () => {
-    setLoading(true);
-    const items = await findAllDrafts();
-    setDrafts(items);
-    setLoading(false);
-  };
-
-  const loadReport = async () => {
-    setLoading(true);
-    const reportData = await getSettlementReport();
-    setReport(reportData);
-    setLoading(false);
-  };
 
   const handleRecoverSettlement = async () => {
     if (!settlementId.trim()) return;
@@ -193,7 +191,8 @@ export function SettlementRecoveryPanel() {
     setLoading(false);
 
     if (res.success) {
-      loadDrafts();
+      const items = await findAllDrafts();
+      setDrafts(items);
       setTimeout(() => setResult(null), 5000);
     }
   };
@@ -359,6 +358,9 @@ export function SettlementRecoveryPanel() {
  * تنفيذ الاسترجاع التجميعي
  * يمكن استخدام هذا في Firebase Cloud Functions
  */
+import { getDocs, query, collection, where } from "firebase/firestore";
+import { db } from "../../app/providers/FirebaseProvider";
+
 export async function batchRecoveryJob() {
   console.log("🔄 بدء عملية الاسترجاع التجميعي...");
 

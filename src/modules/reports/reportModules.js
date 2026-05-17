@@ -153,23 +153,34 @@ export const REPORT_MODULES = {
   aids: {
     id: "aids",
     title: "تقرير الإعانات",
-    subtitle: "سجل الإعانات المصروفة للأعضاء مع نوع الإعانة والواقعة المرتبطة بها",
+    subtitle: "سجل الرعايات المصروفة للأعضاء مع نوع الرعاية والواقعة المرتبطة بها",
     icon: Heart,
     sources: ["transactions", "issued_checks"],
     dateField: "date",
     orientation: "portrait",
     sortLabel: "التاريخ تصاعديًا ثم العضو ثم رقم الشيك",
-    searchPlaceholder: "ابحث باسم العضو أو نوع الإعانة أو رقم الشيك...",
-    emptyMessage: "لا توجد إعانات مطابقة للفترة أو البحث.",
+    searchPlaceholder: "ابحث باسم العضو أو نوع الرعاية أو رقم الشيك...",
+    // ...
+    customConfig: (currentRows) => {
+      const aidRows = currentRows.filter((r) => (r.category || r.typeLabel) === "رعاية");
+      return {
+        indexFields: ["name", "category", "amount"],
+        cards: [
+          { label: "إجمالي عدد الرعايات", value: String(aidRows.length), color: "rose" },
+          { label: "إجمالي مبالغ الرعايات", value: formatMoney(aidRows.reduce((s, r) => s + Number(r.amount || 0), 0)), color: "rose" },
+        ],
+      };
+    },
+    sections: [],
     fields: [
-      { key: "date", label: "تاريخ الصرف" },
-      { key: "memberName", label: "اسم العضو" },
-      { key: "memberId", label: "الكود" },
-      { key: "category", label: "نوع الإعانة" },
-      { key: "relation", label: "صلة القرابة" },
-      { key: "incidentDate", label: "تاريخ الواقعة" },
-      { key: "reference", label: "رقم الشيك" },
-      { key: "amount", label: "القيمة", currency: true },
+      { key: "name", label: "اسم العضو" },
+      { key: "party", label: "المستفيد" },
+      { key: "amount", label: "المبلغ", currency: true },
+      { key: "category", label: "نوع الرعاية" },
+      { key: "aidRel", label: "صلة القرابة" },
+      { key: "date", label: "التاريخ" },
+      { key: "checkNum", label: "رقم الشيك" },
+      { key: "notes", label: "البيان" },
     ],
     buildRows: buildAidsRows,
     sortRows: (rows) => sortByDateRefName(rows, "date", "reference", "memberName"),

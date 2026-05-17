@@ -80,7 +80,7 @@ const resolveCategoryKey = ({ source, type, benefitType, textBlob }) => {
 const buildIssuedCheckDescription = (doc = {}) => {
   const normalizedType = normalizeIssuedCheckType(doc.type);
   if (normalizedType === "aid") {
-    return [doc.aidCategory, doc.aidRel].filter(Boolean).join(" - ") || "إعانة صندوق";
+    return [doc.aidCategory, doc.aidRel].filter(Boolean).join(" - ") || "رعاية صندوق";
   }
 
   if (normalizedType === "trip" || normalizedType === "event") {

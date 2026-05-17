@@ -370,7 +370,7 @@ export const buildAidsRows = (sourceData = {}) => {
       date: record.date || "",
       memberName: getIssuedCheckDisplayParty(record) || "—",
       memberId: record.employeeId || record.jobId || "—",
-      category: record.aidCategory || "إعانة",
+      category: record.aidCategory || "رعاية",
       relation: record.aidRel || "—",
       incidentDate: record.incidentDate || "—",
       amount: toNumber(record.advanceAmountBase || record.amount),
@@ -1085,7 +1085,7 @@ export const buildMonthlyFinancialAnalysisSummary = ({ rows = [], sourceData = {
   ).slice(0, 6);
 
   const advanceRows = currentRows.filter((row) => row.typeLabel === "سلفة");
-  const aidRows = currentRows.filter((row) => row.typeLabel === "إعانة");
+  const aidRows = currentRows.filter((row) => row.typeLabel === "رعاية");
   const eventRows = currentRows.filter((row) => ["فاعليات", "رحلات", "أنشطة"].includes(row.typeLabel));
 
   const currentMonthLabel =

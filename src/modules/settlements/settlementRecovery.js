@@ -7,7 +7,7 @@
  * @module settlementRecovery
  */
 
-import { doc, setDoc, writeBatch, collection, query, where, getDocs, deleteDoc, getDoc } from "firebase/firestore";
+import { doc, setDoc, writeBatch, collection, query, where, getDocs, getDoc } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { logAuditEvent } from "../../utils/auditLog";
 

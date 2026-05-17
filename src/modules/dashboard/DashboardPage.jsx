@@ -472,7 +472,7 @@ export default function DashboardPage() {
         <div className="space-y-5">
           <div className={clsx("p-4 rounded-2xl border shadow-sm space-y-3", T.card)}>
             <h3 className="text-[11px] font-black px-1 text-slate-500 flex items-center gap-1.5"><Landmark size={14}/> عمليات الخزينة</h3>
-            <QuickLink to="/treasury/admin?type=aid" icon={ArrowUpRight} label="إصدار إعانة" desc="زواج، وفاة، ظروف" color="sky" T={T}/>
+            <QuickLink to="/treasury/admin?type=aid" icon={ArrowUpRight} label="إصدار رعاية" desc="زواج، وفاة، ظروف" color="sky" T={T}/>
             <QuickLink to="/treasury/admin?type=advance" icon={ArrowUpRight} label="إصدار سلفة" desc="عهدة ومصروفات بعهدة" color="purple" T={T}/>
             <QuickLink to="/treasury/admin?type=trip" icon={ArrowUpRight} label="إصدار رحلة" desc="شيك + اشتراكات الأعضاء" color="indigo" T={T}/>
             <QuickLink to="/treasury/admin?type=bank_charge" icon={CreditCard} label="خصم مباشر" desc="عمولات ومصاريف بنكية" color="slate" T={T}/>

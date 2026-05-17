@@ -117,7 +117,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
     () =>
       [
         can("/treasury/admin") ? { label: "إصدار السندات", path: "/treasury/admin" } : null,
-        can("/treasury/admin") ? { label: "شيك إعانة", path: "/treasury/admin?type=aid" } : null,
+        can("/treasury/admin") ? { label: "شيك رعاية", path: "/treasury/admin?type=aid" } : null,
         can("/treasury/admin") ? { label: "شيك سلفة", path: "/treasury/admin?type=advance" } : null,
         can("/treasury/admin") ? { label: "شيك رحلة", path: "/treasury/admin?type=trip" } : null,
         can("/treasury/admin") ? { label: "خصم مباشر", path: "/treasury/admin?type=bank_charge" } : null,

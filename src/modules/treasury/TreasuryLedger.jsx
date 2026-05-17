@@ -20,19 +20,19 @@ import {
   normalizeIssuedCheckType,
   normalizeRequiresSettlement,
 } from "./helpers/issuedChecks";
-import * as XLSX from "xlsx";
 import {
   Printer, Wallet, TrendingUp, TrendingDown, FileText,
   Search, FileSpreadsheet, Download, RefreshCw, AlertTriangle
 } from "lucide-react";
 import clsx from "clsx";
+import { downloadAs } from "../../utils/downloadData";
+import { normalizeArabicDigits } from "../../utils/memberBenefits";
+import ErrorBoundary from "../../ui/ErrorBoundary";
 
 // ─────────────────────────────────────────────
 const OPENING_BALANCE = 42685.79;
 const getTodayISO = () => new Date().toISOString().split("T")[0];
 const DIRECT_LEDGER_TYPES = ["deposit", "refund", "subs", "bank_charge"];
-const normalizeArabicDigits = (value = "") =>
-  String(value).replace(/[٠-٩]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
 
 const getCheckSortValue = (checkNum) => {
   const normalized = normalizeArabicDigits(checkNum).trim();
@@ -59,7 +59,7 @@ const getTypeLabel = (type, subType) => {
     case "deposit":  return "إيداع نقدي";
     case "refund":   return "رد سلفة";
     case "subs":     return "اشتراكات نشاط";
-    case "aid":      return subType ? `إعانة: ${subType.split(":")[0]}` : "إعانة";
+    case "aid":      return subType ? subType.split(":")[0] : "رعاية";
     case "advance":  return "سلفة";
     case "activities": return "أنشطة";
     case "trip":     return "رحلة";
@@ -67,7 +67,7 @@ const getTypeLabel = (type, subType) => {
     case "budget":   return "ميزانية";
     case "other":    return "شيك آخر";
     case "activity": return "فاعلية";
-    case "bank_charge": return subType ? `خصم بنكي: ${subType}` : "خصم بنكي مباشر";
+    case "bank_charge": return subType || "حركة بنكية";
     default:         return "حركة مالية";
   }
 };
@@ -95,20 +95,24 @@ const isCredit = (type) => ["deposit", "refund", "subs"].includes(type);
 // ─────────────────────────────────────────────
 // StatCard
 // ─────────────────────────────────────────────
-function StatCard({ label, value, icon: Icon, color, isCount }) {
+const STAT_COLORS = {
+  teal:    { bg: "bg-teal-500/10",    icon: "text-teal-500",          text: "text-teal-600 dark:text-teal-400" },
+  rose:    { bg: "bg-rose-500/10",    icon: "text-rose-500",          text: "text-rose-600 dark:text-rose-400" },
+  emerald: { bg: "bg-emerald-500/10", icon: "text-emerald-500",       text: "text-emerald-600 dark:text-emerald-400" },
+  amber:   { bg: "bg-amber-500/10",   icon: "text-amber-500",         text: "text-amber-600 dark:text-amber-400" },
+};
+function StatCard({ label, value, icon: Icon, color, isCount }) { // eslint-disable-line no-unused-vars
   const T = useT();
+  const c = STAT_COLORS[color] || STAT_COLORS.teal;
   return (
     <div className={clsx("flex items-center gap-2.5 p-3 rounded-2xl border shadow-sm transition-all", T.card)}>
-      <div className={clsx("p-2 rounded-xl shrink-0", `bg-${color}-500/10`)}>
-        <Icon size={18} className={`text-${color}-500`}/>
+      <div className={clsx("p-2 rounded-xl shrink-0", c.bg)}>
+        <Icon size={18} className={c.icon}/>
       </div>
       <div className="min-w-0">
         <p className={clsx("text-[9px] font-black uppercase", T.muted)}>{label}</p>
-        <p className={clsx("text-lg font-black leading-none mt-0.5", `text-${color}-600 dark:text-${color}-400`)}>
-          {isCount
-            ? value
-            : <>{formatMoney(value || 0)}</>
-          }
+        <p className={clsx("text-lg font-black leading-none mt-0.5", c.text)}>
+          {isCount ? value : <>{formatMoney(value || 0)}</>}
         </p>
       </div>
     </div>
@@ -116,32 +120,10 @@ function StatCard({ label, value, icon: Icon, color, isCount }) {
 }
 
 // ─────────────────────────────────────────────
-// Error Boundary
-// ─────────────────────────────────────────────
-class ErrorBoundary extends React.Component {
-  state = { error: null };
-  static getDerivedStateFromError(e) { return { error: e }; }
-  render() {
-    if (this.state.error) return (
-      <div className="flex flex-col items-center justify-center p-20 gap-3 text-rose-500">
-        <AlertTriangle size={36}/>
-        <p className="font-black text-sm">حدث خطأ في تحميل كشف الحساب</p>
-        <p className="text-[10px] font-bold opacity-70">{this.state.error.message}</p>
-        <button onClick={() => this.setState({ error: null })} className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl font-black text-xs">
-          إعادة المحاولة
-        </button>
-      </div>
-    );
-    return this.props.children;
-  }
-}
-
-// ─────────────────────────────────────────────
 // المكوّن الرئيسي
 // ─────────────────────────────────────────────
 function TreasuryLedgerInner() {
   const T = useT();
-  const [transactions, setTransactions] = useState([]);
   const [issuedChecks, setIssuedChecks] = useState([]);
   const [legacyTransactions, setLegacyTransactions] = useState([]);
   const [loading, setLoading]           = useState(true);
@@ -153,58 +135,53 @@ function TreasuryLedgerInner() {
 
   // Firestore listener
   useEffect(() => {
-    try {
-      let checksReady = false;
-      let legacyReady = false;
-      const finishLoading = () => {
-        if (checksReady && legacyReady) {
-          setLoading(false);
-          setError(null);
-        }
-      };
+    let checksReady = false;
+    let legacyReady = false;
+    const finishLoading = () => {
+      if (checksReady && legacyReady) {
+        setLoading(false);
+        setError(null);
+      }
+    };
 
-      const qChecks = query(collection(db, "issued_checks"));
-      const unsubChecks = onSnapshot(
-        qChecks,
-        snap => {
-          setIssuedChecks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-          checksReady = true;
-          finishLoading();
-        },
-        err => {
-          console.error(err);
-          checksReady = true;
-          setIssuedChecks([]);
-          finishLoading();
-        }
-      );
+    const qChecks = query(collection(db, "issued_checks"));
+    const unsubChecks = onSnapshot(
+      qChecks,
+      snap => {
+        setIssuedChecks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        checksReady = true;
+        finishLoading();
+      },
+      err => {
+        setError(err.message);
+        checksReady = true;
+        setIssuedChecks([]);
+        finishLoading();
+      }
+    );
 
-      const qLegacy = query(collection(db, "transactions"));
-      const unsubLegacy = onSnapshot(
-        qLegacy,
-        snap => {
-          setLegacyTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-          legacyReady = true;
-          finishLoading();
-        },
-        err => {
-          console.error(err);
-          legacyReady = true;
-          setLegacyTransactions([]);
-          finishLoading();
-        }
-      );
-      return () => {
-        unsubChecks();
-        unsubLegacy();
-      };
-    } catch (e) {
-      setError(e.message);
-      setLoading(false);
-    }
+    const qLegacy = query(collection(db, "transactions"));
+    const unsubLegacy = onSnapshot(
+      qLegacy,
+      snap => {
+        setLegacyTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        legacyReady = true;
+        finishLoading();
+      },
+      err => {
+        setError(err.message);
+        legacyReady = true;
+        setLegacyTransactions([]);
+        finishLoading();
+      }
+    );
+    return () => {
+      unsubChecks();
+      unsubLegacy();
+    };
   }, []);
 
-  useEffect(() => {
+  const mergedTransactions = useMemo(() => {
     const normalizedChecks = mergeIssuedChecksSourcesNormalized(
       issuedChecks,
       legacyTransactions
@@ -215,13 +192,13 @@ function TreasuryLedgerInner() {
         ...tx,
         sourceCollection: tx?.sourceCollection || "transactions",
       }));
-    setTransactions([...directTransactions, ...normalizedChecks]);
+    return [...directTransactions, ...normalizedChecks];
   }, [issuedChecks, legacyTransactions]);
 
   // بناء بيانات دفتر الأستاذ
   const ledgerData = useMemo(() => {
     let allEvents = [];
-    const posted = transactions.filter(t => !t.state || t.state === "posted" || t.state === "approved");
+    const posted = mergedTransactions.filter(t => !t.state || t.state === "posted" || t.state === "approved");
 
     posted.forEach(tx => {
       const amt = Number(tx.advanceAmountBase || tx.amount || 0);
@@ -234,9 +211,9 @@ function TreasuryLedgerInner() {
         subType:  tx.aidCategory || tx.activityType || tx.bankChargeCategory || tx.expenseItem || "",
         party:    getIssuedCheckDisplayParty(tx) || "—",
         notes:    tx.type === "bank_charge"
-          ? [tx.notes, tx.bankReference ? `مرجع: ${tx.bankReference}` : ""].filter(Boolean).join(" - ") || tx.bankChargeCategory || "خصم بنكي مباشر"
+          ? [tx.notes, tx.bankReference ? `مرجع: ${tx.bankReference}` : ""].filter(Boolean).join(" - ") || tx.bankChargeCategory || "حركة بنكية"
           : tx.notes || tx.activityName || tx.expenseItem || (normalizedType === "advance" ? "صرف سلفة" : getIssuedCheckTypeLabel(normalizedType)),
-        checkNum: tx.checkNum || tx.bankReference || (tx.type === "bank_charge" ? "خصم مباشر" : "—"),
+        checkNum: tx.checkNum || tx.bankReference || (tx.type === "bank_charge" ? "حركة بنكية" : "—"),
         credit:   isCredit(tx.type) ? amt : 0,
         debit:    !isCredit(tx.type) || (normalizeRequiresSettlement(tx) || isLegacyCheck) ? amt : 0,
       });
@@ -314,7 +291,7 @@ function TreasuryLedgerInner() {
       periodStartDate: periodRange.start,
       periodEndDate: periodRange.end,
     };
-  }, [transactions, filterFrom, filterTo, filterType, searchQ]);
+  }, [mergedTransactions, filterFrom, filterTo, filterType, searchQ]);
 
   // طباعة كشف الحساب
   const handlePrint = () => {
@@ -326,7 +303,7 @@ function TreasuryLedgerInner() {
         <td style="text-align:center;">${e.date}</td>
         <td style="text-align:center;">${getTypeLabel(e.type, e.subType)}</td>
         <td style="text-align:center;">${formatCheckReference(e.checkNum)}</td>
-        <td style="text-align:right; padding-right:8px;">${e.party}</td>
+        <td style="text-align:right; padding-right:8px;">${e.notes && e.notes !== "—" ? `${e.party} — ${e.notes}` : e.party}</td>
         <td style="text-align:left; color:#059669;">${e.credit > 0 ? formatMoney(e.credit) : "—"}</td>
         <td style="text-align:left; color:#e11d48;">${e.debit > 0 ? formatMoney(e.debit) : "—"}</td>
         <td style="text-align:left; font-weight:900;">${formatMoney(e.balance || 0)}</td>
@@ -342,9 +319,9 @@ function TreasuryLedgerInner() {
         html, body { width:100%; height:auto; }
         body { padding:10px; font-size:11px; color:#1e293b; }
         .info-bar  { display:flex; justify-content:space-between; background:#f1f5f9; padding:6px 10px; border-radius:6px; margin-bottom:15px; font-size:10px; font-weight:700; }
-        table { width:100%; border-collapse:collapse; margin-bottom:15px; page-break-inside:auto; break-inside:auto; }
-        th { background:#1e293b; color:#fff; padding:7px 5px; text-align:center; font-weight:900; border:1px solid #334155; font-size:11px; }
-        td { border:1px solid #cbd5e1; padding:5px 6px; vertical-align:middle; font-size:10px; }
+        table { width:100%; border-collapse:collapse; margin-bottom:15px; }
+        th { background:#1e293b; color:#fff; padding:7px 5px; text-align:center; font-weight:900; border:1px solid #334155; font-size:11px; white-space:nowrap; }
+        td { border:1px solid #cbd5e1; padding:5px 6px; vertical-align:middle; font-size:10px; word-break:normal; overflow-wrap:break-word; }
         .opening-row td { background:#f0fdf4; font-weight:900; color:#166534; }
         .closing-row td { background:#1e293b; color:#fff; font-weight:900; }
         .signatures { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:40px; text-align:center; }
@@ -353,10 +330,11 @@ function TreasuryLedgerInner() {
         @media print {
           @page { margin:8mm; size:A4 portrait; }
           body { padding:0; }
-          .info-bar, .signatures, .sig-box, .brand-header { break-inside:avoid; page-break-inside:avoid; }
+          .info-bar, .signatures, .sig-box, .brand-header, .opening-row, .closing-row { break-inside:avoid; page-break-inside:avoid; }
           thead { display:table-header-group; }
           tfoot { display:table-footer-group; }
-          tr, td, th { break-inside:avoid; page-break-inside:avoid; }
+          tr { break-inside:avoid; page-break-inside:avoid; }
+          .no-break { break-inside:avoid; page-break-inside:avoid; }
         }
         ${getPrintBrandStyles()}
       </style></head>
@@ -401,8 +379,8 @@ function TreasuryLedgerInner() {
     win.document.close();
   };
 
-  // تصدير Excel
-  const handleExport = () => {
+  // تصدير البيانات
+  const handleExport = async (format) => {
     const rows = ledgerData.events.map(e => ({
       "التاريخ":      e.date,
       "النوع":        getTypeLabel(e.type, e.subType),
@@ -413,12 +391,8 @@ function TreasuryLedgerInner() {
       "منصرف":        e.debit > 0 ? e.debit : "",
       "الرصيد":       e.balance,
     }));
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 28 }, { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "كشف الخزينة");
-    XLSX.writeFile(wb, `كشف_الخزينة_${ledgerData.periodStartDate || "كامل"}_${ledgerData.periodEndDate || getTodayISO()}.xlsx`);
+    const filename = `كشف_الخزينة_${ledgerData.periodStartDate || "كامل"}_${ledgerData.periodEndDate || getTodayISO()}`;
+    await downloadAs(format, rows, filename);
   };
 
   // ─── Render states ───────────────────────────
@@ -474,10 +448,16 @@ function TreasuryLedgerInner() {
             <div className="w-28"><ArabicDatePicker label="" value={filterTo} onChange={setFilterTo} minVal={filterFrom} maxVal={getTodayISO()} /></div>
           </div>
           {/* تصدير */}
-          <button onClick={handleExport} disabled={ledgerData.events.length === 0}
-            className="px-4 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-black text-[10px] shadow-sm flex items-center gap-1.5 h-[38px] transition-all active:scale-95 disabled:opacity-50 border border-emerald-200">
-            <Download size={13}/> Excel
-          </button>
+          <select
+            onChange={(e) => { const f = e.target.value; if (f) handleExport(f); e.target.value = ""; }}
+            disabled={ledgerData.events.length === 0}
+            className="px-4 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-black text-[10px] shadow-sm h-[38px] cursor-pointer appearance-none transition-all active:scale-95 disabled:opacity-50 border border-emerald-200"
+            style={{ direction: "ltr" }}
+          >
+            <option value="">تصدير</option>
+            <option value="xlsx">Excel (XLSX)</option>
+            <option value="json">JSON</option>
+          </select>
           {/* طباعة */}
           <button onClick={handlePrint} disabled={ledgerData.events.length === 0}
             className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl font-black text-[10px] shadow-md flex items-center gap-1.5 h-[38px] transition-all active:scale-95 disabled:opacity-50">

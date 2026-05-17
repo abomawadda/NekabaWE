@@ -5,7 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
 import BrandHeader from "../../ui/BrandHeader";
-import * as XLSX from "xlsx";
+import { downloadAs } from "../../utils/downloadData";
 import {
   AlertTriangle,
   Calendar,
@@ -319,7 +319,7 @@ function ReportBuilderInner() {
     return String(formatted ?? "").trim() ? formatted : "—";
   };
 
-  const exportToExcel = () => {
+  const exportData = async (format) => {
     const fields = activeConfig.fields.filter((field) => selectedFields.includes(field.key));
     const rows = filteredRows.map((row, index) => {
       const exportedRow = { "#": index + 1 };
@@ -328,15 +328,8 @@ function ReportBuilderInner() {
       });
       return exportedRow;
     });
-
-    const sheet = XLSX.utils.json_to_sheet(rows);
-    sheet["!cols"] = [{ wch: 6 }, ...fields.map(() => ({ wch: 22 }))];
-    const book = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(book, sheet, activeConfig.title.slice(0, 28));
-    XLSX.writeFile(
-      book,
-      `${activeConfig.id}_${period.from || "all"}_${period.to || getTodayISO()}.xlsx`
-    );
+    const filename = `${activeConfig.id}_${period.from || "all"}_${period.to || getTodayISO()}`;
+    await downloadAs(format, rows, filename);
   };
 
   const activeFields = activeConfig.fields.filter((field) => selectedFields.includes(field.key));
@@ -537,14 +530,16 @@ function ReportBuilderInner() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={exportToExcel}
+                    <select
+                      onChange={(e) => { const f = e.target.value; if (f) exportData(f); e.target.value = ""; }}
                       disabled={filteredRows.length === 0}
-                      className="px-4 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-black text-[11px] flex items-center gap-2 border border-emerald-200 disabled:opacity-50"
+                      className="px-4 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-xl font-black text-[11px] cursor-pointer appearance-none border border-emerald-200 disabled:opacity-50"
+                      style={{ direction: "ltr" }}
                     >
-                      <Download size={14} />
-                      Excel
-                    </button>
+                      <option value="">تصدير</option>
+                      <option value="xlsx">Excel (XLSX)</option>
+                      <option value="json">JSON</option>
+                    </select>
                     <button
                       onClick={() =>
                         renderPrintReport({

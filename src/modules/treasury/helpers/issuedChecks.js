@@ -1,11 +1,11 @@
 export const ISSUED_CHECK_TYPES = [
-  { id: "aid", label: "إعانة", color: "rose", icon: "heart" },
-  { id: "budget", label: "ميزانيات", color: "sky", icon: "wallet" },
-  { id: "activities", label: "أنشطة", color: "amber", icon: "activity" },
-  { id: "trip", label: "رحلات", color: "indigo", icon: "map" },
-  { id: "event", label: "فاعليات", color: "orange", icon: "sparkles" },
-  { id: "advance", label: "سلفة", color: "purple", icon: "user" },
-  { id: "other", label: "أخرى", color: "slate", icon: "file" },
+  { id: "aid", label: "رعاية", color: "rose" },
+  { id: "budget", label: "ميزانيات", color: "sky" },
+  { id: "activities", label: "أنشطة", color: "amber" },
+  { id: "trip", label: "رحلات", color: "indigo" },
+  { id: "event", label: "فاعليات", color: "orange" },
+  { id: "advance", label: "سلفة", color: "purple" },
+  { id: "other", label: "أخرى", color: "slate" },
 ];
 
 export const normalizeIssuedCheckType = (type = "") => {

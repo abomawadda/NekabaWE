@@ -1,762 +1,466 @@
-﻿import React, { useEffect, useState, useMemo, useCallback } from "react";
+﻿import React, { useEffect, useState, useMemo, Suspense, startTransition } from "react";
 import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
 import { db } from "../../app/providers/FirebaseProvider";
 import { useTreasuryService } from "./services/treasuryService";
-import { WORKFLOW_LABELS } from "./helpers/workflow";
 import {
   DIRECT_FINANCE_TYPES,
-  getLegacyChecksMigrationPreview,
   getIssuedCheckTypeLabel,
-  isDirectFinanceType,
   mergeIssuedChecksSourcesNormalized,
-  normalizeRequiresSettlement,
   normalizeIssuedCheckType,
+  normalizeRequiresSettlement,
 } from "./helpers/issuedChecks";
-import TreasuryForm from "./TreasuryForm";
+
+const TreasuryForm = React.lazy(() => import("./TreasuryForm"));
+
 import {
   AlertTriangle,
   Trash2,
-  Edit,
   FileText,
   X,
-  Download,
   Plus,
-  ArrowDownRight,
+  FilterX,
+  Printer,
+  TableProperties,
   ArrowUpRight,
-  Filter,
-  Search,
-  TrendingUp,
-  TrendingDown,
-  Wallet,
-  RefreshCw,
-  CheckCircle2,
-  AlertCircle,
+  ShieldCheck,
   Star,
-  Landmark,
-  ReceiptText,
+  Building2,
+  Wallet
 } from "lucide-react";
-import { useLocation, useNavigate } from "react-router-dom";
+
+import { useNavigate, useLocation } from "react-router-dom";
 import { useT } from "../../app/providers/ThemeProvider";
 import { useAuth } from "../../app/providers/AuthProvider";
-import { formatInteger, formatMoney } from "../../utils/numberFormat";
-import { logAuditEvent } from "../../utils/auditLog";
+import { useAlert } from "../../app/providers/AlertProvider";
 import { filterDataByScope, PERMISSIONS } from "../../security/permissions";
-import clsx from "clsx";
+import ErrorBoundary from "../../ui/ErrorBoundary";
+import TreasuryStatsBar from "./TreasuryStatsBar";
+import TreasuryFilters from "./TreasuryFilters";
+import TreasuryTable from "./TreasuryTable";
+import { openPrintWindow } from "../../utils/print";
+import { getPrintBrandHeader, getPrintBrandStyles } from "../../utils/branding";
+import { formatMoney } from "../../utils/numberFormat";
+import { downloadAs } from "../../utils/downloadData";
 
-const TYPE_LABELS = {
-  aid: "إعانة",
-  budget: "ميزانيات",
-  activities: "أنشطة",
-  trip: "رحلات",
-  event: "فاعليات",
-  advance: "سلفة",
-  other: "أخرى",
-  bank_charge: "خصم مباشر",
-};
-
-const TYPE_ICONS = {
-  aid: <ArrowUpRight size={14} className="text-rose-500" />,
-  budget: <Wallet size={14} className="text-sky-500" />,
-  activities: <Star size={14} className="text-amber-500" />,
-  trip: <RefreshCw size={14} className="text-indigo-500" />,
-  event: <Star size={14} className="text-orange-500" />,
-  advance: <ArrowUpRight size={14} className="text-purple-500" />,
-  other: <Landmark size={14} className="text-slate-500" />,
-  bank_charge: <ReceiptText size={14} className="text-slate-500" />,
-};
-
-const COLOR_STYLES = {
-  emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  rose: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-  teal: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
-  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-};
-
-const getCheckSortValue = (value) => {
-  const normalized = String(value || "").replace(/[\u0660-\u0669]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) && normalized !== "" ? parsed : Number.MAX_SAFE_INTEGER;
-};
-
-const getTxDetails = (tx) => {
-  if (tx.type === "bank_charge") {
-    return [
-      tx.bankChargeCategory ? `تصنيف الخصم: ${tx.bankChargeCategory}` : "",
-      tx.bankReference ? `مرجع البنك: ${tx.bankReference}` : "",
-      tx.notes,
-    ]
-      .filter(Boolean)
-      .join(" - ") || "خصم مباشر من كشف الحساب";
-  }
-
-  const parts = [
-    getIssuedCheckTypeLabel(tx.type) ? `النوع: ${getIssuedCheckTypeLabel(tx.type)}` : "",
-    tx.expenseItem ? `بند الصرف: ${tx.expenseItem}` : "",
-    tx.activityName,
-    tx.notes,
-    normalizeRequiresSettlement(tx) ? "يتطلب تسوية" : "لا يتطلب تسوية",
-  ].filter(Boolean);
-  return parts.join(" - ") || "—";
-};
-
-const getTxCheckRef = (tx) => tx.checkNum || tx.bankReference || "—";
-const formatCheckRef = (value) => {
-  if (!value || value === "—") return "—";
-  const normalized = String(value).replace(/[\u0660-\u0669]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? formatInteger(parsed) : value;
-};
-
-function StatCard({ label, value, icon: Icon, color, sub }) {
-  const T = useT();
-  return (
-    <div className={clsx("flex items-center gap-4 p-4 rounded-2xl border shadow-sm transition-all", T.card)}>
-      <div className={clsx("p-3 rounded-xl shrink-0", COLOR_STYLES[color] || COLOR_STYLES.teal)}>
-        <Icon size={20} />
-      </div>
-      <div className="min-w-0">
-        <p className={clsx("text-[10px] font-black uppercase tracking-widest", T.muted)}>{label}</p>
-        <p className={clsx("text-lg font-black leading-tight", color === "emerald" ? "text-emerald-600" : color === "rose" ? "text-rose-600" : color === "amber" ? "text-amber-600" : "text-teal-600")}>
-          {value}
-        </p>
-        {sub && <p className={clsx("text-[10px] font-bold mt-0.5", T.muted)}>{sub}</p>}
-      </div>
-    </div>
-  );
-}
+const PAGE_SIZE = 50;
 
 export default function TreasuryPage() {
   const T = useT();
   const navigate = useNavigate();
   const location = useLocation();
-  const { userRole, can, user } = useAuth();
+  const { user, can } = useAuth();
+  const { showToast } = useAlert();
 
-  const [transactions, setTransactions] = useState([]);
   const [issuedChecks, setIssuedChecks] = useState([]);
   const [legacyTransactions, setLegacyTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+
   const [showForm, setShowForm] = useState(false);
   const [selectedTx, setSelectedTx] = useState(null);
-  const [filterType, setFilterType] = useState("all");
-  const [filterState, setFilterState] = useState("all");
-  const [searchQ, setSearchQ] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const [viewAttachments, setViewAttachments] = useState(null);
-  const [toast, setToast] = useState(null);
-  const [isMigratingLegacy, setIsMigratingLegacy] = useState(false);
 
-  const { deleteTransaction, saveTransaction, migrateLegacyChecksToIssuedChecks } =
-    useTreasuryService();
+  const [filterType, setFilterType] = useState("all");
+  const [filterState, setFilterState] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("filter") === "draft" ? "draft" : "all";
+  });
+  const [searchQ, setSearchQ] = useState("");
+
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [_viewAttachments, setViewAttachments] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+  const [error, setError] = useState(null);
+
+  const { deleteTransaction, saveTransaction } = useTreasuryService();
+
   const canCreateFinancial = can(PERMISSIONS.treasuryCreate);
   const canEditFinancial = can(PERMISSIONS.treasuryEdit);
   const canDeleteFinancial = can(PERMISSIONS.treasuryDelete);
   const canPost = can(PERMISSIONS.treasuryPost);
-  const canMigrateLegacy = can(PERMISSIONS.treasuryMigrate);
   const canViewAttachments = can(PERMISSIONS.attachmentsView);
 
-  const showToast = useCallback((msg, type = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
-
+  // فتح النموذج عند وجود type في الرابط (sidebar, dashboard links)
   useEffect(() => {
-    const params = new URLSearchParams(location.search || "");
-    const requestedType = normalizeIssuedCheckType(params.get("type") || "");
-    const requestedFilter = params.get("filter") || "";
+    const params = new URLSearchParams(location.search);
+    const typeParam = params.get("type");
 
-    if (requestedFilter === "draft") {
-      setFilterState("draft");
-    } else if (!params.get("type")) {
-      setFilterState("all");
+    if (typeParam && canCreateFinancial) {
+      const normalized = normalizeIssuedCheckType(typeParam);
+      if (normalized) {
+        startTransition(() => {
+          setSelectedTx(null);
+          setShowForm(true);
+        });
+      }
     }
-
-    if (requestedType && TYPE_LABELS[requestedType] && canCreateFinancial) {
-      setShowForm(true);
-      setSelectedTx(null);
-    } else if (!selectedTx) {
-      setShowForm(false);
-    }
-  }, [location.search, selectedTx, canCreateFinancial]);
+  }, [location.search, canCreateFinancial]);
 
   useEffect(() => {
     let checksReady = false;
     let legacyReady = false;
-    const finishLoading = () => {
-      if (checksReady && legacyReady) setLoading(false);
-    };
+    const finishLoading = () => { if (checksReady && legacyReady) setLoading(false); };
 
-    const qChecks = query(collection(db, "issued_checks"), orderBy("date", "asc"));
     const unsubChecks = onSnapshot(
-      qChecks,
+      query(collection(db, "issued_checks"), orderBy("date", "desc")),
       (snap) => {
-        setIssuedChecks(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        checksReady = true;
-        finishLoading();
+        setIssuedChecks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        checksReady = true; finishLoading();
       },
-      (error) => {
-        console.error("issued_checks:", error);
-        setIssuedChecks([]);
-        checksReady = true;
-        finishLoading();
-      }
+      (err) => { setError(err.message); setLoading(false); }
     );
 
-    const qLegacy = query(collection(db, "transactions"), orderBy("date", "asc"));
     const unsubLegacy = onSnapshot(
-      qLegacy,
+      query(collection(db, "transactions"), orderBy("date", "desc")),
       (snap) => {
-        setLegacyTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        legacyReady = true;
-        finishLoading();
+        setLegacyTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        legacyReady = true; finishLoading();
       },
-      (error) => {
-        console.error("transactions:", error);
-        setLegacyTransactions([]);
-        legacyReady = true;
-        finishLoading();
-      }
+      (err) => { setError(err.message); setLoading(false); }
     );
 
-    return () => {
-      unsubChecks();
-      unsubLegacy();
-    };
+    return () => { unsubChecks(); unsubLegacy(); };
   }, []);
 
-  useEffect(() => {
-    const directFinanceEntries = legacyTransactions
-      .filter((tx) => DIRECT_FINANCE_TYPES.includes(tx.type))
-      .map((tx) => ({ ...tx, sourceCollection: "transactions" }));
+  const allTransactions = useMemo(() => {
+    const directEntries = legacyTransactions
+      .filter(tx => DIRECT_FINANCE_TYPES.includes(tx.type) || tx.type === "deposit")
+      .map(tx => ({ ...tx, sourceCollection: "transactions" }));
 
-    const normalizedChecks = mergeIssuedChecksSourcesNormalized(
-      issuedChecks,
-      legacyTransactions
-    );
-
-    setTransactions([
-      ...normalizedChecks,
-      ...directFinanceEntries,
-    ]);
+    const normalizedChecks = mergeIssuedChecksSourcesNormalized(issuedChecks, legacyTransactions);
+    return [...normalizedChecks, ...directEntries];
   }, [issuedChecks, legacyTransactions]);
-
-  const migrationPreview = useMemo(
-    () => getLegacyChecksMigrationPreview(legacyTransactions, issuedChecks),
-    [legacyTransactions, issuedChecks]
-  );
-
-  const posted = useMemo(
-    () => transactions.filter((t) => t.state === "posted" || t.state === "approved" || !t.state),
-    [transactions]
-  );
-
-  const postedChecks = useMemo(
-    () => posted.filter((t) => !DIRECT_FINANCE_TYPES.includes(t.type)),
-    [posted]
-  );
-
-  const postedDirectCharges = useMemo(
-    () => posted.filter((t) => DIRECT_FINANCE_TYPES.includes(t.type)),
-    [posted]
-  );
-
-  const totalIssued = useMemo(
-    () => postedChecks.reduce((sum, t) => sum + Number(t.amount || 0), 0),
-    [postedChecks]
-  );
-
-  const totalDirectCharges = useMemo(
-    () => postedDirectCharges.reduce((sum, t) => sum + Number(t.amount || 0), 0),
-    [postedDirectCharges]
-  );
-
-  const requiresSettlementCount = useMemo(
-    () => posted.filter((t) => normalizeRequiresSettlement(t)).length,
-    [posted]
-  );
-
-  const openSettlements = useMemo(
-    () => posted.filter((t) => normalizeRequiresSettlement(t) && !t.isSettled).length,
-    [posted]
-  );
-
-  const settledChecks = useMemo(
-    () => posted.filter((t) => normalizeRequiresSettlement(t) && t.isSettled).length,
-    [posted]
-  );
-
-  const nextCheque = useMemo(() => {
-    const nums = transactions
-      .map((t) => Number(t.checkNum))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    return (nums.length ? Math.max(...nums) : 10250) + 1;
-  }, [transactions]);
 
   const visible = useMemo(() => {
     const queryText = searchQ.trim().toLowerCase();
-    const scopedTransactions = filterDataByScope(transactions, "treasury", user);
+    const scoped = filterDataByScope(allTransactions, "treasury", user);
 
-    return scopedTransactions
-      .filter((t) => filterType === "all" || t.type === filterType)
-      .filter((t) => filterState === "all" || (t.state || "posted") === filterState)
-      .filter((t) => {
+    return scoped
+      .filter(t => filterType === "all" || t.type === filterType)
+      .filter(t => filterState === "all" || (t.state || "posted") === filterState)
+      .filter(t => {
         if (!queryText) return true;
-        return [
-          t.party,
-          t.beneficiaryName,
-          getIssuedCheckTypeLabel(t.type),
-          t.notes,
-          t.expenseItem,
-          t.bankChargeCategory,
-          t.bankReference,
-          t.activityName,
-          t.checkNum,
-          getTxDetails(t),
-        ]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(queryText));
+        const searchContent = [
+          t.party, t.beneficiaryName, t.checkNum, t.notes, getIssuedCheckTypeLabel(t.type) || (t.type === "deposit" ? "إيداع" : "")
+        ].join(" ").toLowerCase();
+        return searchContent.includes(queryText);
       })
-      .sort((a, b) => {
-        const byDate = String(a.date || "").localeCompare(String(b.date || ""));
-        if (byDate !== 0) return byDate;
+      .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  }, [allTransactions, filterType, filterState, searchQ, user]);
 
-        const byCheck = getCheckSortValue(getTxCheckRef(a)) - getCheckSortValue(getTxCheckRef(b));
-        if (byCheck !== 0) return byCheck;
+  const paginatedVisible = useMemo(() => showAll ? visible : visible.slice(0, PAGE_SIZE), [visible, showAll]);
 
-        return String(getTxCheckRef(a)).localeCompare(String(getTxCheckRef(b)), "ar");
-      });
-  }, [transactions, filterType, filterState, searchQ, user]);
+  const nextCheque = useMemo(() => {
+    const nums = allTransactions.map((t) => Number(t.checkNum)).filter((n) => Number.isFinite(n) && n > 0);
+    return (nums.length ? Math.max(...nums) : 10250) + 1;
+  }, [allTransactions]);
 
-  const handleCloseForm = useCallback(() => {
-    setShowForm(false);
-    setSelectedTx(null);
-    navigate("/treasury/admin", { replace: true });
-  }, [navigate]);
-
-  const handleSave = async (data, isEdit) => {
-    if ((isEdit && !canEditFinancial) || (!isEdit && !canCreateFinancial)) {
-      showToast("لا تملك صلاحية تنفيذ هذا الإجراء المالي", "error");
-      return;
-    }
-    try {
-      const payload = {
-        ...data,
-        createdBy: data.createdBy || user?.displayName || user?.fullName || "",
-        createdById: data.createdById || user?.id || "",
-        userId: data.userId || user?.id || "",
-      };
-      const savedId = await saveTransaction(payload);
-      const targetCollection = isDirectFinanceType(data.type) ? "transactions" : "issued_checks";
-      const savedRecord = {
-        ...payload,
-        id: savedId,
-        type: normalizeIssuedCheckType(data.type),
-        sourceCollection: targetCollection,
-        updatedAt: new Date().toISOString(),
-      };
-
-      if (targetCollection === "issued_checks") {
-        setIssuedChecks((prev) => {
-          const next = prev.filter((item) => item.id !== savedId);
-          return [...next, savedRecord];
-        });
-      } else {
-        setLegacyTransactions((prev) => {
-          const next = prev.filter((item) => item.id !== savedId);
-          return [...next, savedRecord];
-        });
-      }
-
-      const savedLabel = data.type === "bank_charge" ? "الحركة المالية المباشرة" : "الشيك";
-      await logAuditEvent(isEdit ? "treasury.update" : "treasury.create", {
-        targetId: savedId,
-        after: {
-          type: payload.type,
-          amount: payload.amount,
-          party: payload.party || payload.beneficiaryName,
-        },
-        riskLevel: isEdit ? "medium" : "high",
-        page: "/treasury/admin",
-      });
-      showToast(isEdit ? `تم تحديث ${savedLabel} بنجاح` : `تم حفظ ${savedLabel} بنجاح`);
-
-      if (isEdit) {
-        handleCloseForm();
-      } else {
-        setSelectedTx(null);
-      }
-    } catch (error) {
-      console.error("=== خطأ في حفظ المعاملة المالية ===");
-      console.error("الرسالة:", error?.message || error);
-      console.error("الكود:", error?.code || "N/A");
-      console.error("البيانات المرسلة:", JSON.stringify(data, (k, v) => (k === "attachments" ? `[${v?.length} items]` : v), 2));
-      console.error("التفاصيل الكاملة:", error);
-      showToast("حدث خطأ أثناء الحفظ، يرجى المحاولة مرة أخرى", "error");
-      throw error;
-    }
+  const resetFilters = () => {
+    setFilterType("all"); setFilterState("all"); setSearchQ("");
   };
 
-  const handleEdit = (tx) => {
-    if (!canEditFinancial) {
-      showToast("صلاحية التعديل غير متاحة لدورك الحالي", "error");
-      return;
-    }
-    setSelectedTx(tx);
+  const openFormForType = (type) => {
+    navigate(`/treasury/admin?type=${type}`, { replace: true });
+    setSelectedTx(null);
     setShowForm(true);
   };
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    if (!canDeleteFinancial) {
-      showToast("صلاحية الحذف المالي غير متاحة", "error");
-      return;
-    }
+  const handleExportExcel = async (format) => {
+    showToast("جاري التجهيز...", "success");
     try {
-      const targetCollection = deleteTarget?.sourceCollection || (isDirectFinanceType(deleteTarget?.type) ? "transactions" : "issued_checks");
-      await deleteTransaction(deleteTarget);
-      if (targetCollection === "issued_checks") {
-        setIssuedChecks((prev) => prev.filter((item) => item.id !== deleteTarget.id));
-      } else {
-        setLegacyTransactions((prev) => prev.filter((item) => item.id !== deleteTarget.id));
-      }
-      await logAuditEvent("treasury.delete", {
-        targetId: deleteTarget.id,
-        before: {
-          type: deleteTarget.type,
-          amount: deleteTarget.amount,
-          party: deleteTarget.party || deleteTarget.beneficiaryName,
-        },
-        riskLevel: "high",
-        page: "/treasury/admin",
-      });
-      setDeleteTarget(null);
-      showToast(deleteTarget?.type === "bank_charge" ? "تم حذف الحركة المباشرة بنجاح" : "تم حذف الشيك بنجاح");
-    } catch (error) {
-      console.error(error);
-      showToast("تعذر حذف الشيك", "error");
+      const rows = visible.map(tx => ({
+        التاريخ: tx.date || "—",
+        "رقم المستند": tx.checkNum || tx.bankReference || "—",
+        المستفيد: tx.party || tx.beneficiaryName || "—",
+        النوع: tx.type === "deposit" ? "إيداع بنكي" : getIssuedCheckTypeLabel(tx.type) || tx.type,
+        البيان: tx.notes || "",
+        المبلغ: Number(tx.amount || 0),
+        "حالة التسوية": tx.type === "deposit" ? "مكتمل" : (tx.requires_settlement || tx.requiresSettlement ? (tx.isSettled ? "مسوى" : "معلق") : "لا يتطلب"),
+      }));
+      await downloadAs(format, rows, `سجلات_الخزينة_${new Date().toISOString().split('T')[0]}`);
+    } catch {
+      showToast("حدث خطأ أثناء التصدير", "error");
     }
   };
 
-  const handleMigrateLegacyChecks = async () => {
-    if (!canMigrateLegacy) {
-      showToast("ترحيل السجلات القديمة محصور بأمين الصندوق", "error");
-      return;
-    }
-    try {
-      setIsMigratingLegacy(true);
-      const result = await migrateLegacyChecksToIssuedChecks({
-        legacyTransactions,
-        issuedChecks,
-      });
-      await logAuditEvent("treasury.migrate_legacy_checks", {
-        migratedCount: result.migratedCount,
-        riskLevel: "high",
-        page: "/treasury/admin",
-      });
+  // 🔴 تقرير محاسبي حقيقي (مدين/دائن/رصيد)
+  const handlePrintReport = () => {
+    const win = openPrintWindow("treasury-report", "width=1100,height=800");
+    if (!win) return;
 
-      showToast(
-        result.migratedCount > 0
-          ? `تم ترحيل ${result.migratedCount} شيك قديم إلى السجل الموحد بنجاح`
-          : "لا توجد شيكات قديمة جديدة بحاجة إلى ترحيل"
-      );
-    } catch (error) {
-      console.error(error);
-      showToast("تعذر ترحيل الشيكات القديمة، يرجى المحاولة مرة أخرى", "error");
-    } finally {
-      setIsMigratingLegacy(false);
-    }
+    // ترتيب تصاعدي لكشف الحساب
+    const chronologicalTx = [...visible].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+
+    let runningBalance = 0; // الرصيد الافتتاحي (بناء على الفلتر الحالي يعتبر صفر)
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    const rowsHtml = chronologicalTx.map((tx, i) => {
+      const isDeposit = tx.type === "deposit";
+      const debit = isDeposit ? 0 : Number(tx.amount || 0); // منصرف (مدين)
+      const credit = isDeposit ? Number(tx.amount || 0) : 0; // وارد (دائن)
+
+      totalDebit += debit;
+      totalCredit += credit;
+      runningBalance += (credit - debit); // الرصيد المتراكم
+
+      return `
+        <tr>
+          <td style="text-align:center">${i + 1}</td>
+          <td style="text-align:center; white-space:nowrap;">${tx.date || "—"}</td>
+          <td style="text-align:center;">${tx.checkNum || tx.bankReference || "—"}</td>
+          <td>${tx.party || tx.beneficiaryName || "—"}</td>
+          <td>${tx.notes || "—"}</td>
+          <td style="text-align:left; color:#be123c;">${debit > 0 ? formatMoney(debit) : "-"}</td>
+          <td style="text-align:left; color:#15803d;">${credit > 0 ? formatMoney(credit) : "-"}</td>
+          <td style="text-align:left; font-weight:bold; background:#f8fafc;">${formatMoney(runningBalance)}</td>
+        </tr>
+      `;
+    }).join("");
+
+    win.document.write(`
+      <!DOCTYPE html>
+      <html lang="ar" dir="rtl">
+      <head>
+        <meta charset="UTF-8">
+        <title>كشف حركة الخزينة</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
+          * { font-family: 'Cairo', sans-serif; margin: 0; padding: 0; box-sizing: border-box; }
+          body { padding: 20px; color: #1e293b; font-size: 11px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+          th, td { border: 1px solid #cbd5e1; padding: 8px 10px; line-height: 1.5; }
+          th { background: #f1f5f9; color: #334155; font-weight: 700; text-align: center; }
+          tbody tr:nth-child(even) { background: #f8fafc; }
+          tfoot td { background: #f1f5f9; font-size: 12px; font-weight: 700; border-top: 2px solid #94a3b8; }
+          .summary-box { display: flex; justify-content: space-between; background: #f8fafc; padding: 15px; border: 1px solid #e2e8f0; border-radius: 8px; margin-top: 20px; font-weight: 700; font-size: 13px; }
+          ${getPrintBrandStyles()}
+        </style>
+      </head>
+      <body>
+        ${getPrintBrandHeader({ reportTitle: "كشف حركة الخزينة (مدين / دائن)", reportMeta: `تاريخ الاستخراج: ${new Date().toLocaleDateString('en-GB')} | عدد الحركات: ${visible.length}` })}
+        
+        <table style="margin-bottom: 10px; width: 30%; border:none;">
+           <tr><td style="border:none; font-weight:700; padding:4px 0;">الرصيد الافتتاحي للحركات المعروضة: 0.00</td></tr>
+        </table>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 4%;">م</th>
+              <th style="width: 10%;">التاريخ</th>
+              <th style="width: 10%;">المرجع</th>
+              <th style="width: 18%;">الجهة / المستفيد</th>
+              <th style="width: 25%;">البيان</th>
+              <th style="width: 11%; text-align:left;">منصرف (مدين)</th>
+              <th style="width: 11%; text-align:left;">وارد (دائن)</th>
+              <th style="width: 11%; text-align:left;">الرصيد</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="5" style="text-align:left;">إجمالي الحركة</td>
+              <td style="text-align:left; color:#be123c;">${formatMoney(totalDebit)}</td>
+              <td style="text-align:left; color:#15803d;">${formatMoney(totalCredit)}</td>
+              <td style="text-align:left;">${formatMoney(runningBalance)}</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <div class="summary-box">
+           <div>إجمالي الوارد: <span style="color:#15803d">${formatMoney(totalCredit)}</span></div>
+           <div>إجمالي المنصرف: <span style="color:#be123c">${formatMoney(totalDebit)}</span></div>
+           <div>صافي الرصيد النهائي: <span>${formatMoney(runningBalance)}</span></div>
+        </div>
+
+        <div style="margin-top:40px; display:flex; justify-content:space-between; font-weight:600; color:#475569;">
+           <div>توقيع المراجع: .......................</div>
+           <div>توقيع أمين الصندوق: .......................</div>
+           <div>اعتماد المدير المالي: .......................</div>
+        </div>
+        <script>window.onload = () => { setTimeout(() => window.print(), 500); }</script>
+      </body>
+      </html>
+    `);
+    win.document.close();
   };
 
-  if (loading) {
-    return <div className="text-center p-20 text-slate-400 font-bold animate-pulse">جارٍ تحميل السجلات المالية...</div>;
-  }
+  if (loading) return <div className="flex items-center justify-center h-screen bg-slate-50 text-slate-500 font-medium text-lg animate-pulse">جاري بناء السجلات المالية...</div>;
 
   return (
-    <div className={clsx("space-y-4 max-w-7xl mx-auto pb-10 relative", T.text)} dir="rtl">
-      {toast && (
-        <div
-          className={clsx(
-            "fixed top-20 left-1/2 -translate-x-1/2 z-[5000] px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 text-white font-bold",
-            toast.type === "error" ? "bg-rose-600" : "bg-teal-600"
-          )}
-        >
-          {toast.type === "error" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-          <span className="text-sm">{toast.msg}</span>
-        </div>
-      )}
+    <div className="min-h-screen bg-slate-50 pb-20" dir="rtl">
+      <ErrorBoundary fallback="حدث خطأ في صفحة الماليات">
 
-      {viewAttachments && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className={clsx("w-full max-w-md p-5 rounded-2xl shadow-2xl border relative", T.card)}>
-            <button onClick={() => setViewAttachments(null)} className={clsx("absolute top-4 left-4 p-1.5 rounded-lg transition-colors", T.btn)}>
-              <X size={16} />
-            </button>
-            <h2 className="text-sm font-black flex items-center gap-2 mb-4">
-              <FileText size={16} className="text-teal-600" /> المرفقات ({viewAttachments.length})
-            </h2>
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {viewAttachments.map((file, i) => (
-                <div key={file.id || i} className={clsx("flex items-center justify-between p-2.5 rounded-xl border", T.sxn)}>
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    <span className="p-2 bg-teal-500/10 text-teal-600 rounded-lg shrink-0">
-                      <FileText size={14} />
-                    </span>
-                    <span className="text-xs font-bold truncate">{file.name}</span>
-                  </div>
-                  <a href={file.url} download={file.name} className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white text-[10px] font-bold rounded-lg hover:bg-teal-700 transition-all">
-                    <Download size={12} /> تحميل
-                  </a>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {deleteTarget && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className={clsx("w-full max-w-sm p-6 rounded-3xl shadow-2xl border space-y-5 animate-in zoom-in-95", T.card)}>
-            <div className="flex items-center gap-3 text-rose-600 border-b border-rose-100 pb-3">
-              <div className="p-2 bg-rose-100 rounded-xl"><AlertTriangle size={20} /></div>
+        {/* الترويسة المؤسسية الهادئة */}
+        <div className="bg-white border-b border-slate-200 px-6 py-6 shadow-sm">
+          <div className="max-w-[1500px] mx-auto flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center border border-slate-200">
+                <Building2 size={24} className="text-slate-700" />
+              </div>
               <div>
-                <h2 className="text-base font-black">تأكيد الحذف</h2>
-                <p className="text-[11px] font-bold text-slate-400 mt-1">لن يمكن التراجع عن هذا الإجراء بعد التنفيذ</p>
+                <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">الخزينة والماليات</h1>
+                <p className="text-slate-500 mt-1 font-medium text-sm">مراقبة السيولة، الشيكات، وحالات التسوية المحاسبية.</p>
               </div>
             </div>
-            <p className="text-sm font-bold text-slate-600">
-              هل تريد حذف {deleteTarget.type === "bank_charge" ? "الحركة المباشرة" : "الشيك"} الخاص بـ <span className="text-rose-600">{deleteTarget.party || deleteTarget.beneficiaryName || deleteTarget.bankChargeCategory || "—"}</span>؟
-            </p>
-            <div className="flex gap-2">
-              <button onClick={() => setDeleteTarget(null)} className={clsx("flex-1 py-2.5 rounded-xl text-xs font-black border", T.btn)}>
-                إلغاء
-              </button>
-              <button onClick={confirmDelete} className="flex-1 py-2.5 rounded-xl text-xs font-black bg-rose-600 text-white hover:bg-rose-700 flex items-center justify-center gap-2">
-                <Trash2 size={14} /> حذف نهائي
-              </button>
-            </div>
+
+            {canCreateFinancial && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={() => openFormForType("advance")} className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold flex items-center gap-2 transition-all shadow-sm">
+                  <Plus size={16} /> إصدار سلفة
+                </button>
+                <div className="flex items-center bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
+                  <button onClick={() => openFormForType("aid")} className="px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-all">
+                    <ShieldCheck size={16} className="text-slate-500" /> رعاية
+                  </button>
+                  <div className="w-px h-4 bg-slate-200 mx-1"></div>
+                  <button onClick={() => openFormForType("event")} className="px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-all">
+                    <Star size={16} className="text-slate-500" /> فاعلية
+                  </button>
+                  <div className="w-px h-4 bg-slate-200 mx-1"></div>
+                  <button onClick={() => openFormForType("bank_charge")} className="px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-all">
+                    <ArrowUpRight size={16} className="text-slate-500" /> خصم بنكي
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      )}
 
-      {showForm ? (
-        <TreasuryForm
-          userRole={userRole}
-          canPost={canPost}
-          onSubmit={handleSave}
-          nextCheque={nextCheque}
-          initialData={selectedTx}
-          onCancel={handleCloseForm}
-          showToast={showToast}
-        />
-      ) : (
-        <>
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-            <div>
-              <h1 className="text-xl font-black">الماليات</h1>
-              <p className={clsx("text-xs font-bold mt-1", T.muted)}>إدارة الشيكات الصادرة والخصومات البنكية المباشرة داخل شاشة مالية موحدة مع التوافق مع البيانات السابقة</p>
-            </div>
-            {canCreateFinancial && (
-              <div className="flex gap-2 flex-wrap">
-                <button onClick={() => navigate("/treasury/admin?type=aid")} className="px-4 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-black flex items-center gap-2 hover:bg-rose-700">
-                  <Plus size={14} /> شيك إعانة
-                </button>
-                <button onClick={() => navigate("/treasury/admin?type=advance")} className="px-4 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-black flex items-center gap-2 hover:bg-purple-700">
-                  <Plus size={14} /> شيك سلفة
-                </button>
-                <button onClick={() => navigate("/treasury/admin?type=trip")} className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-black flex items-center gap-2 hover:bg-indigo-700">
-                  <Plus size={14} /> شيك رحلة
-                </button>
-                <button onClick={() => navigate("/treasury/admin?type=event")} className="px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black flex items-center gap-2 hover:bg-amber-700">
-                  <Star size={14} /> شيك فاعلية
-                </button>
-                <button onClick={() => navigate("/treasury/admin?type=other")} className="px-4 py-2.5 rounded-xl bg-slate-700 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-800">
-                  <Landmark size={14} /> شيك آخر
-                </button>
-                <button onClick={() => navigate("/treasury/admin?type=bank_charge")} className="px-4 py-2.5 rounded-xl bg-slate-500 text-white text-xs font-black flex items-center gap-2 hover:bg-slate-600">
-                  <ReceiptText size={14} /> خصم مباشر
-                </button>
-              </div>
-            )}
-          </div>
+        <div className="max-w-[1500px] mx-auto px-6 mt-8 space-y-6">
+          <TreasuryStatsBar
+            totalIssued={visible.filter(t => t.type !== "deposit").reduce((s, t) => s + (Number(t.amount) || 0), 0)}
+            totalDirectCharges={visible.filter(t => DIRECT_FINANCE_TYPES.includes(t.type)).reduce((s, t) => s + (Number(t.amount) || 0), 0)}
+            postedDirectCharges={visible.filter(t => DIRECT_FINANCE_TYPES.includes(t.type))}
+            requiresSettlementCount={visible.filter(t => normalizeRequiresSettlement(t)).length}
+            openSettlements={visible.filter(t => normalizeRequiresSettlement(t) && !t.isSettled).length}
+            settledChecks={visible.filter(t => normalizeRequiresSettlement(t) && t.isSettled).length}
+          />
 
-          {migrationPreview.totalLegacy > 0 && (
-            <div
-              className={clsx(
-                "p-4 rounded-2xl border shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3",
-                T.card
-              )}
-            >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 text-sm font-black">
-                  <RefreshCw
-                    size={16}
-                    className={clsx(
-                      migrationPreview.pendingCount > 0
-                        ? "text-amber-600"
-                        : "text-emerald-600"
-                    )}
-                  />
-                  <span>ترحيل السجلات القديمة إلى `issued_checks`</span>
-                </div>
-                <p className={clsx("text-xs font-bold", T.muted)}>
-                  تم رصد {migrationPreview.totalLegacy} شيك قديم داخل `transactions`.
-                  المتبقي للترحيل {migrationPreview.pendingCount}، والمرحّل بالفعل{" "}
-                  {migrationPreview.alreadyMigrated}.
-                </p>
-                <p className="text-[11px] font-bold text-slate-500">
-                  الترحيل آمن ومكررته محمية؛ أي سجل تم ترحيله سابقًا لن يظهر مرة ثانية داخل الشاشة أو التقارير.
-                </p>
-              </div>
-
-              {canMigrateLegacy && (
-                <button
-                  onClick={handleMigrateLegacyChecks}
-                  disabled={isMigratingLegacy || migrationPreview.pendingCount === 0}
-                  className={clsx(
-                    "px-4 py-2.5 rounded-xl text-xs font-black text-white flex items-center justify-center gap-2 min-w-[220px]",
-                    isMigratingLegacy || migrationPreview.pendingCount === 0
-                      ? "bg-slate-400 cursor-not-allowed"
-                      : "bg-teal-600 hover:bg-teal-700"
-                  )}
-                >
-                  <RefreshCw
-                    size={14}
-                    className={clsx(isMigratingLegacy && "animate-spin")}
-                  />
-                  {isMigratingLegacy
-                    ? "جارٍ ترحيل السجلات..."
-                    : migrationPreview.pendingCount > 0
-                      ? `ترحيل ${migrationPreview.pendingCount} شيك قديم`
-                      : "كل السجلات القديمة مُرحّلة"}
-                </button>
-              )}
+          {error && (
+            <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-medium flex items-center gap-2">
+              <span>⚠</span> {error}
             </div>
           )}
+          <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+              <TreasuryFilters
+                searchQ={searchQ} setSearchQ={setSearchQ}
+                filterType={filterType} setFilterType={setFilterType}
+                filterState={filterState} setFilterState={setFilterState}
+              />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-            <StatCard label="إجمالي الشيكات" value={formatMoney(totalIssued)} icon={TrendingDown} color="rose" />
-            <StatCard label="خصومات مباشرة" value={formatMoney(totalDirectCharges)} icon={ReceiptText} color="amber" sub={`${postedDirectCharges.length} حركة مباشرة`} />
-            <StatCard label="شيكات تتطلب تسوية" value={`${requiresSettlementCount}`} icon={Wallet} color="teal" />
-            <StatCard label="تسويات مفتوحة" value={`${openSettlements}`} icon={RefreshCw} color="amber" sub="سلف ورحلات وفاعليات وشيكات معلّمة للتسوية" />
-            <StatCard label="تسويات مغلقة" value={`${settledChecks}`} icon={TrendingUp} color="emerald" />
-          </div>
-
-          <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="relative md:col-span-2">
-                <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={searchQ}
-                  onChange={(e) => setSearchQ(e.target.value)}
-                  placeholder="بحث بالمستفيد أو نوع الحركة أو بند الصرف أو رقم الشيك أو المرجع البنكي"
-                  className={clsx("w-full pr-9 pl-3 py-2.5 rounded-xl border text-xs font-bold", T.inp)}
-                />
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={resetFilters} className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg flex items-center gap-2 transition-all shadow-sm">
+                  <FilterX size={16} /> تفريغ الفلاتر
+                </button>
+                <button onClick={handlePrintReport} className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg flex items-center gap-2 transition-all shadow-sm">
+                  <Printer size={16} /> طباعة كشف
+                </button>
+                <select
+                  onChange={(e) => { const f = e.target.value; if (f) handleExportExcel(f); e.target.value = ""; }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-slate-800 hover:bg-slate-700 rounded-lg cursor-pointer appearance-none transition-all shadow-sm"
+                  style={{ direction: "ltr" }}
+                >
+                  <option value="">تصدير</option>
+                  <option value="xlsx">Excel (XLSX)</option>
+                  <option value="json">JSON</option>
+                </select>
               </div>
-
-              <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={clsx("px-3 py-2.5 rounded-xl border text-xs font-bold", T.sel)}>
-                <option value="all">كل الأنواع</option>
-                <option value="aid">إعانة</option>
-                <option value="budget">ميزانيات</option>
-                <option value="activities">أنشطة</option>
-                <option value="trip">رحلات</option>
-                <option value="event">فاعليات</option>
-                <option value="advance">سلفة</option>
-                <option value="other">أخرى</option>
-                <option value="bank_charge">خصم مباشر</option>
-              </select>
-
-              <select value={filterState} onChange={(e) => setFilterState(e.target.value)} className={clsx("px-3 py-2.5 rounded-xl border text-xs font-bold", T.sel)}>
-                <option value="all">كل الحالات</option>
-                <option value="posted">مرحل</option>
-                <option value="draft">مسودة</option>
-                <option value="approved">معتمد</option>
-              </select>
-            </div>
-          </div>
-
-          <div className={clsx("rounded-2xl border shadow-sm overflow-hidden", T.card)}>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px]">
-                <thead className="bg-slate-50 dark:bg-slate-900/40 border-b border-slate-200 dark:border-slate-800">
-                  <tr>
-                    <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">التاريخ</th>
-                    <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">النوع</th>
-                    <th className="py-3 px-4 text-right text-[10px] font-black text-slate-500">المستفيد / البيان</th>
-                    <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">القيمة</th>
-                    <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">رقم الشيك / المرجع</th>
-                    <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">الحالة</th>
-                    <th className="py-3 px-4 text-center text-[10px] font-black text-slate-500">المرفقات</th>
-                    <th className="py-3 px-4 text-left text-[10px] font-black text-slate-500">إجراءات</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((tx) => (
-                    <tr key={tx.id} className="group border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/60 dark:hover:bg-slate-900/30">
-                      <td className="py-3 px-4 text-xs font-bold">{tx.date || "—"}</td>
-                      <td className="py-3 px-4">
-                        <span className="inline-flex items-center gap-1.5 text-[10px] font-black px-2 py-1 rounded-full border bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700">
-                          {TYPE_ICONS[tx.type] || <Filter size={12} />}
-                          {TYPE_LABELS[normalizeIssuedCheckType(tx.type)] || tx.type}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="text-xs font-black">{tx.party || tx.beneficiaryName || tx.bankChargeCategory || "—"}</div>
-                        <div className="text-[10px] font-bold text-slate-400 mt-0.5">{getTxDetails(tx)}</div>
-                      </td>
-                      <td className="py-3 px-4 text-center font-black text-sm">
-                        <span className="text-rose-600">{formatMoney(tx.amount || 0)}</span>
-                      </td>
-                      <td className="py-3 px-4 text-center text-[10px] font-bold text-slate-400">{formatCheckRef(getTxCheckRef(tx))}</td>
-                      <td className="py-3 px-4 text-center">
-                        <span className={clsx("text-[9px] px-2 py-0.5 rounded-full font-black border inline-block", tx.state === "posted" ? "bg-teal-500/10 text-teal-600 border-teal-500/20" : tx.state === "draft" ? "bg-amber-500/10 text-amber-600 border-amber-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20")}>
-                          {WORKFLOW_LABELS[tx.state] || tx.state || "مرحل"}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        {tx.attachments?.length > 0 && canViewAttachments ? (
-                          <button onClick={() => setViewAttachments(tx.attachments)} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-teal-50 hover:text-teal-600 rounded-lg transition-all text-[10px] font-bold">
-                            <FileText size={11} /> {tx.attachments.length}
-                          </button>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-left">
-                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {canEditFinancial && (
-                            <button onClick={() => handleEdit(tx)} title="تعديل" className="p-1.5 text-sky-600 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 rounded-lg transition-colors">
-                              <Edit size={14} />
-                            </button>
-                          )}
-                          {canDeleteFinancial && (
-                            <button onClick={() => setDeleteTarget(tx)} title="حذف" className="p-1.5 text-rose-600 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 rounded-lg transition-colors">
-                              <Trash2 size={14} />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                {visible.length > 0 && (
-                  <tfoot className="border-t-2 border-slate-200 bg-slate-50 dark:bg-slate-900/30">
-                    <tr>
-                      <td colSpan={3} className="py-2 px-4 text-[10px] font-black text-slate-500">إجمالي المعروض ({visible.length} حركة)</td>
-                      <td className="py-2 px-4 text-center font-black text-sm">
-                        <span className="text-rose-600">{formatMoney(visible.reduce((s, t) => s + Number(t.amount || 0), 0))}</span>
-                      </td>
-                      <td colSpan={4} />
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
             </div>
 
-            {visible.length === 0 && (
-              <div className="py-14 text-center text-slate-400 text-sm font-bold">لا توجد نتائج مطابقة للفلاتر الحالية</div>
-            )}
+            <TreasuryTable
+              visible={visible}
+              paginatedVisible={paginatedVisible}
+              showAll={showAll}
+              setShowAll={setShowAll}
+              canEditFinancial={canEditFinancial}
+              canDeleteFinancial={canDeleteFinancial}
+              canViewAttachments={canViewAttachments}
+              onEdit={(tx) => { setSelectedTx(tx); setShowForm(true); }}
+              onDelete={setDeleteTarget}
+              onViewAttachments={setViewAttachments}
+            />
           </div>
-        </>
-      )}
+        </div>
+
+        {/* 🔴 الشاشة المنبثقة بحجم الشاشة الكاملة 🔴 */}
+        {showForm && (
+          <div className="fixed inset-0 z-[9999] bg-slate-50 flex flex-col animate-in fade-in duration-200">
+            <div className="bg-white px-8 py-5 border-b border-slate-200 shadow-sm flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-slate-100 text-slate-700 rounded-lg border border-slate-200"><Wallet size={20} /></div>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900 tracking-tight">
+                    {selectedTx ? "تعديل المستند المالي" : "إصدار مستند مالي جديد"}
+                  </h2>
+                  <p className="text-xs font-medium text-slate-500 mt-1">يُرجى التأكد من البيانات المدخلة قبل الحفظ أو الطباعة.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowForm(false); navigate("/treasury/admin", { replace: true }); }}
+                className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-lg transition-all flex items-center gap-2"
+              >
+                إغلاق الشاشة <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 md:p-8">
+              <div className="max-w-5xl mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <Suspense fallback={<div className="flex justify-center items-center h-96 text-slate-500 font-medium animate-pulse">جاري تهيئة النموذج...</div>}>
+                  <TreasuryForm
+                    canPost={canPost}
+                    nextCheque={nextCheque}
+                    showToast={showToast}
+                    onSubmit={async (data) => {
+                      await saveTransaction(data);
+                      setShowForm(false);
+                      navigate("/treasury/admin", { replace: true });
+                    }}
+                    initialData={selectedTx}
+                    onCancel={() => { setShowForm(false); navigate("/treasury/admin", { replace: true }); }}
+                  />
+                </Suspense>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* نافذة الحذف */}
+        {deleteTarget && (
+          <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-white rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95">
+              <div className="p-6 flex flex-col items-center text-center">
+                <div className="w-14 h-14 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-4">
+                  <AlertTriangle size={28} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">تأكيد الحذف</h3>
+                <p className="text-sm text-slate-500 leading-relaxed">
+                  هل أنت متأكد من حذف المستند المالي الخاص بـ <br />
+                  <span className="text-base font-bold text-slate-900 mt-1 inline-block">{deleteTarget.party}</span>؟
+                </p>
+              </div>
+              <div className="px-6 py-4 bg-slate-50 flex gap-3 border-t border-slate-200">
+                <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-all">
+                  إلغاء
+                </button>
+                <button onClick={async () => {
+                  try {
+                    await deleteTransaction(deleteTarget);
+                    setDeleteTarget(null);
+                    showToast("تم الحذف بنجاح", "success");
+                  } catch (e) {
+                    setError(e.message);
+                    showToast(e.message || "فشل الحذف", "error");
+                  }
+                }} className="flex-1 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-all">
+                  تأكيد الحذف
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </ErrorBoundary>
     </div>
   );
 }
