@@ -22,7 +22,6 @@ import {
   parseEmployeeDate,
 } from "../../utils/memberBenefits";
 import { repairArabicMojibake } from "../../utils/arabicMojibake";
-import { useAlert } from "../../app/providers/AlertProvider";
 import { formatInteger, formatMoney } from "../../utils/numberFormat";
 import { tafqeet } from "../../utils/tafqeet";
 import { openPrintWindow } from "../../utils/print";
@@ -32,11 +31,14 @@ import {
   getIssuedCheckDisplayParty,
   getIssuedCheckSourceKey,
   getIssuedCheckTypeLabel,
+  getPendingLegacyCheckTransactions,
   getSettlementMode,
   isDirectFinanceType,
   isGroupedSettlementFollower as isGroupedSettlementFollowerRecord,
   isLegacyCheckType,
   isLegacyCheckMigrated,
+  isSettlementClosed,
+  isSettlementDraft,
   LEGACY_ISSUED_CHECK_PREFIX,
   mergeIssuedChecksSources,
   normalizeIssuedCheckType,
@@ -44,7 +46,6 @@ import {
   normalizeSettlementOpenState,
 } from "../treasury/helpers/issuedChecks";
 import {
-  BOARD_MEETINGS_COLLECTION,
   BOARD_MEMBERSHIPS_COLLECTION,
   BOARD_TERMS_COLLECTION,
   buildLegacyBoardMemberships,
@@ -361,18 +362,11 @@ function FinanceCard({ label, value, color, icon: Icon, isTotal }) {
 
 function InlineDynamicSelect({ label, value, onChange, icon: Icon, defaultOptions = [] }) {
   const T = useT();
-  const baseOptions = useMemo(() => {
-    if (value && !defaultOptions.includes(value)) return [...defaultOptions, value];
-    return defaultOptions;
-  }, [value, defaultOptions]);
-  const [dynamicOptions, setDynamicOptions] = useState([]);
-  const options = useMemo(() => {
-    const merged = new Set([...baseOptions, ...dynamicOptions]);
-    return [...merged];
-  }, [baseOptions, dynamicOptions]);
+  const [options, setOptions] = useState(defaultOptions);
   const [isAdding, setIsAdding] = useState(false);
   const [newVal, setNewVal] = useState("");
-  const handleAdd = () => { const trimmed = newVal.trim(); if (trimmed && !options.includes(trimmed)) { setDynamicOptions(prev => [...prev, trimmed]); onChange(trimmed); } setIsAdding(false); setNewVal(""); };
+  useEffect(() => { if (value && !options.includes(value)) setOptions(prev => [...prev, value]); }, [value, options]);
+  const handleAdd = () => { const trimmed = newVal.trim(); if (trimmed && !options.includes(trimmed)) { setOptions(prev => [...prev, trimmed]); onChange(trimmed); } setIsAdding(false); setNewVal(""); };
   return (
     <div className="space-y-1 relative w-full" dir="rtl">
       {label && <label className="text-[10px] font-black text-slate-500 uppercase pr-1">{label}</label>}
@@ -496,7 +490,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
           type: record.type,
           reason: record.reason,
         });
-      } catch { /* ignore audit log errors */ }
+      } catch (_) { }
 
       showDToast(`تم حذف كل التسويات وإعادة ${record.party || targetId} مفتوحاً`, "success");
     } catch (err) {
@@ -559,8 +553,8 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
       const key = getIssuedCheckSourceKey(tx);
       const req = normalizeRequiresSettlement(tx);
       if (!req) return;
-      if (tx.isSettled && !isGroupedSettlementFollowerRecord(tx)) settledKeys.add(key);
-      if (tx.hasDraftSettlement && !tx.isSettled && !isGroupedSettlementFollowerRecord(tx)) draftKeys.add(key);
+      if (Boolean(tx.isSettled) && !isGroupedSettlementFollowerRecord(tx)) settledKeys.add(key);
+      if (tx.hasDraftSettlement && !Boolean(tx.isSettled) && !isGroupedSettlementFollowerRecord(tx)) draftKeys.add(key);
     });
 
     openAdvances.forEach(tx => {
@@ -570,7 +564,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
     const allRecords = [];
     const keyRegistry = new Map();
 
-    const classify = (tx) => {
+    const classify = (tx, source) => {
       const normalizedType = normalizeIssuedCheckType(tx.type);
       const key = getIssuedCheckSourceKey(tx);
       const req = normalizeRequiresSettlement(tx);
@@ -591,7 +585,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
         category = "مستبعد"; reason = "خصم مباشر بنكي — لا يتطلب تسوية";
       } else if (!req) {
         category = "مستبعد";
-        reason = normalizedType === "aid" ? "رعاية — لا تتطلب تسوية" : `type: ${normalizedType} — لا يتطلب تسوية`;
+        reason = normalizedType === "aid" ? "إعانة — لا تتطلب تسوية" : `type: ${normalizedType} — لا يتطلب تسوية`;
         if (normalizedType === "advance" && tx.requires_settlement === false) reason = "سلفة مع requires_settlement: false (تم إلغاء التسوية يدوي)";
       } else if (isFollower && !inAny) {
         category = "مستبعد"; reason = "شيك تابع لتسوية مجموعة";
@@ -601,7 +595,7 @@ function DiagnosticPanel({ issuedChecks, legacyTransactions, normalizedSourceTra
         category = "مسودة";
       } else if (inOpen) {
         category = "مفتوح";
-      } else if (!!settledState.isSettled && !inSettled) {
+      } else if (Boolean(settledState.isSettled) && !inSettled) {
         category = "مفقود"; reason = "isSettled=true لكنه ليس في أرشيف التسويات (قد يكون تابعاً لمجموعة)";
       } else if (stateVal !== "posted" && stateVal !== "approved") {
         category = "مفقود"; reason = `حالة الشيك: "${stateVal}" — ليس posted أو approved`;
@@ -856,53 +850,53 @@ export default function SettlementTab() {
   const [boardMemberships, setBoardMemberships] = useState([]);
   const [boardMeetings, setBoardMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expenses, setExpenses] = useState([]);
-  const [editingExpense, setEditingExpense] = useState(null);
-  const [expenseToDelete, setExpenseToDelete] = useState(null);
-  const [settlementToDelete, setSettlementToDelete] = useState(null);
-  const [expCat, setExpCat] = useState(INITIAL_CATS[0]);
-  const [expDate, setExpDate] = useState(getTodayISO());
-  const [expAmt, setExpAmt] = useState("");
-  const [expNotes, setExpNotes] = useState("");
-  const [expMeetingId, setExpMeetingId] = useState("");
-  const [selectedMembers, setSelectedMembers] = useState([]);
-  const [collectedSubs, setCollectedSubs] = useState("");
-  const [settlementDate, setSettlementDate] = useState(getTodayISO());
+  const [toast, setToast] = useState(null);
+
   const [settlementSelectionMode, setSettlementSelectionMode] = useState("single");
   const [selAdvId, setSelAdvId] = useState("");
   const [selectedBatchIds, setSelectedBatchIds] = useState([]);
-  const [editingSettlementId, setEditingSettlementId] = useState("");
-  const [confirmModalData, setConfirmModalData] = useState(null);
+  const [settlementDate, setSettlementDate] = useState(getTodayISO());
+  const [expenses, setExpenses] = useState([]);
+  const [returnedActually, setReturnedActually] = useState(false);
   const [returnMode, setReturnMode] = useState("carry_forward");
-  const [_returnedActually, setReturnedActually] = useState(false);
   const [returnDepositDate, setReturnDepositDate] = useState(getTodayISO());
   const [returnDepositReference, setReturnDepositReference] = useState("");
   const [saving, setSaving] = useState(false);
   const [archiveSearch, setArchiveSearch] = useState("");
   const [archiveMonth, setArchiveMonth] = useState("all");
   const [archiveYear, setArchiveYear] = useState("all");
+
+  // 🎯 الميزانية الإضافية للفاعليات (الاشتراكات المحصلة)
+  const [collectedSubs, setCollectedSubs] = useState("");
+
+  const [confirmModalData, setConfirmModalData] = useState(null);
+  const [expenseToDelete, setExpenseToDelete] = useState(null);
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [editingSettlementId, setEditingSettlementId] = useState("");
+  const [settlementToDelete, setSettlementToDelete] = useState(null);
+
+  // 🔄 حالات الاسترجاع والاسترداد
   const [recoveryModalData, setRecoveryModalData] = useState(null);
-  const { showToast: globalToast } = useAlert();
-
-  // ========================================================
-  // 🟢 المتغيرات المفقودة التي تمت إضافتها لمنع الانهيار
-  // ========================================================
-  const [expFiles, setExpFiles] = useState([]);
   const [recoveryReason, setRecoveryReason] = useState("");
-  const [showRecoveryConfirm, setShowRecoveryConfirm] = useState(false);
   const [recoveryLoading, setRecoveryLoading] = useState(false);
-  const lastLoadedSelectionKeyRef = useRef(null);
+  const [showRecoveryConfirm, setShowRecoveryConfirm] = useState(false);
+  const [discardDraftId, setDiscardDraftId] = useState(null);
 
-  // الدالة المفقودة للتحكم في حالة إعادة المتبقي
-  const resetSettlementReturnState = useCallback((mode = "carry_forward") => {
-    setReturnMode(mode);
+  const [expAmt, setExpAmt] = useState("");
+  const [expCat, setExpCat] = useState(INITIAL_CATS[0]);
+  const [expNotes, setExpNotes] = useState("");
+  const [expDate, setExpDate] = useState(getTodayISO());
+  const [expFiles, setExpFiles] = useState([]);
+  const [expMeetingId, setExpMeetingId] = useState("");
+  const [selectedMembers, setSelectedMembers] = useState([]);
+  const lastLoadedSelectionKeyRef = useRef("");
+
+  const resetSettlementReturnState = (mode = "carry_forward") => {
     setReturnedActually(mode === "cash_return");
+    setReturnMode(mode);
     setReturnDepositDate(getTodayISO());
     setReturnDepositReference("");
-  }, []);
-  // ========================================================
-
-  const showToast = (msg, type = "success") => globalToast(repairArabicMojibake(msg), type, 4000);
+  };
 
   useEffect(() => {
     let checksReady = false;
@@ -975,7 +969,7 @@ export default function SettlementTab() {
       finishLoading();
     });
 
-    const qMeetings = query(collection(db, BOARD_MEETINGS_COLLECTION), where("status", "==", "held"));
+    const qMeetings = query(collection(db, "board_meetings"), where("status", "==", "held"));
     const unsubMeetings = onSnapshot(qMeetings, snap => {
       setBoardMeetings(
         snap.docs
@@ -1019,7 +1013,7 @@ export default function SettlementTab() {
         return;
       }
 
-      if (!!current.isSettled === !!tx.isSettled) {
+      if (Boolean(current.isSettled) === Boolean(tx.isSettled)) {
         if (tx.hasDraftSettlement && !current.hasDraftSettlement) {
           grouped.set(key, tx);
           return;
@@ -1086,6 +1080,11 @@ export default function SettlementTab() {
     });
 
     return rawRecord;
+  };
+
+  const showToast = (msg, type = "success") => {
+    setToast({ msg: repairArabicMojibake(msg), type });
+    setTimeout(() => setToast(null), 4000);
   };
 
   const selectedMeeting = useMemo(() => {
@@ -1171,7 +1170,6 @@ export default function SettlementTab() {
     });
     return Array.from(uniqueMembers.values());
   }, [activeBoardMembers, expCat, historicalMeetingMembers]);
-
   const selectableBoardMembersMap = useMemo(
     () => new Map(selectableBoardMembers.map((member) => [toEntityId(member.id), member])),
     [selectableBoardMembers]
@@ -1252,29 +1250,25 @@ export default function SettlementTab() {
   const archivedSettlements = useMemo(
     () =>
       normalizedSourceTransactions.filter(
-        (tx) => normalizeRequiresSettlement(tx) && !!tx.isSettled && !isGroupedSettlementFollowerRecord(tx)
+        (tx) => normalizeRequiresSettlement(tx) && Boolean(tx.isSettled) && !isGroupedSettlementFollowerRecord(tx)
       ),
     [normalizedSourceTransactions]
   );
-
   const draftSettlements = useMemo(
     () =>
       normalizedSourceTransactions.filter(
-        (tx) => normalizeRequiresSettlement(tx) && !tx.isSettled && tx.hasDraftSettlement && !isGroupedSettlementFollowerRecord(tx)
+        (tx) => normalizeRequiresSettlement(tx) && !Boolean(tx.isSettled) && tx.hasDraftSettlement && !isGroupedSettlementFollowerRecord(tx)
       ),
     [normalizedSourceTransactions]
   );
-
   const editingSettlement = useMemo(
     () => archivedSettlements.find((t) => toEntityId(t.id) === toEntityId(editingSettlementId)) || null,
     [archivedSettlements, editingSettlementId]
   );
-
   const archiveYears = useMemo(
     () => [...new Set(archivedSettlements.map(s => getYearValue(getSettlementApprovalDate(s))).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
     [archivedSettlements]
   );
-
   const filteredArchivedSettlements = useMemo(() => {
     return archivedSettlements
       .filter((s) => {
@@ -1326,7 +1320,6 @@ export default function SettlementTab() {
         .map((adv) => ({ ...adv, prevBalance: getPrevBalance(adv.employeeId, adv.id, adv) })),
     [getPrevBalance, normalizedSourceTransactions]
   );
-
   const currentTxnOptions = useMemo(() => {
     const txMap = new Map();
     const attachOption = (tx) => {
@@ -1355,7 +1348,6 @@ export default function SettlementTab() {
 
     return Array.from(txMap.values());
   }, [editingSettlement, getPrevBalance, normalizedSourceTransactions, openAdvances]);
-
   const buildGroupedSettlementChecks = useCallback((settlement) => {
     const groupedIds =
       Array.isArray(settlement?.settlementGroupMemberIds) && settlement.settlementGroupMemberIds.length > 1
@@ -1384,7 +1376,6 @@ export default function SettlementTab() {
     () => currentTxnOptions.find((a) => toEntityId(a.id) === toEntityId(selAdvId)) || null,
     [currentTxnOptions, selAdvId]
   );
-
   const selectedBatchTransactions = useMemo(
     () => {
       const lookup = new Map();
@@ -1407,7 +1398,6 @@ export default function SettlementTab() {
     },
     [currentTxnOptions, getPrevBalance, normalizedSourceTransactions, selectedBatchIds]
   );
-
   const batchAnchorTxn = selectedBatchTransactions[0] || null;
   const batchSelectionConstraint = useMemo(() => {
     if (!batchAnchorTxn) return { employeeId: "", settlementMode: "" };
@@ -1416,7 +1406,6 @@ export default function SettlementTab() {
       settlementMode: String(batchAnchorTxn.settlement_mode || batchAnchorTxn.settlementMode || ""),
     };
   }, [batchAnchorTxn]);
-
   const activeSelectionTransactions = settlementSelectionMode === "batch"
     ? selectedBatchTransactions
     : (selectedTxn ? [selectedTxn] : []);
@@ -1530,6 +1519,7 @@ export default function SettlementTab() {
     setExpMeetingId("");
   }, [availableMeetings, expCat, expMeetingId]);
 
+  // 🎯 حسابات التسوية الموحدة (شيك فقط / شيك + اشتراكات / عهدة مع رصيد مرحل)
   const settlementMode = settlementSelectionMode === "batch"
     ? (activeSettlementTxn?.settlement_mode || "none")
     : (selectedTxn?.settlement_mode || "none");
@@ -1544,7 +1534,6 @@ export default function SettlementTab() {
   const spent = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const remaining = TOTAL_AVAILABLE - spent;
   const availableForExpense = remaining + editingExpenseAmount;
-
   const activeSelectionKey = useMemo(() => {
     const activeTxnId = toEntityId(getIssuedCheckDocId(activeSettlementTxn) || activeSettlementTxn?.id);
     const normalizedBatchIds =
@@ -1553,7 +1542,6 @@ export default function SettlementTab() {
         : "";
     return `${settlementSelectionMode}::${activeTxnId}::${normalizedBatchIds}`;
   }, [activeSettlementTxn, selectedBatchIds, settlementSelectionMode]);
-
   const resetExpenseForm = () => {
     setEditingExpense(null);
     setExpAmt("");
@@ -1586,7 +1574,7 @@ export default function SettlementTab() {
       resetSettlementReturnState("carry_forward");
       resetExpenseForm();
     }
-  }, [activeSelectionKey, activeSettlementTxn, resetSettlementReturnState]);
+  }, [activeSelectionKey, activeSettlementTxn]);
 
   useEffect(() => {
     if (settlementSelectionMode !== "batch") return;
@@ -1776,24 +1764,27 @@ export default function SettlementTab() {
     }
   };
 
+  // 🔄 دالة لاسترجاع تسوية من الأرشيف
   const handleRecoverFromArchive = (settlement) => {
     setRecoveryModalData(settlement);
     setRecoveryReason("");
     setShowRecoveryConfirm(true);
   };
 
+  // تنفيذ الاسترجاع
   const executeRecovery = async () => {
     if (!recoveryModalData) return;
     setRecoveryLoading(true);
     try {
       const result = await recoverSingleSettlement(recoveryModalData.id, {
         reason: recoveryReason || "استرجاع يدوي من الأرشيف",
-        userId: "current_user",
-        userName: "مستخدم الواجهة"
+        userId: currentSession?.user?.id || "",
+        userName: currentSession?.user?.displayName || ""
       });
 
       if (result.success) {
         showToast("تم استرجاع التسوية بنجاح - الشيك الآن في قائمة التسويات المفتوحة", "success");
+        // إعادة تحديث قائمة الأرشيف
         setActiveTab("current");
         setShowRecoveryConfirm(false);
         setRecoveryModalData(null);
@@ -1808,12 +1799,13 @@ export default function SettlementTab() {
     }
   };
 
+  // دالة لحذف مسودة
   const handleDiscardDraftSettlement = async (draftId) => {
     setSaving(true);
     try {
       const result = await discardDraft(draftId, {
-        userId: "current_user",
-        userName: "مستخدم الواجهة"
+        userId: currentSession?.user?.id || "",
+        userName: currentSession?.user?.displayName || ""
       });
 
       if (result.success) {
@@ -1837,6 +1829,7 @@ export default function SettlementTab() {
     }
   };
 
+  // 🎯 ميزة الحفظ المؤقت للرجوع لها لاحقاً
   const handleSaveDraft = async () => {
     if (!activeSettlementTxn) return;
     const validationError = validateMeetingAllowanceExpenses();
@@ -1851,7 +1844,7 @@ export default function SettlementTab() {
           .filter(Boolean);
         activeSelectionTransactions.forEach((tx, index) => {
           const txId = getIssuedCheckDocId(tx);
-          if (!txId) return;
+          if (!txId) return; // 🔴 تأمين إضافي لمنع تمرير ID فارغ
           const isLeader = index === 0;
           batch.set(
             doc(db, "issued_checks", txId),
@@ -1915,7 +1908,9 @@ export default function SettlementTab() {
   };
 
   const continueDraft = (draft) => {
-    const isBatchDraft = Array.isArray(draft?.settlementGroupMemberIds) && draft.settlementGroupMemberIds.length > 1;
+    const isBatchDraft = Boolean(
+      Array.isArray(draft?.settlementGroupMemberIds) && draft.settlementGroupMemberIds.length > 1
+    );
     if (isBatchDraft) {
       const groupedIds = toEntityIdList(draft.settlementGroupMemberIds);
       setSettlementSelectionMode("batch");
@@ -2043,7 +2038,7 @@ export default function SettlementTab() {
 
       activeSelectionTransactions.forEach((tx, index) => {
         const txId = getIssuedCheckDocId(tx);
-        if (!txId) return;
+        if (!txId) return; // 🔴 تأمين إضافي لمنع تمرير ID فارغ
 
         const isLeader = index === 0;
         batch.set(
@@ -2117,7 +2112,13 @@ export default function SettlementTab() {
 
     } catch (e) {
       console.error("=== خطأ في اعتماد التسوية ===");
-      console.error(e);
+      console.error("الرسالة:", e?.message || e);
+      console.error("الكود:", e?.code || "N/A");
+      console.error("المعاملة الرئيسية:", confirmModalData?.txnId);
+      console.error("عدد المعاملات:", activeSelectionTransactions?.length);
+      console.error("عدد المصروفات:", expenses?.length);
+      console.error("طريقة الإرجاع:", normalizedReturnMode);
+      console.error("التفاصيل الكاملة:", e);
       showToast("حدث خطأ أثناء الاعتماد", "error");
     } finally { setSaving(false); }
   };
@@ -2128,28 +2129,10 @@ export default function SettlementTab() {
     <div className={clsx("flex flex-col gap-4 max-w-7xl mx-auto pb-10", T.text)} dir="rtl">
       <BrandHeader sectionTitle="تسوية الشيكات" sectionHint="اعتماد التسويات ومتابعة الأرشيف للشيكات التي تتطلب تسوية" />
 
-      {/* مودال تأكيد استرجاع الأرشيف المفقود */}
-      {showRecoveryConfirm && recoveryModalData && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className={clsx("w-full max-w-md p-6 rounded-3xl shadow-2xl border space-y-5 animate-in zoom-in-95", T.card)}>
-            <div className="flex items-center gap-3 text-blue-600 border-b border-blue-100 pb-3">
-              <div className="p-2.5 bg-blue-100 rounded-xl"><RotateCcw size={20} /></div>
-              <div><h2 className="font-black text-sm">استرجاع تسوية من الأرشيف</h2></div>
-            </div>
-            <p className="text-xs font-bold leading-relaxed">
-              هل أنت متأكد من رغبتك في استرجاع التسوية الخاصة بـ <span className="font-black text-teal-600">{recoveryModalData.employeeName || recoveryModalData.party}</span> وفتحها للتعديل مرة أخرى؟
-            </p>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-500">سبب الاسترجاع (اختياري)</label>
-              <input type="text" value={recoveryReason} onChange={e => setRecoveryReason(e.target.value)} placeholder="مثال: وجود خطأ في الفواتير..." className={clsx("w-full px-3 py-2.5 rounded-xl border text-xs font-bold outline-none focus:ring-2 focus:border-blue-500", T.inp)} />
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button onClick={() => { setShowRecoveryConfirm(false); setRecoveryModalData(null); }} className={clsx("flex-1 py-2.5 rounded-xl font-bold text-xs border shadow-sm", T.btn)}>إلغاء</button>
-              <button onClick={executeRecovery} disabled={recoveryLoading} className="flex-1 py-2.5 rounded-xl font-black text-xs bg-blue-600 text-white hover:bg-blue-700 shadow-md active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50">
-                {recoveryLoading ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} تأكيد الاسترجاع
-              </button>
-            </div>
-          </div>
+      {toast && (
+        <div className={clsx("fixed top-20 left-1/2 -translate-x-1/2 z-[5000] px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 text-white font-bold animate-in fade-in slide-in-from-top-4", toast.type === "error" ? "bg-rose-600" : "bg-teal-600")}>
+          {toast.type === "error" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
+          <span className="text-xs">{toast.msg}</span>
         </div>
       )}
 
@@ -2315,9 +2298,11 @@ export default function SettlementTab() {
         </button>
       </div>
 
+      {/* ═══════════════════════ التبويب الجاري ═══════════════════════ */}
       {activeTab === "current" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 animate-in fade-in duration-500">
 
+          {/* ── 1. رأس العهدة (المبالغ) ── */}
           <div className="lg:col-span-12">
             <div className={clsx("p-4 rounded-2xl border shadow-sm flex flex-col md:flex-row gap-4 items-start md:items-center justify-between bg-white dark:bg-slate-900", T.card)}>
               <div className="w-full md:w-2/5 space-y-1.5 relative z-[100]">
@@ -2367,7 +2352,7 @@ export default function SettlementTab() {
                       const sameMode =
                         !batchAnchorTxn ||
                         String(batchSelectionConstraint.settlementMode) === String(tx.settlement_mode || tx.settlementMode || "");
-                      const disabled = !!batchAnchorTxn && (!sameEmployee || !sameMode);
+                      const disabled = Boolean(batchAnchorTxn) && (!sameEmployee || !sameMode);
                       return (
                         <label key={txId || tx.id} className={clsx("flex items-start gap-2 rounded-xl p-2 text-[10px] font-bold border transition-colors", disabled ? "bg-slate-100 text-slate-400 border-slate-200" : "bg-white border-slate-200 hover:border-indigo-300")}>
                           <input
@@ -2423,6 +2408,7 @@ export default function SettlementTab() {
                     <FinanceCard label="رصيد مرحل" value={PREV_BALANCE} color="amber" icon={History} />
                   )}
 
+                  {/* 🎯 المتبقي الديناميكي */}
                   <FinanceCard label="إجمالي الميزانية" value={TOTAL_AVAILABLE} color="teal" icon={Wallet} isTotal />
                   <FinanceCard label="المتبقي للرد" value={remaining} color={remaining >= 0 ? "emerald" : "rose"} icon={ReceiptText} />
                 </div>
@@ -2430,6 +2416,7 @@ export default function SettlementTab() {
             </div>
           </div>
 
+          {/* ── 2. إدراج الفواتير ── */}
           <div className={clsx("lg:col-span-4 p-4 rounded-2xl border shadow-sm space-y-4 h-fit", T.card, !activeSettlementTxn && "opacity-50 pointer-events-none")}>
             <h3 className="font-black text-xs flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2 text-amber-600">
               <Plus size={14} /> إدراج فاتورة جديدة
@@ -2530,6 +2517,7 @@ export default function SettlementTab() {
             </div>
           </div>
 
+          {/* ─── 3. كشف الفواتير ─── */}
           <div className={clsx("lg:col-span-8 p-4 rounded-2xl border shadow-sm flex flex-col", T.card, !activeSettlementTxn && "opacity-50 pointer-events-none")}>
             <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3 mb-3">
               <h3 className="font-black text-[11px] uppercase tracking-widest flex items-center gap-2"><ReceiptText size={16} className="text-teal-600" /> الفواتير المدرجة ({expenses.length})</h3>
@@ -2608,6 +2596,7 @@ export default function SettlementTab() {
         </div>
       )}
 
+      {/* ═══════════════════════ تبويب التشخيص ═══════════════════════ */}
       {activeTab === "diagnostic" && <DiagnosticPanel
         issuedChecks={issuedChecks}
         legacyTransactions={legacyTransactions}
@@ -2618,6 +2607,7 @@ export default function SettlementTab() {
         formatInteger={formatInteger}
       />}
 
+      {/* ═══════════════════════ تبويب الأرشيف ═══════════════════════ */}
       {activeTab === "archive" && (
         <div className={clsx("rounded-2xl border shadow-sm overflow-hidden animate-in fade-in duration-500", T.card)}>
           <div className="p-4 border-b flex flex-wrap justify-between items-center gap-3 bg-slate-50/50 dark:bg-slate-900/20">
@@ -2643,6 +2633,7 @@ export default function SettlementTab() {
             </div>
           </div>
 
+          {/* ── المسودات المعلقة ── */}
           {draftSettlements.length > 0 && (
             <div className="border-b border-amber-200 dark:border-amber-800/40 bg-amber-50/30 dark:bg-amber-900/10">
               <div className="px-4 py-3 flex items-center gap-2 border-b border-amber-100 dark:border-amber-800/30">
@@ -2673,14 +2664,9 @@ export default function SettlementTab() {
                       <td className="p-3 font-bold text-slate-500">{d.settlementExpenses?.length || 0}</td>
                       <td className="p-3 font-bold text-slate-400 text-[9px]">{d.updatedAt?.slice(0, 10) || "—"}</td>
                       <td className="p-3 text-left">
-                        <div className="flex gap-1 justify-end">
-                          <button onClick={() => continueDraft(d)} className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 rounded-xl font-black text-[10px] transition-all active:scale-95 border border-amber-200 dark:border-amber-800 shadow-sm flex items-center gap-1">
-                            <Edit3 size={12} /> استكمال
-                          </button>
-                          <button onClick={() => handleDiscardDraftSettlement(d.id)} className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 rounded-xl transition-all border border-rose-200" title="حذف المسودة">
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
+                        <button onClick={() => continueDraft(d)} className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 rounded-xl font-black text-[10px] transition-all active:scale-95 border border-amber-200 dark:border-amber-800 shadow-sm flex items-center gap-1">
+                          <Edit3 size={12} /> استكمال
+                        </button>
                       </td>
                     </tr>
                   ))}

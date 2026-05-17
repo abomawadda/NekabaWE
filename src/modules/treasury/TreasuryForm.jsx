@@ -1,57 +1,17 @@
 ﻿/**
  * TreasuryForm — نموذج إصدار المستندات المالية
- * - استنتاج تلقائي لبيان الشيك / المستند
- * - تحديث حي لرقم الشيك
- * - دعم الرعاية، السلف، الرحلات، الأنشطة، البنود الأخرى، والخصم البنكي المباشر
- * - تحقق كامل قبل الحفظ
- * - دعم المرفقات والطباعة
+ * - إصلاح مشكلة ظهور التقويم خلف التابات/الهيدر عبر ArabicDatePicker باستخدام Portal
+ * - السماح بتعديل المبلغ بعد اقتراحه في الرعاية
+ * - إضافة زر استعادة المبلغ المقترح
+ * - تحسين التحقق من الأرقام والتجربة البصرية
  */
 
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-
-import clsx from "clsx";
-import { collection, getDocs, query } from "firebase/firestore";
-import { useLocation } from "react-router-dom";
-
-import {
-  Activity,
-  AlertCircle,
-  Building,
-  CheckCircle2,
-  DollarSign,
-  FileText,
-  Hash,
-  Heart,
-  Info,
-  Landmark,
-  Loader2,
-  MapPin,
-  Printer,
-  RotateCcw,
-  Search,
-  Sparkles,
-  Tag,
-  User,
-  UserCheck,
-  Users,
-  Wallet,
-  X,
-} from "lucide-react";
-
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import WorkflowStepper from "./WorkflowStepper";
-import { printAidRequest, printVoucher } from "./VoucherPrint";
+import { printVoucher, printAidRequest } from "./VoucherPrint";
 import FileUpload from "./FileUpload";
-
 import ArabicDatePicker from "../../ui/inputs/ArabicDatePicker";
-
-import { db } from "../../app/providers/FirebaseProvider";
-import { useT } from "../../app/providers/ThemeProvider";
-
+import DynamicSelect from "../../ui/inputs/DynamicSelect";
 import {
   DIRECT_BANK_CHARGE_OPTIONS,
   EVENT_DETAILS_TYPES,
@@ -67,23 +27,26 @@ import {
 } from "./helpers/issuedChecks";
 
 import {
-  formatEmployeeDate,
-  getRetirementDate,
-  isEligibleForBenefit,
-  isIndependentMember,
-  isRetiredMember,
-  sortMembersByAgeThenJobId,
-} from "../../utils/memberBenefits";
+  Search, Loader2, CheckCircle2, Printer, Landmark,
+  FileText, User, Heart, Building, AlertCircle, Hash,
+  DollarSign, UserCheck, Users, MapPin, Tag,
+  Activity, X, Info, RotateCcw, Wallet, Sparkles
+} from "lucide-react";
+import { collection, getDocs, query } from "firebase/firestore";
+import { db } from "../../app/providers/FirebaseProvider";
+import { useLocation } from "react-router-dom";
+import { useT } from "../../app/providers/ThemeProvider";
+import { formatEmployeeDate, getRetirementDate, isEligibleForBenefit, isRetiredMember, sortMembersByAgeThenJobId } from "../../utils/memberBenefits";
+import clsx from "clsx";
 
-/* =========================
-   Constants
-========================= */
-
+// ─────────────────────────────────────────────
+// ثوابت
+// ─────────────────────────────────────────────
 const AID_RELS = {
   "رعاية زواج": ["العضو نفسه", "ابن", "ابنة"],
   "رعاية وفاة": ["العضو نفسه", "الزوج", "الزوجة", "أب", "أم", "ابن", "ابنة"],
   "ظروف قهرية / صحية": ["العضو نفسه"],
-  مناسبات: ["ميزانيات", "دور وطني", "جوائز مسابقات", "مبادرات"],
+  "مناسبات": ["ميزانيات", "دور وطني", "جوائز مسابقات", "مبادرات"],
 };
 
 const AID_AMOUNTS = {
@@ -94,11 +57,9 @@ const AID_AMOUNTS = {
   "رعاية وفاة:أم": 300,
   "رعاية وفاة:ابن": 300,
   "رعاية وفاة:ابنة": 300,
-
   "رعاية زواج:العضو نفسه": 500,
   "رعاية زواج:ابن": 300,
   "رعاية زواج:ابنة": 300,
-
   "ظروف قهرية / صحية:العضو نفسه": 300,
 };
 
@@ -111,178 +72,44 @@ const ACTIVITY_TYPES = [
   "مسابقة ثقافية",
   "احتفالية سنوية",
   "ندوة / محاضرة",
-  "أخرى",
+  "أخرى"
 ];
 
-const EXPENSE_ITEM_OPTIONS = [
-  "ميزانية تشغيل",
-  "دعم نشاط",
-  "مصروف إداري",
-  "مخصص لجنة",
-  "بند خاص",
-  "أخرى",
-];
-
-const COLOR_STYLES = {
-  teal: {
-    softBg: "bg-teal-500/10",
-    lightBg: "bg-teal-50",
-    border: "border-teal-500",
-    softBorder: "border-teal-200",
-    text: "text-teal-600",
-    activeText: "text-teal-700",
-    hoverBorder: "hover:border-teal-300",
-    hoverBg: "hover:bg-teal-50/40",
-    ring: "focus:ring-teal-500/20",
-  },
-  sky: {
-    softBg: "bg-sky-500/10",
-    lightBg: "bg-sky-50",
-    border: "border-sky-500",
-    softBorder: "border-sky-200",
-    text: "text-sky-600",
-    activeText: "text-sky-700",
-    hoverBorder: "hover:border-sky-300",
-    hoverBg: "hover:bg-sky-50/40",
-    ring: "focus:ring-sky-500/20",
-  },
-  blue: {
-    softBg: "bg-blue-500/10",
-    lightBg: "bg-blue-50",
-    border: "border-blue-500",
-    softBorder: "border-blue-200",
-    text: "text-blue-600",
-    activeText: "text-blue-700",
-    hoverBorder: "hover:border-blue-300",
-    hoverBg: "hover:bg-blue-50/40",
-    ring: "focus:ring-blue-500/20",
-  },
-  amber: {
-    softBg: "bg-amber-500/10",
-    lightBg: "bg-amber-50",
-    border: "border-amber-500",
-    softBorder: "border-amber-200",
-    text: "text-amber-600",
-    activeText: "text-amber-700",
-    hoverBorder: "hover:border-amber-300",
-    hoverBg: "hover:bg-amber-50/40",
-    ring: "focus:ring-amber-500/20",
-  },
-  orange: {
-    softBg: "bg-orange-500/10",
-    lightBg: "bg-orange-50",
-    border: "border-orange-500",
-    softBorder: "border-orange-200",
-    text: "text-orange-600",
-    activeText: "text-orange-700",
-    hoverBorder: "hover:border-orange-300",
-    hoverBg: "hover:bg-orange-50/40",
-    ring: "focus:ring-orange-500/20",
-  },
-  rose: {
-    softBg: "bg-rose-500/10",
-    lightBg: "bg-rose-50",
-    border: "border-rose-500",
-    softBorder: "border-rose-200",
-    text: "text-rose-600",
-    activeText: "text-rose-700",
-    hoverBorder: "hover:border-rose-300",
-    hoverBg: "hover:bg-rose-50/40",
-    ring: "focus:ring-rose-500/20",
-  },
-  purple: {
-    softBg: "bg-purple-500/10",
-    lightBg: "bg-purple-50",
-    border: "border-purple-500",
-    softBorder: "border-purple-200",
-    text: "text-purple-600",
-    activeText: "text-purple-700",
-    hoverBorder: "hover:border-purple-300",
-    hoverBg: "hover:bg-purple-50/40",
-    ring: "focus:ring-purple-500/20",
-  },
-  slate: {
-    softBg: "bg-slate-500/10",
-    lightBg: "bg-slate-50",
-    border: "border-slate-500",
-    softBorder: "border-slate-200",
-    text: "text-slate-600",
-    activeText: "text-slate-700",
-    hoverBorder: "hover:border-slate-300",
-    hoverBg: "hover:bg-slate-50/40",
-    ring: "focus:ring-slate-500/20",
-  },
-};
-
-const getColorStyle = (color = "teal") =>
-  COLOR_STYLES[color] || COLOR_STYLES.teal;
+const EXPENSE_ITEM_OPTIONS = ["ميزانية تشغيل", "دعم نشاط", "مصروف إداري", "مخصص لجنة", "بند خاص", "أخرى"];
 
 const getTodayISO = () => new Date().toISOString().split("T")[0];
 
-const normalizeNumericInput = (value = "") => {
-  const cleaned = String(value).replace(/[^\d.]/g, "");
-  const parts = cleaned.split(".");
-  return parts.length > 1 ? `${parts[0]}.${parts.slice(1).join("")}` : cleaned;
-};
+const normalizeNumericInput = (value = "") =>
+  String(value).replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1");
 
 const normalizeIntegerInput = (value = "") =>
   String(value).replace(/[^\d]/g, "");
 
 const formatMoney = (value) => {
   const n = Number(value || 0);
-  return Number.isFinite(n) ? n.toLocaleString("ar-EG") : "0";
+  if (!Number.isFinite(n)) return "0";
+  return n.toLocaleString("ar-EG");
 };
 
-const safeTheme = (T = {}) => ({
-  card:
-    T.card ||
-    "bg-white border-slate-200 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-50",
-  text: T.text || "text-slate-800 dark:text-slate-100",
-  muted: T.muted || "text-slate-500 dark:text-slate-400",
-  inp:
-    T.inp ||
-    "bg-white border-slate-200 text-slate-800 focus:border-teal-500 dark:bg-slate-950 dark:border-slate-700 dark:text-slate-100",
-  sel:
-    T.sel ||
-    "bg-white border-slate-200 text-slate-800 focus:border-teal-500 dark:bg-slate-950 dark:border-slate-700 dark:text-slate-100",
-  btn:
-    T.btn ||
-    "bg-slate-900 text-white hover:bg-slate-800 dark:bg-teal-600 dark:hover:bg-teal-500",
-});
-
-/* =========================
-   UI Components
-========================= */
-
-function ERPSection({
-  title,
-  icon: Icon = FileText, // eslint-disable-line no-unused-vars
-  colorClass = "teal",
-  children,
-  badge,
-}) {
-  const T = safeTheme(useT?.());
-  const color = getColorStyle(colorClass);
-
+// ─────────────────────────────────────────────
+// مكونات مساعدة
+// ─────────────────────────────────────────────
+function ERPSection({ title, icon: Icon, colorClass = "teal", children, badge }) {
+  const T = useT();
   return (
-    <section
+    <div
       className={clsx(
-        "p-4 rounded-2xl border shadow-sm space-y-4 relative z-0",
+        "p-4 rounded-2xl border shadow-sm space-y-3 animate-in fade-in duration-500 relative z-0",
         T.card
       )}
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between border-b pb-2.5 border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2">
-          <div className={clsx("p-1.5 rounded-lg", color.softBg)}>
-            <Icon size={15} className={color.text} />
+          <div className="w-1 h-5 bg-gradient-to-b from-teal-500 to-teal-600 rounded-full"></div>
+          <div className={clsx("p-1.5 rounded-lg", `bg-${colorClass}-500/10`)}>
+            <Icon size={14} className={`text-${colorClass}-600`} />
           </div>
-
-          <h3
-            className={clsx(
-              "font-black text-[12px] uppercase tracking-wide",
-              T.text
-            )}
-          >
+          <h3 className={clsx("font-black text-[11px] uppercase tracking-widest", T.text)}>
             {title}
           </h3>
         </div>
@@ -290,10 +117,9 @@ function ERPSection({
         {badge && (
           <span
             className={clsx(
-              "text-[10px] font-black px-2 py-1 rounded-full border",
-              color.lightBg,
-              color.activeText,
-              color.softBorder
+              "text-[9px] font-black px-2 py-0.5 rounded-full border",
+              `bg-${colorClass}-50 text-${colorClass}-700 border-${colorClass}-200`,
+              "dark:bg-opacity-20 dark:text-opacity-90"
             )}
           >
             {badge}
@@ -301,8 +127,8 @@ function ERPSection({
         )}
       </div>
 
-      {children}
-    </section>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{children}</div>
+    </div>
   );
 }
 
@@ -315,102 +141,70 @@ function ERPInput({
   required,
   fullWidth,
   footer,
-  className,
   ...props
 }) {
-  const T = safeTheme(useT?.());
+  const T = useT();
 
   return (
-    <div
-      className={clsx(
-        "space-y-1 relative w-full group",
-        fullWidth && "sm:col-span-2"
-      )}
-    >
-      {label && (
-        <label className={clsx("text-[11px] font-black flex gap-1", T.text)}>
-          <span>{label}</span>
-          {required && <span className="text-rose-500">*</span>}
-        </label>
-      )}
+    <div className={clsx("space-y-1 relative w-full", fullWidth && "sm:col-span-2")}>
+      <label className="text-[10px] font-black text-slate-500 uppercase pr-1 flex items-center gap-1">
+        {label}
+        {required && <span className="text-rose-500">*</span>}
+      </label>
 
-      {hint && <p className={clsx("text-[10px]", T.muted)}>{hint}</p>}
+      {hint && <p className="text-[9px] text-teal-500 font-bold -mt-0.5 pr-1">{hint}</p>}
 
-      <div className="relative">
+      <div className="relative group">
         {Icon && (
           <Icon
             size={14}
             className={clsx(
-              "absolute right-3 top-1/2 -translate-y-1/2 z-10 pointer-events-none transition-colors",
-              error
-                ? "text-rose-500"
-                : "text-slate-400 group-focus-within:text-teal-500"
+              "absolute right-3 top-2.5 z-10 transition-colors pointer-events-none",
+              error ? "text-rose-500" : "text-slate-400 group-focus-within:text-teal-500"
             )}
           />
         )}
 
         <input
           {...props}
-          inputMode={isNumeric ? "decimal" : props.inputMode || "text"}
+          inputMode={isNumeric ? "numeric" : "text"}
           className={clsx(
             "w-full px-3 py-2 rounded-xl border text-xs font-bold outline-none transition-all h-[38px]",
-            "focus:ring-2 focus:ring-teal-500/10",
             Icon ? "pr-9" : "pr-3",
             props.disabled
-              ? "bg-slate-50/50 opacity-70 cursor-not-allowed"
-              : T.inp,
-            error && "!border-rose-500 bg-rose-50/10",
-            className
+              ? "bg-slate-50/50 dark:bg-slate-900/30 opacity-70 cursor-not-allowed"
+              : clsx(T.inp, "focus:ring-2 focus:border-teal-500"),
+            error && "!border-rose-500 bg-rose-50/10 focus:ring-rose-300"
           )}
         />
       </div>
 
+      {footer}
+
       {error && (
-        <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1">
-          <AlertCircle size={11} />
-          {error}
+        <p className="text-[9px] text-rose-500 font-black mt-0.5 flex items-center gap-1">
+          <AlertCircle size={10} /> {error}
         </p>
       )}
-
-      {footer}
     </div>
   );
 }
 
-function ERPSelect({
-  label,
-  icon: Icon,
-  error,
-  required,
-  fullWidth,
-  children,
-  className,
-  ...props
-}) {
-  const T = safeTheme(useT?.());
+function ERPSelect({ label, icon: Icon, error, required, fullWidth, children, ...props }) {
+  const T = useT();
 
   return (
-    <div
-      className={clsx(
-        "space-y-1 relative w-full group",
-        fullWidth && "sm:col-span-2"
-      )}
-    >
-      {label && (
-        <label className={clsx("text-[11px] font-black flex gap-1", T.text)}>
-          <span>{label}</span>
-          {required && <span className="text-rose-500">*</span>}
-        </label>
-      )}
+    <div className={clsx("space-y-1 relative w-full", fullWidth && "sm:col-span-2")}>
+      <label className="text-[10px] font-black text-slate-500 uppercase pr-1 flex items-center gap-1">
+        {label}
+        {required && <span className="text-rose-500">*</span>}
+      </label>
 
       <div className="relative">
         {Icon && (
           <Icon
             size={14}
-            className={clsx(
-              "absolute right-3 top-1/2 -translate-y-1/2 z-10 pointer-events-none",
-              error ? "text-rose-500" : "text-slate-400"
-            )}
+            className="absolute right-3 top-2.5 text-slate-400 pointer-events-none z-10"
           />
         )}
 
@@ -418,12 +212,10 @@ function ERPSelect({
           {...props}
           className={clsx(
             "w-full px-3 py-2 rounded-xl border text-xs font-bold outline-none h-[38px] transition-all",
-            "focus:ring-2 focus:ring-teal-500/10",
             Icon ? "pr-9" : "pr-3",
             T.sel,
-            props.disabled && "opacity-60 cursor-not-allowed",
-            error && "!border-rose-500 bg-rose-50/10",
-            className
+            error && "!border-rose-500",
+            props.disabled && "opacity-60 cursor-not-allowed"
           )}
         >
           {children}
@@ -431,55 +223,15 @@ function ERPSelect({
       </div>
 
       {error && (
-        <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1">
-          <AlertCircle size={11} />
-          {error}
+        <p className="text-[9px] text-rose-500 font-black mt-0.5 flex items-center gap-1">
+          <AlertCircle size={10} /> {error}
         </p>
       )}
     </div>
   );
 }
 
-function ERPTextarea({
-  label,
-  error,
-  required,
-  fullWidth,
-  className,
-  ...props
-}) {
-  const T = safeTheme(useT?.());
-
-  return (
-    <div className={clsx("space-y-1", fullWidth && "sm:col-span-2")}>
-      {label && (
-        <label className={clsx("text-[11px] font-black flex gap-1", T.text)}>
-          <span>{label}</span>
-          {required && <span className="text-rose-500">*</span>}
-        </label>
-      )}
-
-      <textarea
-        {...props}
-        className={clsx(
-          "w-full min-h-[84px] px-3 py-2 rounded-xl border text-xs font-bold outline-none transition-all resize-none",
-          "focus:ring-2 focus:ring-teal-500/10",
-          props.disabled ? "opacity-60 cursor-not-allowed" : T.inp,
-          error && "!border-rose-500 bg-rose-50/10",
-          className
-        )}
-      />
-
-      {error && (
-        <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1">
-          <AlertCircle size={11} />
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
+// بطاقة اختيار نوع السند
 function TypeSelector({ value, onChange }) {
   const iconMap = {
     aid: Heart,
@@ -491,7 +243,6 @@ function TypeSelector({ value, onChange }) {
     other: FileText,
     bank_charge: Landmark,
   };
-
   const subMap = {
     aid: "بدون تسوية",
     budget: "مرن حسب التحديد",
@@ -502,14 +253,9 @@ function TypeSelector({ value, onChange }) {
     other: "مرن حسب التحديد",
     bank_charge: "خصم مباشر من الحساب",
   };
-
   const types = [
     ...ISSUED_CHECK_TYPES,
-    {
-      id: "bank_charge",
-      label: "خصم مباشر",
-      color: "slate",
-    },
+    { id: "bank_charge", label: "خصم مباشر", color: "slate" },
   ].map((item) => ({
     ...item,
     icon: iconMap[item.id] || Landmark,
@@ -517,11 +263,10 @@ function TypeSelector({ value, onChange }) {
   }));
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2">
       {types.map((t) => {
         const Icon = t.icon;
         const active = value === t.id;
-        const color = getColorStyle(t.color || "teal");
 
         return (
           <button
@@ -529,29 +274,15 @@ function TypeSelector({ value, onChange }) {
             type="button"
             onClick={() => onChange(t.id)}
             className={clsx(
-              "flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl border-2 transition-all font-black text-[11px] min-h-[86px]",
+              "flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all font-black text-[11px]",
               active
-                ? clsx(
-                  color.border,
-                  color.lightBg,
-                  color.activeText,
-                  "shadow-sm"
-                )
-                : clsx(
-                  "border-slate-200 text-slate-500",
-                  color.hoverBorder,
-                  color.hoverBg
-                )
+                ? `border-${t.color}-500 bg-${t.color}-50 text-${t.color}-700 dark:bg-${t.color}-900/20 dark:text-${t.color}-400 shadow-sm`
+                : `border-slate-200 dark:border-slate-700 text-slate-500 hover:border-${t.color}-300 hover:bg-${t.color}-50/30 dark:hover:bg-${t.color}-900/10`
             )}
           >
-            <Icon
-              size={18}
-              className={active ? color.text : "text-slate-400"}
-            />
-            <span>{t.label || ISSUED_CHECK_TYPE_LABELS[t.id] || t.id}</span>
-            {t.sub && (
-              <span className="text-[9px] font-bold opacity-70">{t.sub}</span>
-            )}
+            <Icon size={18} className={active ? `text-${t.color}-600` : "text-slate-400"} />
+            <span>{t.label}</span>
+            <span className="text-[9px] font-bold opacity-70">{t.sub}</span>
           </button>
         );
       })}
@@ -559,55 +290,30 @@ function TypeSelector({ value, onChange }) {
   );
 }
 
-function SettlementBadge({ enabled }) {
-  return (
-    <span
-      className={clsx(
-        "inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full border",
-        enabled
-          ? "bg-amber-50 text-amber-700 border-amber-200"
-          : "bg-emerald-50 text-emerald-700 border-emerald-200"
-      )}
-    >
-      {enabled ? <RotateCcw size={12} /> : <CheckCircle2 size={12} />}
-      {enabled ? "يتطلب تسوية" : "لا يتطلب تسوية"}
-    </span>
-  );
-}
-
-/* =========================
-   Main Component
-========================= */
-
+// ─────────────────────────────────────────────
+// المكوّن الرئيسي
+// ─────────────────────────────────────────────
 export default function TreasuryForm({
+  userRole,
   canPost = false,
   onSubmit,
   nextCheque,
   initialData,
   onCancel,
-  showToast,
+  showToast
 }) {
-  const T = safeTheme(useT?.());
-  const location = useLocation();
-
+  const T = useT();
   const isEdit = Boolean(initialData?.id);
 
-  const urlParams = useMemo(
-    () => new URLSearchParams(location?.search || ""),
-    [location?.search]
-  );
-
+  const location = useLocation();
+  const urlParams = new URLSearchParams(location?.search || "");
   const requestedType = normalizeIssuedCheckType(urlParams.get("type") || "aid");
-
   const defaultType =
     requestedType === "bank_charge" || ISSUED_CHECK_TYPE_LABELS[requestedType]
       ? requestedType
       : "aid";
 
-  const requiresChequeNumber = useCallback(
-    (type) => normalizeIssuedCheckType(type) !== "bank_charge",
-    []
-  );
+  const requiresChequeNumber = (type) => type !== "bank_charge";
 
   const getEmptyTx = useCallback(
     () => ({
@@ -621,103 +327,62 @@ export default function TreasuryForm({
       bankReference: "",
       employeeId: "",
       notes: "",
-      checkNum: requiresChequeNumber(defaultType) ? String(nextCheque || "") : "",
-
+      checkNum: requiresChequeNumber(defaultType) ? nextCheque || "" : "",
       aidCategory: "",
       aidRel: "",
       incidentDate: "",
-
       activityName: "",
       activityType: "",
       activityDate: "",
       participantsCount: "",
       activityLocation: "",
       memberSubscriptions: "",
-
       requires_settlement: getDefaultRequiresSettlement(defaultType),
       attachments: [],
       state: canPost ? "posted" : "draft",
     }),
-    [canPost, defaultType, nextCheque, requiresChequeNumber]
+    [defaultType, nextCheque, canPost]
   );
 
-  const [tx, setTx] = useState(() => {
-    if (!isEdit) return getEmptyTx();
-
-    const normalizedType = normalizeIssuedCheckType(
-      initialData?.type || defaultType
-    );
-
-    return {
-      ...getEmptyTx(),
-      ...initialData,
-      type: normalizedType,
-      requires_settlement:
-        initialData?.requires_settlement ??
-        initialData?.requiresSettlement ??
-        getDefaultRequiresSettlement(normalizedType),
-    };
-  });
-
+  const [tx, setTx] = useState(() =>
+    isEdit
+      ? {
+          ...getEmptyTx(),
+          ...initialData,
+          type: normalizeIssuedCheckType(initialData?.type || defaultType),
+          requires_settlement:
+            initialData?.requires_settlement ??
+            initialData?.requiresSettlement ??
+            getDefaultRequiresSettlement(normalizeIssuedCheckType(initialData?.type || defaultType)),
+        }
+      : getEmptyTx()
+  );
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
-
   const [employeesDB, setEmployeesDB] = useState([]);
-  const [loadingEmployees, setLoadingEmployees] = useState(false);
-
-  const [searchQ, setSearchQ] = useState(
-    initialData?.party || initialData?.beneficiaryName || ""
-  );
+  const [searchQ, setSearchQ] = useState(initialData?.party || initialData?.beneficiaryName || "");
   const [searchRes, setSearchRes] = useState([]);
   const [showRes, setShowRes] = useState(false);
   const [empData, setEmpData] = useState(null);
-
-  const [amountManuallyEdited, setAmountManuallyEdited] = useState(
-    Boolean(isEdit)
-  );
-  const [notesManuallyEdited, setNotesManuallyEdited] = useState(
-    Boolean(isEdit && initialData?.notes)
-  );
-
-
-  const normalizedType = normalizeIssuedCheckType(tx.type);
-
-  const isAid = normalizedType === "aid";
-  const isAdvance = normalizedType === "advance";
-  const isTrip = normalizedType === "trip";
-  const isEvent = normalizedType === "event";
-  const isDirectCharge = normalizedType === "bank_charge";
-
-  const usesEmployeeLookup = EMPLOYEE_LOOKUP_TYPES.includes(normalizedType);
-  const usesEventDetails = EVENT_DETAILS_TYPES.includes(normalizedType);
-  const allowsOptionalSettlement =
-    OPTIONAL_SETTLEMENT_TYPES.includes(normalizedType);
-
+  const [amountManuallyEdited, setAmountManuallyEdited] = useState(Boolean(isEdit));
   const currentRequiresSettlement = Boolean(tx.requires_settlement);
-
-  const typeColor = ISSUED_CHECK_TYPE_COLORS[normalizedType] || "teal";
-  const typeLabel =
-    normalizedType === "bank_charge"
-      ? "خصم مباشر"
-      : getIssuedCheckTypeLabel(normalizedType);
+  const isAid = tx.type === "aid";
+  const isAdvance = tx.type === "advance";
+  const isTrip = tx.type === "trip";
+  const isEvent = tx.type === "event";
+  const isDirectCharge = tx.type === "bank_charge";
+  const usesEmployeeLookup = EMPLOYEE_LOOKUP_TYPES.includes(tx.type);
+  const usesEventDetails = EVENT_DETAILS_TYPES.includes(tx.type);
+  const allowsOptionalSettlement = OPTIONAL_SETTLEMENT_TYPES.includes(tx.type);
 
   const suggestedAidAmount = useMemo(() => {
     if (!tx.aidCategory || !tx.aidRel) return "";
     return AID_AMOUNTS[`${tx.aidCategory}:${tx.aidRel}`] || 300;
   }, [tx.aidCategory, tx.aidRel]);
 
-  const aidRelOptions = useMemo(() => {
-    if (!tx.aidCategory) return [];
-    return AID_RELS[tx.aidCategory] || [];
-  }, [tx.aidCategory]);
-
   const update = useCallback((key, value) => {
-    setTx((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
-
-    setErrors((prevErr = {}) => {
+    setTx((prev) => ({ ...prev, [key]: value }));
+    setErrors((prevErr) => {
       if (!prevErr[key]) return prevErr;
       const nextErr = { ...prevErr };
       delete nextErr[key];
@@ -725,318 +390,93 @@ export default function TreasuryForm({
     });
   }, []);
 
-  const patchTx = useCallback((patch) => {
-    setTx((prev) => ({
-      ...prev,
-      ...patch,
-    }));
-
-    setErrors((prevErr = {}) => {
-      const nextErr = { ...prevErr };
-      Object.keys(patch).forEach((key) => delete nextErr[key]);
-      return nextErr;
-    });
-  }, []);
-
-  /* =========================
-     Load Employees
-  ========================= */
-
   useEffect(() => {
-    let mounted = true;
-
-    async function loadEmployees() {
-      setLoadingEmployees(true);
-
+    (async () => {
       try {
         const snap = await getDocs(query(collection(db, "employees")));
-
-        if (!mounted) return;
-
-        setEmployeesDB(
-          snap.docs.map((d) => ({
-            id: d.id,
-            ...d.data(),
-          }))
-        );
+        setEmployeesDB(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       } catch (err) {
         console.error("خطأ في جلب الأعضاء:", err);
-        showToast?.("تعذر تحميل بيانات الأعضاء", "error");
-      } finally {
-        if (mounted) setLoadingEmployees(false);
       }
-    }
-
-    loadEmployees();
-
-    return () => {
-      mounted = false;
-    };
-  }, [showToast]);
-
-  /* =========================
-     Employee Search
-  ========================= */
+    })();
+  }, []);
 
   useEffect(() => {
-    if (!searchQ || searchQ.trim().length < 2 || !showRes) {
+    if (!searchQ || searchQ.length < 2 || !showRes) {
       setSearchRes([]);
       return;
     }
 
-    const handle = window.setTimeout(() => {
-      const lq = searchQ.trim().toLowerCase();
+    const lq = searchQ.toLowerCase();
 
-      const filtered = employeesDB.filter((e) => {
-        const name = e.name?.toLowerCase() || "";
-        const jobId = e.jobId?.toString() || "";
-        const nationalId = e.nationalId?.toString() || "";
+    setSearchRes(
+      sortMembersByAgeThenJobId(
+        employeesDB.filter(
+          (e) =>
+            e.name?.toLowerCase().includes(lq) ||
+            e.jobId?.toString().includes(lq) ||
+            e.nationalId?.includes(lq)
+        )
+      ).slice(0, 6)
+    );
+  }, [searchQ, showRes, employeesDB]);
 
-        return (
-          name.includes(lq) || jobId.includes(lq) || nationalId.includes(lq)
-        );
-      });
-
-      setSearchRes(sortMembersByAgeThenJobId(filtered).slice(0, 8));
-    }, 180);
-
-    return () => window.clearTimeout(handle);
-  }, [employeesDB, searchQ, showRes]);
-
-  /* =========================
-     Auto Cheque Number
-  ========================= */
-
+  // اقتراح مبلغ الرعاية تلقائياً بدون منع التعديل اليدوي
   useEffect(() => {
-    if (isEdit) return;
-
-    if (requiresChequeNumber(normalizedType)) {
-      if (!tx.checkNum || String(tx.checkNum).trim().length === 0) {
-        update("checkNum", String(nextCheque || ""));
-      }
-    } else if (tx.checkNum) {
-      update("checkNum", "");
-    }
-  }, [
-    isEdit,
-    nextCheque,
-    normalizedType,
-    requiresChequeNumber,
-    tx.checkNum,
-    update,
-  ]);
-
-  /* =========================
-     Auto Aid Amount
-  ========================= */
-
-  useEffect(() => {
-    if (!isAid) return;
-    if (isEdit) return;
-    if (amountManuallyEdited) return;
+    if (!isAid || isEdit) return;
     if (!tx.aidCategory || !tx.aidRel) return;
+    if (amountManuallyEdited) return;
 
     update("amount", String(suggestedAidAmount));
   }, [
-    amountManuallyEdited,
     isAid,
+    tx.aidCategory,
+    tx.aidRel,
     isEdit,
+    amountManuallyEdited,
     suggestedAidAmount,
-    tx.aidCategory,
-    tx.aidRel,
-    update,
+    update
   ]);
 
-  /* =========================
-     Auto Notes
-  ========================= */
-
-  const buildAutoNotes = useCallback(() => {
-    if (isAid) {
-      return [
-        "صرف",
-        tx.aidCategory,
-        tx.aidRel ? `عن ${tx.aidRel}` : "",
-        tx.party ? `لصالح ${tx.party}` : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-    }
-
-    if (isAdvance) {
-      return tx.party
-        ? `صرف سلفة مؤقتة باسم ${tx.party}`
-        : "صرف سلفة مؤقتة";
-    }
-
-    if (isTrip) {
-      return [
-        "صرف مصروفات رحلة",
-        tx.activityName,
-        tx.activityLocation ? `بـ ${tx.activityLocation}` : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-    }
-
-    if (isEvent) {
-      return [
-        "صرف مصروفات فعالية",
-        tx.activityName,
-        tx.activityType ? `نوع ${tx.activityType}` : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-    }
-
-    if (isDirectCharge) {
-      return [
-        "خصم مباشر من الحساب",
-        tx.bankChargeCategory,
-        tx.bankReference ? `مرجع ${tx.bankReference}` : "",
-      ]
-        .filter(Boolean)
-        .join(" - ");
-    }
-
-    if (tx.expenseItem) {
-      return [
-        "صرف",
-        tx.expenseItem,
-        tx.beneficiaryName ? `لصالح ${tx.beneficiaryName}` : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-    }
-
-    return "";
-  }, [
-    isAid,
-    isAdvance,
-    isTrip,
-    isEvent,
-    isDirectCharge,
-    tx.aidCategory,
-    tx.aidRel,
-    tx.party,
-    tx.activityName,
-    tx.activityLocation,
-    tx.activityType,
-    tx.bankChargeCategory,
-    tx.bankReference,
-    tx.expenseItem,
-    tx.beneficiaryName,
-  ]);
-
+  // إعادة رقم الشيك عند تغيير النوع
   useEffect(() => {
-    if (notesManuallyEdited) return;
-
-    const generated = buildAutoNotes();
-
-    if (generated && generated !== tx.notes) {
-      update("notes", generated);
+    if (!isEdit && requiresChequeNumber(tx.type)) {
+      update("checkNum", nextCheque || "");
     }
-  }, [buildAutoNotes, notesManuallyEdited, tx.notes, update]);
+    if (!requiresChequeNumber(tx.type) && tx.checkNum) {
+      update("checkNum", "");
+    }
+  }, [tx.type, nextCheque, isEdit, update]);
 
-  /* =========================
-     Type Change
-  ========================= */
-
-  const handleTypeChange = useCallback(
-    (nextType) => {
-      const cleanType = normalizeIssuedCheckType(nextType);
-      const requiresSettlement = getDefaultRequiresSettlement(cleanType);
-      const needsCheque = requiresChequeNumber(cleanType);
-
-      patchTx({
-        type: cleanType,
-        requires_settlement: requiresSettlement,
-        checkNum: needsCheque ? tx.checkNum || String(nextCheque || "") : "",
-
-        aidCategory: cleanType === "aid" ? tx.aidCategory : "",
-        aidRel: cleanType === "aid" ? tx.aidRel : "",
-        incidentDate: cleanType === "aid" ? tx.incidentDate : "",
-
-        bankChargeCategory:
-          cleanType === "bank_charge" ? tx.bankChargeCategory : "",
-        bankReference: cleanType === "bank_charge" ? tx.bankReference : "",
-      });
-
-      setNotesManuallyEdited(false);
-
-      if (cleanType !== "aid") {
-        setAmountManuallyEdited(false);
-      }
-    },
-    [
-      nextCheque,
-      patchTx,
-      requiresChequeNumber,
-      tx.aidCategory,
-      tx.aidRel,
-      tx.bankChargeCategory,
-      tx.bankReference,
-      tx.checkNum,
-      tx.incidentDate,
-    ]
-  );
-
-  /* =========================
-     Employee Select
-  ========================= */
-
-  const selectEmployee = useCallback(
-    (emp) => {
-      patchTx({
-        party: emp.name || "",
-        employeeId: emp.jobId || emp.id || "",
-      });
-
-      setEmpData(emp);
-      setSearchQ(emp.name || "");
-      setShowRes(false);
-    },
-    [patchTx]
-  );
-
-  const clearEmployee = useCallback(() => {
-    patchTx({
-      party: "",
-      employeeId: "",
-    });
-
-    setEmpData(null);
-    setSearchQ("");
+  const selectEmployee = (emp) => {
+    update("party", emp.name);
+    update("employeeId", emp.jobId || emp.id);
+    setEmpData(emp);
+    setSearchQ(emp.name);
     setShowRes(false);
-  }, [patchTx]);
+  };
 
-  /* =========================
-     Validation
-  ========================= */
-
-  const validate = useCallback(() => {
+  const validate = () => {
     const e = {};
-    const amount = Number(tx.amount);
 
-    if (!tx.date) {
-      e.date = "التاريخ مطلوب";
-    }
+    if (!tx.date) e.date = "التاريخ مطلوب";
 
-    if (!tx.amount || !Number.isFinite(amount) || amount <= 0) {
+    if (!tx.amount || Number(tx.amount) <= 0) {
       e.amount = "أدخل مبلغاً موجباً";
+    } else if (!/^\d+(\.\d{1,2})?$/.test(String(tx.amount))) {
+      e.amount = "صيغة المبلغ غير صحيحة";
     }
 
-    if (
-      requiresChequeNumber(normalizedType) &&
-      !String(tx.checkNum || "").trim()
-    ) {
-      e.checkNum = "رقم الشيك مطلوب";
+    if (requiresChequeNumber(tx.type)) {
+      if (!tx.checkNum) {
+        e.checkNum = "رقم الشيك مطلوب";
+      } else if (!/^\d+$/.test(String(tx.checkNum))) {
+        e.checkNum = "رقم الشيك يجب أن يكون رقمياً فقط";
+      }
     }
 
     if (usesEmployeeLookup && !tx.party?.trim()) {
-      e.party = isAdvance
-        ? "اسم مسؤول السلفة مطلوب"
-        : "اسم العضو أو المسؤول مطلوب";
+      e.party = isAdvance ? "اسم مسؤول السلفة مطلوب" : "العضو أو المسؤول مطلوب";
     }
 
     if (!usesEmployeeLookup && !isDirectCharge && !tx.beneficiaryName?.trim()) {
@@ -1048,889 +488,848 @@ export default function TreasuryForm({
     }
 
     if (isAid) {
-      if (!tx.aidCategory) e.aidCategory = "اختر نوع الرعاية";
-      if (!tx.aidRel) e.aidRel = "اختر صلة المستفيد";
-    }
-
-    if (empData && isIndependentMember?.(empData) && usesEmployeeLookup) {
-      e.employee = "عضو نقابة مستقلة — لا يحق صرف شيكات";
+      if (!tx.aidCategory) e.aidCategory = "اختر نوع الإعانة";
+      if (!tx.aidRel) e.aidRel = "اختر صلة القرابة";
+      if (tx.incidentDate && tx.date && tx.incidentDate > tx.date) {
+        e.incidentDate = "تاريخ الواقعة لا يجوز أن يكون بعد تاريخ الحركة";
+      }
+      if (empData && !isEligibleForBenefit(empData, tx.date)) {
+        const retirementDate = getRetirementDate(empData);
+        e.party = retirementDate
+          ? `هذا العضو غير مستحق للإعانة بعد تاريخ المعاش (${formatEmployeeDate(retirementDate)}).`
+          : "هذا العضو غير مستحق للإعانة وفق حالة العضوية الحالية.";
+      }
     }
 
     if (usesEventDetails) {
-      if (!tx.activityName?.trim()) {
-        e.activityName = "اسم النشاط / الفعالية مطلوب";
-      }
-
-      if (!tx.activityType?.trim()) {
-        e.activityType = "نوع النشاط مطلوب";
+      if (!tx.activityName?.trim()) e.activityName = "اسم الفاعلية مطلوب";
+      if (!tx.activityType) e.activityType = isTrip ? "حدد نوع الرحلة" : "حدد نوع الفاعلية";
+      if (tx.participantsCount && Number(tx.participantsCount) < 0) {
+        e.participantsCount = "عدد المشاركين غير صحيح";
       }
     }
 
-    if (isTrip && tx.participantsCount && Number(tx.participantsCount) < 0) {
-      e.participantsCount = "عدد المشاركين غير صحيح";
+    if (OPTIONAL_SETTLEMENT_TYPES.includes(tx.type) && !tx.expenseItem?.trim()) {
+      e.expenseItem = "بند الصرف مطلوب";
+    }
+
+    if (isTrip) {
+      if (!tx.memberSubscriptions || Number(tx.memberSubscriptions) < 0) {
+        e.memberSubscriptions = "أدخل قيمة اشتراكات الأعضاء";
+      }
     }
 
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [
-    empData,
-    isAdvance,
-    isAid,
-    isDirectCharge,
-    isTrip,
-    normalizedType,
-    requiresChequeNumber,
-    tx,
-    usesEmployeeLookup,
-    usesEventDetails,
-  ]);
+  };
 
-  /* =========================
-     Save
-  ========================= */
-
-  const save = useCallback(async () => {
+  const save = async () => {
     if (!validate()) {
-      showToast?.(
-        "برجاء استكمال الحقول المطلوبة والمظللة باللون الأحمر",
-        "error"
-      );
+      showToast?.("برجاء استكمال الحقول المطلوبة", "error");
       return;
     }
 
     setSaving(true);
-
     try {
-      const cleanType = normalizeIssuedCheckType(tx.type);
       const requiresSettlement = Boolean(tx.requires_settlement);
-
-      const normalizedParty = usesEmployeeLookup
-        ? tx.party?.trim()
-        : tx.beneficiaryName?.trim();
-
+      const normalizedParty = usesEmployeeLookup ? tx.party : tx.beneficiaryName;
+      const normalizedType = normalizeIssuedCheckType(tx.type);
       const finalParty = isDirectCharge
-        ? tx.beneficiaryName?.trim() ||
-        tx.party?.trim() ||
-        "خصم بنكي مباشر"
+        ? tx.beneficiaryName?.trim() || tx.party?.trim() || "خصم بنكي مباشر"
         : normalizedParty;
 
-      const payload = {
-        ...tx,
-        id: initialData?.id,
-        type: cleanType,
-        typeLabel:
-          cleanType === "bank_charge"
-            ? "خصم مباشر"
-            : getIssuedCheckTypeLabel(cleanType),
-
-        amount: Number(tx.amount),
-        date: tx.date,
-
-        checkNum: requiresChequeNumber(cleanType)
-          ? String(tx.checkNum || "").trim()
-          : "",
-
-        party: finalParty || "",
-        beneficiaryName: tx.beneficiaryName?.trim() || finalParty || "",
-
-        employeeId: tx.employeeId || "",
-        notes: tx.notes?.trim() || buildAutoNotes(),
-
-        requires_settlement: requiresSettlement,
-        requiresSettlement,
-        settlement_mode: getSettlementMode(cleanType, requiresSettlement),
-
-        state: tx.state || (canPost ? "posted" : "draft"),
-
-        updatedAt: new Date().toISOString(),
-        createdAt: initialData?.createdAt || new Date().toISOString(),
-      };
-
-      await onSubmit?.(payload);
-
-      showToast?.(
-        isEdit ? "تم تحديث المستند بنجاح" : "تم حفظ المستند بنجاح",
-        "success"
+      await onSubmit(
+        {
+          ...tx,
+          type: normalizedType,
+          party: finalParty,
+          beneficiaryName: usesEmployeeLookup ? tx.beneficiaryName : finalParty,
+          amount: String(tx.amount).trim(),
+          checkNum: requiresChequeNumber(normalizedType) ? String(tx.checkNum).trim() : "",
+          participantsCount: tx.participantsCount ? String(tx.participantsCount).trim() : "",
+          memberSubscriptions: tx.memberSubscriptions ? String(tx.memberSubscriptions).trim() : "",
+          requires_settlement: isDirectCharge ? false : requiresSettlement,
+          requiresSettlement: isDirectCharge ? false : requiresSettlement,
+          settlement_mode: isDirectCharge ? "none" : getSettlementMode(normalizedType, requiresSettlement),
+          isSettled: isDirectCharge ? false : (requiresSettlement ? Boolean(tx.isSettled) : false),
+          settlementExpenses: isDirectCharge ? [] : (requiresSettlement ? (tx.settlementExpenses || []) : []),
+          advanceAmountBase: String(tx.amount).trim(),
+          employeeName: finalParty,
+          state: "posted",
+        },
+        isEdit
       );
-    } catch (error) {
-      console.error("خطأ أثناء الحفظ:", error);
-      showToast?.("حدث خطأ أثناء الحفظ، برجاء المحاولة مرة أخرى", "error");
+
+      if (!isEdit) {
+        const currentCheck = Number(tx.checkNum || nextCheque || 0);
+
+        setTx({
+          ...getEmptyTx(),
+          type: normalizedType,
+          checkNum: requiresChequeNumber(normalizedType) ? String(currentCheck + 1) : "",
+          requires_settlement: getDefaultRequiresSettlement(normalizedType),
+        });
+        setSearchQ("");
+        setEmpData(null);
+        setAmountManuallyEdited(false);
+        showToast?.("تم حفظ المستند بنجاح ✅");
+      }
+    } catch (err) {
+      console.error("خطأ في الحفظ:", err);
+      showToast?.("حدث خطأ أثناء الحفظ", "error");
     } finally {
       setSaving(false);
     }
-  }, [
-    buildAutoNotes,
-    canPost,
-    initialData?.createdAt,
-    initialData?.id,
-    isDirectCharge,
-    isEdit,
-    onSubmit,
-    requiresChequeNumber,
-    showToast,
-    tx,
-    usesEmployeeLookup,
-    validate,
-  ]);
-
-
-
-  /* =========================
-     Print
-  ========================= */
-
-  const handlePrintVoucher = useCallback(() => {
-    const printable = {
-      vType: normalizedType,
-      vNum: tx.id || tx.checkNum || "",
-      date: tx.date,
-      party: tx.party || tx.beneficiaryName || (isDirectCharge ? "خصم بنكي مباشر" : ""),
-      amount: Number(tx.amount || 0),
-      notes: tx.notes || buildAutoNotes(),
-      checkNum: tx.checkNum,
-      emp: empData,
-    };
-
-    printVoucher?.(printable);
-  }, [buildAutoNotes, empData, isDirectCharge, normalizedType, tx]);
-
-  const handlePrintAidRequest = useCallback(() => {
-    const printable = {
-      emp: empData,
-      aidCat: tx.aidCategory,
-      aidRel: tx.aidRel,
-      incDate: tx.incidentDate,
-      amount: Number(tx.amount || 0),
-      date: tx.date,
-      notes: tx.notes || buildAutoNotes(),
-    };
-
-    printAidRequest?.(printable);
-  }, [buildAutoNotes, empData, tx]);
-
-  const regenerateNotes = useCallback(() => {
-    const generated = buildAutoNotes();
-
-    update("notes", generated);
-    setNotesManuallyEdited(false);
-
-    showToast?.("تم إعادة توليد البيان تلقائياً", "success");
-  }, [buildAutoNotes, showToast, update]);
-
-  /* =========================
-     Render Helpers
-  ========================= */
-
-  const renderEmployeeLookup = () => (
-    <div className="space-y-2 sm:col-span-2 relative">
-      <label className={clsx("text-[11px] font-black flex gap-1", T.text)}>
-        {isAdvance ? "مسؤول السلفة" : "العضو / المسؤول"}
-        <span className="text-rose-500">*</span>
-      </label>
-
-      <div className="relative">
-        <Search
-          size={14}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-        />
-
-        <input
-          value={searchQ}
-          onChange={(e) => {
-            setSearchQ(e.target.value);
-            update("party", e.target.value);
-            setShowRes(true);
-          }}
-          onFocus={() => setShowRes(true)}
-          placeholder="ابحث بالاسم أو رقم العضوية أو الرقم القومي..."
-          className={clsx(
-            "w-full h-[38px] rounded-xl border px-3 pr-9 text-xs font-bold outline-none focus:ring-2 focus:ring-teal-500/10",
-            T.inp,
-            errors.party && "!border-rose-500 bg-rose-50/10"
-          )}
-        />
-
-        {searchQ && (
-          <button
-            type="button"
-            onClick={clearEmployee}
-            className="absolute left-2 top-1/2 -translate-y-1/2 p-1 rounded-lg hover:bg-slate-100"
-          >
-            <X size={13} className="text-slate-400" />
-          </button>
-        )}
-      </div>
-
-      {errors.party && (
-        <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1">
-          <AlertCircle size={11} />
-          {errors.party}
-        </p>
-      )}
-
-      {showRes && (
-        <div className="absolute z-30 mt-1 w-full rounded-xl border bg-white shadow-xl overflow-hidden">
-          {loadingEmployees ? (
-            <div className="p-3 text-xs font-bold text-slate-500 flex items-center gap-2">
-              <Loader2 size={14} className="animate-spin" />
-              جاري تحميل بيانات الأعضاء...
-            </div>
-          ) : searchRes.length ? (
-            searchRes.map((emp) => {
-              const retired = isRetiredMember?.(emp);
-              const eligible = isEligibleForBenefit?.(emp);
-              const retirementDate = getRetirementDate?.(emp);
-
-              return (
-                <button
-                  key={emp.id || emp.jobId || emp.nationalId}
-                  type="button"
-                  onClick={() => selectEmployee(emp)}
-                  className="w-full text-right p-3 hover:bg-teal-50 border-b last:border-b-0 transition-colors"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-black text-slate-800">
-                        {emp.name}
-                      </p>
-                      <p className="text-[10px] font-bold text-slate-500">
-                        رقم: {emp.jobId || "—"}
-                        {emp.department ? ` • ${emp.department}` : ""}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col items-end gap-1">
-                      {isIndependentMember?.(emp) && (
-                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-300">
-                          نقابة مستقلة
-                        </span>
-                      )}
-
-                      {retired && (
-                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                          متقاعد
-                        </span>
-                      )}
-
-                      {!isIndependentMember?.(emp) && eligible === false && (
-                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
-                          غير مستحق
-                        </span>
-                      )}
-
-                      {retirementDate && (
-                        <span className="text-[9px] text-slate-400">
-                          تقاعد: {formatEmployeeDate?.(retirementDate)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              );
-            })
-          ) : searchQ.trim().length >= 2 ? (
-            <div className="p-3 text-xs font-bold text-slate-500">
-              لا توجد نتائج مطابقة
-            </div>
-          ) : (
-            <div className="p-3 text-xs font-bold text-slate-500">
-              اكتب حرفين على الأقل للبحث
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-
-  const renderBeneficiaryInput = () => (
-    <ERPInput
-      label={isDirectCharge ? "اسم الجهة / المستفيد" : "اسم المستفيد"}
-      icon={Building}
-      required={!isDirectCharge}
-      value={tx.beneficiaryName || ""}
-      onChange={(e) => update("beneficiaryName", e.target.value)}
-      error={errors.beneficiaryName}
-      placeholder="مثال: شركة / مورد / جهة مستفيدة"
-      fullWidth
-    />
-  );
-
-  const renderAidFields = () => {
-    if (!isAid) return null;
-
-    return (
-      <ERPSection
-        title="بيانات الرعاية"
-        icon={Heart}
-        colorClass="rose"
-        badge={suggestedAidAmount ? `${formatMoney(suggestedAidAmount)} ج.م` : ""}
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <ERPSelect
-            label="نوع الرعاية"
-            icon={Heart}
-            required
-            value={tx.aidCategory || ""}
-            onChange={(e) => {
-              patchTx({
-                aidCategory: e.target.value,
-                aidRel: "",
-              });
-              setNotesManuallyEdited(false);
-            }}
-            error={errors.aidCategory}
-          >
-            <option value="">اختر نوع الرعاية</option>
-            {Object.keys(AID_RELS).map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </ERPSelect>
-
-          <ERPSelect
-            label="صلة المستفيد"
-            icon={Users}
-            required
-            value={tx.aidRel || ""}
-            onChange={(e) => {
-              update("aidRel", e.target.value);
-              setNotesManuallyEdited(false);
-            }}
-            error={errors.aidRel}
-            disabled={!tx.aidCategory}
-          >
-            <option value="">اختر الصلة</option>
-            {aidRelOptions.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </ERPSelect>
-
-          <div>
-            <label className={clsx("text-[11px] font-black flex gap-1 mb-1", T.text)}>تاريخ الواقعة</label>
-            {ArabicDatePicker ? (
-              <ArabicDatePicker
-                value={tx.incidentDate || ""}
-                onChange={(value) => update("incidentDate", value)}
-                maxVal={new Date().toISOString().split("T")[0]}
-              />
-            ) : (
-              <input
-                type="date"
-                value={tx.incidentDate || ""}
-                max={new Date().toISOString().split("T")[0]}
-                onChange={(e) => update("incidentDate", e.target.value)}
-                className="w-full h-[38px] rounded-xl border px-3 text-xs font-bold"
-              />
-            )}
-          </div>
-
-          <div className="rounded-xl border border-teal-200 bg-teal-50 p-3 flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-black text-teal-700">
-                قيمة الرعاية المقترحة
-              </p>
-              <p className="text-[10px] font-bold text-teal-600">
-                يتم تحديث المبلغ تلقائياً ما لم يتم تعديله يدوياً
-              </p>
-            </div>
-
-            <strong className="text-sm font-black text-teal-700">
-              {formatMoney(suggestedAidAmount || tx.amount)} ج.م
-            </strong>
-          </div>
-        </div>
-      </ERPSection>
-    );
   };
 
-  const renderActivityFields = () => {
-    if (!usesEventDetails && !isTrip && !isEvent) return null;
-
-    return (
-      <ERPSection
-        title={isTrip ? "بيانات الرحلة" : "بيانات النشاط / الفعالية"}
-        icon={isTrip ? MapPin : Activity}
-        colorClass={isTrip ? "blue" : "purple"}
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <ERPInput
-            label="اسم النشاط / الفعالية"
-            icon={Sparkles}
-            required
-            value={tx.activityName || ""}
-            onChange={(e) => {
-              update("activityName", e.target.value);
-              setNotesManuallyEdited(false);
-            }}
-            error={errors.activityName}
-            placeholder="مثال: رحلة القاهرة / حفل تكريم"
-          />
-
-          <ERPSelect
-            label="نوع النشاط"
-            icon={Activity}
-            required
-            value={tx.activityType || ""}
-            onChange={(e) => {
-              update("activityType", e.target.value);
-              setNotesManuallyEdited(false);
-            }}
-            error={errors.activityType}
-          >
-            <option value="">اختر النوع</option>
-            {ACTIVITY_TYPES.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </ERPSelect>
-
-          <ERPInput
-            label="تاريخ النشاط"
-            icon={Info}
-            type="date"
-            value={tx.activityDate || ""}
-            onChange={(e) => update("activityDate", e.target.value)}
-          />
-
-          <ERPInput
-            label="مكان النشاط"
-            icon={MapPin}
-            value={tx.activityLocation || ""}
-            onChange={(e) => update("activityLocation", e.target.value)}
-            placeholder="المكان / المدينة"
-          />
-
-          <ERPInput
-            label="عدد المشاركين"
-            icon={Users}
-            isNumeric
-            value={tx.participantsCount || ""}
-            onChange={(e) =>
-              update("participantsCount", normalizeIntegerInput(e.target.value))
-            }
-            error={errors.participantsCount}
-          />
-
-          <ERPInput
-            label="اشتراكات الأعضاء"
-            icon={DollarSign}
-            isNumeric
-            value={tx.memberSubscriptions || ""}
-            onChange={(e) =>
-              update("memberSubscriptions", normalizeNumericInput(e.target.value))
-            }
-            placeholder="إن وجدت"
-          />
-        </div>
-      </ERPSection>
-    );
-  };
-
-  const renderDirectChargeFields = () => {
-    if (!isDirectCharge) return null;
-
-    return (
-      <ERPSection
-        title="بيانات الخصم البنكي المباشر"
-        icon={Landmark}
-        colorClass="slate"
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <ERPSelect
-            label="نوع الخصم"
-            icon={Landmark}
-            required
-            value={tx.bankChargeCategory || ""}
-            onChange={(e) => {
-              update("bankChargeCategory", e.target.value);
-              setNotesManuallyEdited(false);
-            }}
-            error={errors.bankChargeCategory}
-          >
-            <option value="">اختر نوع الخصم</option>
-            {DIRECT_BANK_CHARGE_OPTIONS.map((item) => (
-              <option key={item.value || item} value={item.value || item}>
-                {item.label || item}
-              </option>
-            ))}
-          </ERPSelect>
-
-          <ERPInput
-            label="مرجع العملية البنكية"
-            icon={Hash}
-            value={tx.bankReference || ""}
-            onChange={(e) => {
-              update("bankReference", e.target.value);
-              setNotesManuallyEdited(false);
-            }}
-            placeholder="رقم العملية / المرجع البنكي"
-          />
-        </div>
-      </ERPSection>
-    );
-  };
-
-  const renderOtherFields = () => {
-    if (isAid || isDirectCharge || isAdvance || isTrip || isEvent) return null;
-
-    return (
-      <ERPSection title="بيانات البند" icon={Tag} colorClass="amber">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <ERPSelect
-            label="بند الصرف"
-            icon={Tag}
-            value={tx.expenseItem || ""}
-            onChange={(e) => {
-              update("expenseItem", e.target.value);
-              setNotesManuallyEdited(false);
-            }}
-          >
-            <option value="">اختر بند الصرف</option>
-            {EXPENSE_ITEM_OPTIONS.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </ERPSelect>
-        </div>
-      </ERPSection>
-    );
-  };
-
-  /* =========================
-     Component Render
-  ========================= */
+  const color = ISSUED_CHECK_TYPE_COLORS[tx.type] || "teal";
 
   return (
-    <div dir="rtl" className="w-full max-w-6xl mx-auto space-y-4">
-      <div className={clsx("rounded-2xl border shadow-sm p-4", T.card)}>
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <div
-                className={clsx(
-                  "p-2 rounded-xl",
-                  getColorStyle(typeColor).softBg
-                )}
-              >
-                <FileText
-                  size={18}
-                  className={getColorStyle(typeColor).text}
-                />
+    <div
+      className="w-full min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800"
+      dir="rtl"
+    >
+      {/* ── Header ثابت ── */}
+      <div
+        className={clsx(
+          "fixed top-0 left-0 right-0 z-50",
+          "border-b border-slate-200 dark:border-slate-700",
+          "bg-white/98 dark:bg-slate-900/98 backdrop-blur-xl shadow-sm"
+        )}
+      >
+        <div className="max-w-6xl mx-auto px-4 py-3">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className={clsx("p-2.5 rounded-lg shrink-0", `bg-${color}-500/10`)}>
+                <Landmark size={20} className={`text-${color}-600`} />
               </div>
 
-              <div>
-                <h2 className={clsx("text-lg font-black", T.text)}>
-                  {isEdit ? "تعديل مستند مالي" : "إصدار مستند مالي"}
-                </h2>
-                <p className={clsx("text-xs font-bold", T.muted)}>
-                  النوع الحالي: {typeLabel}
+              <div className="min-w-0">
+                <h1 className="text-sm font-black text-slate-900 dark:text-white truncate">
+                  {isDirectCharge
+                    ? isEdit
+                      ? "تعديل حركة مالية مباشرة"
+                      : "إضافة حركة مالية مباشرة"
+                    : isEdit
+                      ? "تعديل إصدار شيك"
+                      : "إصدار شيك جديد"}
+                </h1>
+                <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                  {ISSUED_CHECK_TYPE_LABELS[tx.type] || tx.type}
                 </p>
               </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <SettlementBadge enabled={currentRequiresSettlement} />
+            <div className="hidden md:block">
+              <WorkflowStepper state={tx.state} />
+            </div>
 
-            {requiresChequeNumber(normalizedType) && tx.checkNum && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full border bg-sky-50 text-sky-700 border-sky-200">
-                <Hash size={12} />
-                شيك رقم: {tx.checkNum}
-              </span>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              {onCancel && (
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className={clsx(
+                    "p-2 rounded-lg border hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-900/20 transition-all",
+                    T.btn
+                  )}
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
-
-        {WorkflowStepper && (
-          <div className="mt-4">
-            <WorkflowStepper state={tx.state} />
-          </div>
-        )}
       </div>
 
-      <ERPSection title="نوع المستند" icon={FileText} colorClass={typeColor}>
-        <TypeSelector value={normalizedType} onChange={handleTypeChange} />
-      </ERPSection>
+      {/* ── Main Content ── */}
+      <div className={clsx("max-w-6xl mx-auto mt-20 pb-32 px-4 space-y-4", T.text)}>
+        <div className={clsx("p-4 rounded-2xl border shadow-sm", T.card)}>
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-1 h-6 bg-teal-500 rounded-full"></div>
+            <div>
+              <p className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase">
+                نوع الحركة المالية
+              </p>
+              {isEdit && <p className="text-[10px] font-bold text-slate-400 mt-1">يمكنك تغيير نوع الحركة وسيتم تحديث الحقول التابعة لها تلقائيًا مع الإبقاء على البيانات المشتركة.</p>}
+            </div>
+          </div>
 
-      <ERPSection title="البيانات الأساسية" icon={Info} colorClass="teal">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <TypeSelector
+            value={tx.type}
+            onChange={(v) => {
+              const normalizedType = normalizeIssuedCheckType(v);
+              setAmountManuallyEdited(false);
+              setSearchQ("");
+              setEmpData(null);
+              setTx((prev) => ({
+                ...getEmptyTx(),
+                id: prev.id,
+                createdAt: prev.createdAt,
+                updatedAt: prev.updatedAt,
+                state: prev.state,
+                attachments: prev.attachments || [],
+                amount: prev.amount,
+                date: prev.date,
+                notes: prev.notes,
+                checkNum: requiresChequeNumber(normalizedType) ? (prev.checkNum || nextCheque || "") : "",
+                type: normalizedType,
+                requires_settlement: normalizedType === "bank_charge" ? false : getDefaultRequiresSettlement(normalizedType),
+                party: EMPLOYEE_LOOKUP_TYPES.includes(normalizedType) ? prev.party : "",
+                employeeId: EMPLOYEE_LOOKUP_TYPES.includes(normalizedType) ? prev.employeeId : "",
+                beneficiaryName: EMPLOYEE_LOOKUP_TYPES.includes(normalizedType) ? "" : (prev.beneficiaryName || prev.party || ""),
+                expenseItem: OPTIONAL_SETTLEMENT_TYPES.includes(normalizedType) || normalizedType === "bank_charge" ? prev.expenseItem : "",
+                bankChargeCategory: normalizedType === "bank_charge" ? prev.bankChargeCategory : "",
+                bankReference: normalizedType === "bank_charge" ? prev.bankReference : "",
+                activityName: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.activityName : "",
+                activityType: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.activityType : "",
+                activityDate: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.activityDate : "",
+                activityLocation: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.activityLocation : "",
+                participantsCount: EVENT_DETAILS_TYPES.includes(normalizedType) ? prev.participantsCount : "",
+                memberSubscriptions: normalizedType === "trip" ? prev.memberSubscriptions : "",
+                aidCategory: normalizedType === "aid" ? prev.aidCategory : "",
+                aidRel: normalizedType === "aid" ? prev.aidRel : "",
+                incidentDate: normalizedType === "aid" ? prev.incidentDate : "",
+              }));
+            }}
+          />
+        </div>
+
+        {/* البيانات الأساسية */}
+        <ERPSection
+          title="بيانات السند الأساسية"
+          icon={FileText}
+          colorClass="slate"
+          badge={tx.state === "posted" ? "مرحّل" : "مسودة"}
+        >
           <div className="space-y-1">
-            <label
-              className={clsx("text-[11px] font-black flex gap-1", T.text)}
-            >
-              التاريخ
-              <span className="text-rose-500">*</span>
-            </label>
-
-            {ArabicDatePicker ? (
-              <ArabicDatePicker
-                value={tx.date || ""}
-                onChange={(value) => update("date", value)}
-                minVal={isAid && tx.incidentDate ? tx.incidentDate : (isTrip || usesEventDetails ? new Date().toISOString().split("T")[0] : "")}
-                className={clsx(
-                  "w-full h-[38px]",
-                  errors.date && "!border-rose-500"
-                )}
-              />
-            ) : (
-              <input
-                type="date"
-                value={tx.date || ""}
-                onChange={(e) => update("date", e.target.value)}
-                className={clsx(
-                  "w-full h-[38px] rounded-xl border px-3 text-xs font-bold",
-                  T.inp,
-                  errors.date && "!border-rose-500"
-                )}
-              />
-            )}
-
+            <ArabicDatePicker
+              label="تاريخ الحركة"
+              required
+              value={tx.date}
+              maxVal={getTodayISO()}
+              onChange={(v) => update("date", v)}
+            />
             {errors.date && (
-              <p className="text-[10px] font-bold text-rose-600">
+              <p className="text-[9px] text-rose-500 font-black flex items-center gap-1">
+                <AlertCircle size={10} />
                 {errors.date}
               </p>
             )}
           </div>
 
           <ERPInput
-            label="المبلغ"
-            icon={DollarSign}
+            label={isDirectCharge ? "قيمة الخصم المباشر (ج.م)" : "المبلغ الإجمالي (ج.م)"}
             required
-            isNumeric
-            value={tx.amount || ""}
+            value={tx.amount}
             onChange={(e) => {
+              if (isAid) setAmountManuallyEdited(true);
               update("amount", normalizeNumericInput(e.target.value));
-              setAmountManuallyEdited(true);
             }}
+            isNumeric
             error={errors.amount}
-            placeholder="0"
+            icon={DollarSign}
+            placeholder="0.00"
             footer={
-              tx.amount ? (
-                <p className="text-[10px] font-bold text-slate-500">
-                  القيمة: {formatMoney(tx.amount)} ج.م
+              tx.amount && !errors.amount ? (
+                <p className="text-[9px] text-emerald-600 font-black pr-1">
+                  {formatMoney(tx.amount)} ج.م
                 </p>
               ) : null
             }
           />
 
-          {requiresChequeNumber(normalizedType) && (
-            <ERPInput
-              label="رقم الشيك"
-              icon={Hash}
-              required
-              value={tx.checkNum || ""}
-              onChange={(e) =>
-                update("checkNum", normalizeIntegerInput(e.target.value))
-              }
-              error={errors.checkNum}
-              placeholder="رقم الشيك"
-            />
-          )}
-
-          <ERPSelect
-            label="حالة المستند"
-            icon={CheckCircle2}
-            value={tx.state || "draft"}
-            onChange={(e) => update("state", e.target.value)}
-          >
-            <option value="draft">مسودة</option>
-            <option value="posted">مرحل</option>
-            <option value="paid">مدفوع</option>
-            <option value="cancelled">ملغي</option>
-          </ERPSelect>
-
-          {allowsOptionalSettlement && (
-            <ERPSelect
-              label="التسوية"
-              icon={RotateCcw}
-              value={currentRequiresSettlement ? "yes" : "no"}
-              onChange={(e) =>
-                update("requires_settlement", e.target.value === "yes")
-              }
-            >
-              <option value="no">لا يتطلب تسوية</option>
-              <option value="yes">يتطلب تسوية</option>
-            </ERPSelect>
-          )}
-        </div>
-      </ERPSection>
-
-      <ERPSection
-        title="المستفيد / الطرف"
-        icon={usesEmployeeLookup ? UserCheck : Building}
-        colorClass="sky"
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {usesEmployeeLookup ? renderEmployeeLookup() : renderBeneficiaryInput()}
-        </div>
-
-        {empData && (
-          <div className="mt-3 rounded-xl border bg-slate-50 p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-            <div>
-              <p className="text-xs font-black text-slate-800">
-                {empData.name}
-              </p>
-              <p className="text-[10px] font-bold text-slate-500">
-                رقم العضوية: {empData.jobId || "—"}
-                {empData.department ? ` • ${empData.department}` : ""}
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {isRetiredMember?.(empData) && (
-                <span className="text-[10px] font-black px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                  عضو متقاعد
+          {requiresChequeNumber(tx.type) ? (
+          <div className="sm:col-span-2 space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase pr-1 flex justify-between">
+                رقم الشيك البنكي
+                <span className="text-[9px] text-amber-500 font-bold">
+                  المقترح: #{nextCheque}
                 </span>
-              )}
+              </label>
 
-              {isIndependentMember?.(empData) && (
-                <span className="text-[10px] font-black px-2 py-1 rounded-full bg-red-50 text-red-700 border border-red-300">
-                  نقابة مستقلة — لا يحق الصرف
-                </span>
+              <div className="relative group">
+                <Hash
+                  size={14}
+                  className={clsx(
+                    "absolute right-3 top-2.5 z-10 pointer-events-none",
+                    errors.checkNum ? "text-rose-500" : "text-slate-400"
+                  )}
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={tx.checkNum}
+                  onChange={(e) => update("checkNum", normalizeIntegerInput(e.target.value))}
+                  className={clsx(
+                    "w-full pr-9 pl-4 py-2 rounded-xl border text-xs font-bold outline-none focus:ring-2 h-[38px]",
+                    T.inp,
+                    errors.checkNum && "!border-rose-500 bg-rose-50/10"
+                  )}
+                  placeholder={String(nextCheque || "")}
+                />
+              </div>
+
+              {errors.checkNum && (
+                <p className="text-[9px] text-rose-500 font-black flex items-center gap-1">
+                  <AlertCircle size={10} />
+                  {errors.checkNum}
+                </p>
               )}
-              {!isIndependentMember?.(empData) && isEligibleForBenefit?.(empData) === false && (
-                <span className="text-[10px] font-black px-2 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
-                  غير مستحق للرعاية
-                </span>
-              )}
-            </div>
           </div>
-        )}
-      </ERPSection>
-
-      {renderAidFields()}
-      {renderActivityFields()}
-      {renderDirectChargeFields()}
-      {renderOtherFields()}
-
-      <ERPSection title="البيان والمرفقات" icon={FileText} colorClass="teal">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <ERPTextarea
-            label="البيان"
+          ) : (
+          <ERPInput
+            label="مرجع العملية البنكية"
+            value={tx.bankReference || ""}
+            onChange={(e) => update("bankReference", e.target.value)}
+            icon={Hash}
+            placeholder="اختياري: رقم العملية أو مرجع البنك"
             fullWidth
-            value={tx.notes || ""}
-            onChange={(e) => {
-              update("notes", e.target.value);
-              setNotesManuallyEdited(true);
-            }}
-            placeholder="يتم توليد البيان تلقائياً ويمكن تعديله..."
           />
+          )}
+        </ERPSection>
 
-          <div className="sm:col-span-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={regenerateNotes}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100"
-            >
-              <Sparkles size={14} />
-              إعادة توليد البيان
-            </button>
-
-            {notesManuallyEdited && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-2 py-1">
-                <Info size={12} />
-                تم تعديل البيان يدوياً
-              </span>
-            )}
-          </div>
-
-          <div className="sm:col-span-2">
-            <label
-              className={clsx("text-[11px] font-black flex gap-1 mb-2", T.text)}
-            >
-              المرفقات
-            </label>
-
-            {FileUpload ? (
-              <FileUpload
-                value={tx.attachments || []}
-                onChange={(files) => update("attachments", files || [])}
+        {allowsOptionalSettlement && (
+          <ERPSection title="إعدادات التسوية" icon={Wallet} colorClass="emerald">
+            <label className="sm:col-span-2 flex items-start gap-2 p-3 rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20 cursor-pointer hover:bg-emerald-100/70 transition-colors">
+              <input
+                type="checkbox"
+                checked={currentRequiresSettlement}
+                onChange={(e) => update("requires_settlement", e.target.checked)}
+                className="w-4 h-4 mt-0.5 accent-emerald-600"
               />
-            ) : (
-              <div className="rounded-xl border border-dashed p-4 text-xs font-bold text-slate-500">
-                مكون رفع الملفات غير متاح
+              <div>
+                <span className="text-xs font-black text-emerald-800 dark:text-emerald-400 block">هذا الشيك يتطلب تسوية لاحقة</span>
+                <span className="text-[10px] font-bold text-emerald-700/80 dark:text-emerald-300/80">يمكن استخدامه مع الميزانيات والأنشطة والمصروفات الأخرى حسب قرارك الإداري.</span>
+              </div>
+            </label>
+          </ERPSection>
+        )}
+
+        {!usesEmployeeLookup && !isDirectCharge && (
+          <ERPSection title="بيانات المستفيد وبند الصرف" icon={Building} colorClass="slate">
+            <ERPInput
+              label="اسم المستفيد"
+              required
+              value={tx.beneficiaryName || ""}
+              onChange={(e) => update("beneficiaryName", e.target.value)}
+              icon={User}
+              error={errors.beneficiaryName}
+              placeholder="اسم الجهة أو المستفيد"
+            />
+
+            <div className="space-y-1">
+              <DynamicSelect
+                label="بند الصرف *"
+                value={tx.expenseItem || ""}
+                onChange={(v) => update("expenseItem", v)}
+                icon={Tag}
+                defaultOptions={EXPENSE_ITEM_OPTIONS}
+              />
+              {errors.expenseItem && (
+                <p className="text-[9px] text-rose-500 font-black mt-1 flex items-center gap-1">
+                  <AlertCircle size={10} />
+                  {errors.expenseItem}
+                </p>
+              )}
+            </div>
+          </ERPSection>
+        )}
+
+        {isDirectCharge && (
+          <ERPSection title="بيانات الخصم المباشر" icon={Landmark} colorClass="slate" badge="بدون شيك">
+            <div className="space-y-1">
+              <DynamicSelect
+                label="نوع الخصم المباشر *"
+                value={tx.bankChargeCategory || ""}
+                onChange={(v) => update("bankChargeCategory", v)}
+                icon={Tag}
+                defaultOptions={DIRECT_BANK_CHARGE_OPTIONS}
+              />
+              {errors.bankChargeCategory && (
+                <p className="text-[9px] text-rose-500 font-black mt-1 flex items-center gap-1">
+                  <AlertCircle size={10} />
+                  {errors.bankChargeCategory}
+                </p>
+              )}
+            </div>
+
+            <ERPInput
+              label="الجهة أو البيان المختصر"
+              value={tx.beneficiaryName || ""}
+              onChange={(e) => update("beneficiaryName", e.target.value)}
+              icon={Building}
+              placeholder="مثال: البنك الأهلي - خصم كشف حساب"
+            />
+
+            <div className="sm:col-span-2 flex items-start gap-2 px-3 py-2 rounded-xl border bg-slate-50 dark:bg-slate-900/20 border-slate-200 dark:border-slate-800/40">
+              <Info size={14} className="text-slate-600 mt-0.5 shrink-0" />
+              <p className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                هذه الحركة تُخصم مباشرة من كشف الحساب البنكي ولا تحتاج إلى إصدار شيك أو تسوية لاحقة.
+              </p>
+            </div>
+          </ERPSection>
+        )}
+
+        {/* بيانات العضو / المسؤول */}
+        {usesEmployeeLookup && (
+          <ERPSection
+            title={usesEventDetails ? "مسؤول الشيك (الرحلة / الفاعلية)" : isAdvance ? "مسؤول السلفة / العهدة" : "العضو المستفيد"}
+            icon={User}
+            colorClass="teal"
+          >
+            <div className="sm:col-span-2 space-y-1 relative">
+              <label className="text-[10px] font-black text-slate-500 uppercase pr-1">
+                البحث في قاعدة الأعضاء *
+              </label>
+
+              <div className="relative group">
+                <Search size={14} className="absolute right-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  className={clsx(
+                    "w-full pr-9 pl-10 py-2 rounded-xl border text-xs font-bold outline-none focus:ring-2 h-[38px]",
+                    T.inp,
+                    errors.party && "!border-rose-500"
+                  )}
+                  value={searchQ}
+                  onChange={(e) => {
+                    setSearchQ(e.target.value);
+                    update("party", e.target.value);
+                    setShowRes(true);
+                  }}
+                  onFocus={() => setShowRes(true)}
+                  onBlur={() => setTimeout(() => setShowRes(false), 200)}
+                  placeholder="ابحث بالاسم أو الرقم الوظيفي أو القومي..."
+                />
+
+                {!!searchQ && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQ("");
+                      update("party", "");
+                      update("employeeId", "");
+                      setEmpData(null);
+                      setShowRes(false);
+                    }}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <X size={12} className="text-slate-400" />
+                  </button>
+                )}
+
+                {showRes && (
+                  <div
+                    className={clsx(
+                      "absolute top-full mt-1 w-full border rounded-xl shadow-2xl overflow-hidden z-[120]",
+                      T.card
+                    )}
+                  >
+                    {searchRes.length > 0 ? (
+                      searchRes.map((emp) => {
+                        const retired = isRetiredMember(emp);
+                        return (
+                        <button
+                          key={emp.id}
+                          type="button"
+                          onMouseDown={() => selectEmployee(emp)}
+                          className={clsx("w-full p-2.5 flex items-center justify-between hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors border-b last:border-0 text-right", retired && "bg-rose-50/60 dark:bg-rose-950/10")}
+                        >
+                          <div>
+                            <p className={clsx("text-[11px] font-black", retired && "line-through text-rose-700 dark:text-rose-300")}>{emp.name}</p>
+                            <p className="text-[9px] text-slate-400">
+                              {retired ? `محال للمعاش${emp.retirementDate ? ` - ${emp.retirementDate}` : ""}` : (emp.position || emp.jobTitle)}
+                            </p>
+                          </div>
+
+                          <span className="text-[9px] font-bold bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-400 px-2 py-0.5 rounded-lg">
+                            {emp.jobId || "—"}
+                          </span>
+                        </button>
+                      )})
+                    ) : searchQ.length >= 2 ? (
+                      <div className="p-3 text-[10px] font-bold text-slate-500">
+                        لا توجد نتائج مطابقة
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+
+              {tx.employeeId && (
+                <div className="flex items-center gap-1.5 text-teal-600 font-black text-[9px] mt-1 bg-teal-50 dark:bg-teal-900/30 w-fit px-2 py-0.5 rounded-lg">
+                  <UserCheck size={10} />
+                  مرتبط بالكود: {tx.employeeId}
+                </div>
+              )}
+
+              {isAid && empData && !isEligibleForBenefit(empData, tx.date) && (
+                <div className="mt-2 p-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-[10px] font-black">
+                  {getRetirementDate(empData)
+                    ? `هذا العضو غير مستحق للإعانة بعد تاريخ المعاش (${formatEmployeeDate(getRetirementDate(empData))}).`
+                    : "هذا العضو غير مستحق للإعانة أو المزايا وفق حالته الحالية."}
+                </div>
+              )}
+
+              {errors.party && (
+                <p className="text-[9px] text-rose-500 font-black flex items-center gap-1 mt-0.5">
+                  <AlertCircle size={10} />
+                  {errors.party}
+                </p>
+              )}
+            </div>
+          </ERPSection>
+        )}
+
+        {/* بيانات الإعانة */}
+        {isAid && (
+          <ERPSection title="موجبات صرف الإعانة" icon={Heart} colorClass="rose">
+            <ERPSelect
+              label="نوع الإعانة"
+              required
+              icon={Tag}
+              value={tx.aidCategory}
+              error={errors.aidCategory}
+              onChange={(e) => {
+                setAmountManuallyEdited(false);
+                update("aidCategory", e.target.value);
+                update("aidRel", "");
+              }}
+            >
+              <option value="">-- اختر نوع الإعانة --</option>
+              {Object.keys(AID_RELS).map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </ERPSelect>
+
+            <ERPSelect
+              label="صلة القرابة"
+              required
+              icon={Users}
+              value={tx.aidRel}
+              error={errors.aidRel}
+              onChange={(e) => {
+                setAmountManuallyEdited(false);
+                update("aidRel", e.target.value);
+              }}
+              disabled={!tx.aidCategory}
+            >
+              <option value="">-- اختر --</option>
+              {(AID_RELS[tx.aidCategory] || []).map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </ERPSelect>
+
+            <div className="sm:col-span-2 space-y-1">
+              <ArabicDatePicker
+                label="تاريخ واقعة الإعانة"
+                value={tx.incidentDate}
+                maxVal={tx.date}
+                onChange={(v) => update("incidentDate", v)}
+              />
+              {errors.incidentDate && (
+                <p className="text-[9px] text-rose-500 font-black flex items-center gap-1">
+                  <AlertCircle size={10} />
+                  {errors.incidentDate}
+                </p>
+              )}
+            </div>
+
+            {tx.aidCategory && tx.aidRel && (
+              <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 px-3 py-2 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <Info size={14} className="text-rose-500 shrink-0" />
+                  <p className="text-[10px] font-black text-rose-700 dark:text-rose-400">
+                    المبلغ المقترح:
+                    <span className="mr-1 text-rose-600 dark:text-rose-300">
+                      {formatMoney(suggestedAidAmount)} ج.م
+                    </span>
+                  </p>
+
+                  {amountManuallyEdited && (
+                    <span className="text-[9px] font-black text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-lg">
+                      تم تعديل المبلغ يدوياً
+                    </span>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAmountManuallyEdited(false);
+                    update("amount", String(suggestedAidAmount));
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-black border border-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/30 transition flex items-center gap-1"
+                >
+                  <RotateCcw size={11} />
+                  استعادة المبلغ المقترح
+                </button>
               </div>
             )}
-          </div>
-        </div>
-      </ERPSection>
+          </ERPSection>
+        )}
 
+        {/* بيانات الرحلة / الفاعلية */}
+        {usesEventDetails && (
+          <ERPSection
+            title={isTrip ? "تفاصيل الرحلة" : "تفاصيل الفاعلية"}
+            icon={isTrip ? MapPin : Activity}
+            colorClass={isTrip ? "indigo" : "amber"}
+            badge={isTrip ? "شيك + اشتراكات" : "تتطلب تسوية"}
+          >
+            <ERPInput
+              label={isTrip ? "اسم الرحلة" : "اسم الفاعلية / الحدث"}
+              required
+              fullWidth
+              value={tx.activityName || ""}
+              onChange={(e) => update("activityName", e.target.value)}
+              error={errors.activityName}
+              icon={Tag}
+              placeholder={isTrip ? "مثال: رحلة شرم الشيخ الصيفية" : "مثال: إفطار جماعي لشهر رمضان"}
+            />
+
+            <ERPSelect
+              label={isTrip ? "نوع الرحلة" : "نوع الفاعلية"}
+              required
+              icon={Tag}
+              value={tx.activityType || ""}
+              error={errors.activityType}
+              onChange={(e) => update("activityType", e.target.value)}
+            >
+              <option value="">-- حدد النوع --</option>
+              {ACTIVITY_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </ERPSelect>
+
+            <div className="space-y-1">
+              <ArabicDatePicker
+                label={isTrip ? "موعد الرحلة" : "موعد الفاعلية"}
+                value={tx.activityDate || ""}
+                minVal={getTodayISO()}
+                onChange={(v) => update("activityDate", v)}
+              />
+            </div>
+
+            <ERPInput
+              label="عدد المشاركين المتوقع"
+              value={tx.participantsCount || ""}
+              onChange={(e) => update("participantsCount", normalizeIntegerInput(e.target.value))}
+              isNumeric
+              icon={Users}
+              placeholder="عدد الأشخاص"
+              error={errors.participantsCount}
+            />
+
+            {isTrip && (
+              <ERPInput
+                label="اشتراكات الأعضاء"
+                required
+                value={tx.memberSubscriptions || ""}
+                onChange={(e) => update("memberSubscriptions", normalizeNumericInput(e.target.value))}
+                isNumeric
+                icon={DollarSign}
+                placeholder="0.00"
+                error={errors.memberSubscriptions}
+              />
+            )}
+
+            <ERPInput
+              label={isTrip ? "وجهة الرحلة" : "موقع الفاعلية"}
+              fullWidth
+              value={tx.activityLocation || ""}
+              onChange={(e) => update("activityLocation", e.target.value)}
+              icon={MapPin}
+              placeholder={isTrip ? "مثال: شرم الشيخ" : "مثال: قاعة النقابة"}
+            />
+
+            <div className={clsx("sm:col-span-2 flex items-start gap-2 px-3 py-2 rounded-xl border", isTrip ? "bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800/40" : "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/40")}>
+              <Info size={14} className={clsx("mt-0.5 shrink-0", isTrip ? "text-indigo-600" : "text-amber-600")} />
+              <p className={clsx("text-[10px] font-bold", isTrip ? "text-indigo-700 dark:text-indigo-400" : "text-amber-700 dark:text-amber-400")}>
+                {isTrip
+                  ? "ميزانية الرحلة في التسوية ستساوي قيمة الشيك مضافًا إليها اشتراكات الأعضاء المسجلة هنا."
+                  : "الفاعلية تُسوى لاحقًا على أساس أن إجمالي تكلفة الفاعلية يساوي قيمة هذا الشيك."}
+              </p>
+            </div>
+          </ERPSection>
+        )}
+
+        {/* الملاحظات والمرفقات */}
+        <ERPSection title="البيان التوضيحي والمرفقات" icon={FileText} colorClass="indigo">
+          <div className="sm:col-span-2 space-y-1">
+            <label className="text-[10px] font-black text-slate-400 uppercase pr-1">
+              {isDirectCharge
+                ? "تفاصيل الخصم المباشر"
+                : usesEventDetails
+                  ? "تفاصيل إضافية / بند الصرف"
+                  : "ملاحظات وبيان الشيك"}
+            </label>
+
+            <textarea
+              rows={3}
+              className={clsx(
+                "w-full px-3 py-2 rounded-xl border text-xs font-bold resize-none outline-none focus:ring-2",
+                T.inp
+              )}
+              value={tx.notes}
+              onChange={(e) => update("notes", e.target.value)}
+              placeholder={
+                isDirectCharge
+                  ? "اكتب شرحًا مختصرًا للعمولة أو المصروف البنكي المباشر..."
+                  : usesEventDetails
+                  ? "اكتب تفاصيل بنود الصرف والميزانية..."
+                  : "اكتب التفاصيل والمستندات المرفقة..."
+              }
+            />
+          </div>
+
+          {currentRequiresSettlement && !isDirectCharge && (
+            <div className="sm:col-span-2 flex items-start gap-2 bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800/40 px-3 py-2 rounded-xl">
+              <Info size={14} className="text-teal-600 mt-0.5 shrink-0" />
+              <p className="text-[10px] font-bold text-teal-700 dark:text-teal-400">
+                سيتم إرسال هذا الشيك لاحقًا إلى شاشة التسويات ضمن مجموعة موحدة باسم <span className="font-black">issued_checks</span>.
+              </p>
+            </div>
+          )}
+
+          {isDirectCharge && (
+            <div className="sm:col-span-2 flex items-start gap-2 bg-slate-50 dark:bg-slate-900/20 border border-slate-200 dark:border-slate-800/40 px-3 py-2 rounded-xl">
+              <Info size={14} className="text-slate-600 mt-0.5 shrink-0" />
+              <p className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                سيتم حفظ هذه الحركة المباشرة داخل سجل <span className="font-black">transactions</span> لتظهر في كشف الحساب والداش بورد ضمن المصروفات البنكية والعمولات.
+              </p>
+            </div>
+          )}
+
+          <div className="sm:col-span-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <FileUpload
+              existingFiles={tx.attachments || []}
+              onChange={(files) => update("attachments", files)}
+            />
+          </div>
+        </ERPSection>
+      </div>
+
+      {/* Footer ثابت */}
       <div
         className={clsx(
-          "sticky bottom-3 z-20 rounded-2xl border shadow-lg p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3",
-          T.card
+          "fixed bottom-0 left-0 right-0 z-50",
+          "border-t border-slate-200 dark:border-slate-700",
+          "bg-white/98 dark:bg-slate-900/98 backdrop-blur-xl shadow-sm"
         )}
       >
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
-          <Info size={14} />
-          <span>
-            راجع البيانات قبل الحفظ. المبلغ الحالي:{" "}
-            <strong className="text-slate-800">
-              {formatMoney(tx.amount)} ج.م
-            </strong>
-          </span>
-        </div>
+        <div className="max-w-6xl mx-auto px-4 py-3">
+          <div className="flex flex-wrap justify-between items-center gap-3">
+            <div className="hidden sm:flex items-center gap-4 text-[10px] font-bold text-slate-600 dark:text-slate-400">
+              {tx.checkNum && requiresChequeNumber(tx.type) && (
+                <span className="flex items-center gap-1">
+                  <Hash size={12} />
+                  شيك #{tx.checkNum}
+                </span>
+              )}
+              {tx.amount && (
+                <span className="text-emerald-600 dark:text-emerald-400 font-black">
+                  {formatMoney(tx.amount)} ج.م
+                </span>
+              )}
+            </div>
 
-        <div className="flex flex-wrap gap-2 justify-end">
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={saving}
-              className="px-4 py-2 rounded-xl text-xs font-black border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-            >
-              إلغاء
-            </button>
-          )}
+            <div className="flex gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={onCancel}
+                className={clsx(
+                  "flex-1 sm:flex-initial px-4 py-2 rounded-lg font-bold text-xs border transition-colors",
+                  T.btn
+                )}
+              >
+                إلغاء
+              </button>
 
-          {isAid && (
-            <button
-              type="button"
-              onClick={handlePrintAidRequest}
-              disabled={saving}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
-            >
-              <Printer size={14} />
-              طباعة طلب الرعاية
-            </button>
-          )}
+              {!isEdit && isAid && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (validate()) {
+                      printAidRequest?.({
+                        emp: empData,
+                        aidCat: tx.aidCategory,
+                        aidRel: tx.aidRel,
+                        incDate: tx.incidentDate,
+                        amount: tx.amount,
+                        date: tx.date,
+                        notes: tx.notes
+                      });
+                    }
+                  }}
+                  className="px-3 py-2 bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 dark:hover:bg-blue-900/50 rounded-lg font-black text-[10px] flex items-center gap-1.5 border border-blue-300 dark:border-blue-700 transition-all"
+                >
+                  <Printer size={12} />
+                  طلب
+                </button>
+              )}
 
-          <button
-            type="button"
-            onClick={handlePrintVoucher}
-            disabled={saving}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 disabled:opacity-60"
-          >
-            <Printer size={14} />
-            طباعة المستند
-          </button>
+              {!isEdit && !isDirectCharge && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (validate()) {
+                      printVoucher?.({
+                        vType: `إصدار شيك - ${ISSUED_CHECK_TYPE_LABELS[tx.type] || tx.type}`,
+                        vNum: tx.checkNum,
+                        date: tx.date,
+                        party: usesEmployeeLookup ? tx.party : tx.beneficiaryName,
+                        amount: tx.amount,
+                        notes: tx.notes,
+                        checkNum: tx.checkNum,
+                        extraFields:
+                          [
+                            { label: "نوع الشيك", value: ISSUED_CHECK_TYPE_LABELS[tx.type] || tx.type },
+                            ...(usesEventDetails
+                              ? [
+                                  { label: isTrip ? "اسم الرحلة" : "اسم الفاعلية", value: tx.activityName },
+                                  { label: isTrip ? "نوع الرحلة" : "نوع الفاعلية", value: tx.activityType },
+                                  { label: isTrip ? "الوجهة" : "الموقع", value: tx.activityLocation },
+                                ]
+                              : []),
+                            ...(OPTIONAL_SETTLEMENT_TYPES.includes(tx.type)
+                              ? [{ label: "بند الصرف", value: tx.expenseItem }]
+                              : []),
+                            ...(currentRequiresSettlement
+                              ? [{ label: "التسوية", value: "يتطلب تسوية" }]
+                              : [{ label: "التسوية", value: "لا يتطلب تسوية" }]),
+                          ]
+                      });
+                    }
+                  }}
+                  className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg font-black text-[10px] flex items-center gap-1.5 border transition-all"
+                >
+                  <Printer size={12} />
+                  سند
+                </button>
+              )}
 
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving}
-            className={clsx(
-              "inline-flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black transition-all disabled:opacity-60 disabled:cursor-not-allowed",
-              T.btn
-            )}
-          >
-            {saving ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                جاري الحفظ...
-              </>
-            ) : (
-              <>
-                <CheckCircle2 size={14} />
-                {isEdit ? "تحديث المستند" : "حفظ المستند"}
-              </>
-            )}
-          </button>
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving}
+                className={clsx(
+                  "flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-5 py-2 rounded-lg font-black text-xs transition-all",
+                  `bg-${color}-600 hover:bg-${color}-700 text-white disabled:opacity-50`
+                )}
+              >
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                {isEdit ? "تحديث" : "حفظ"}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
