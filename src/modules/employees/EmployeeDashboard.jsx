@@ -13,12 +13,13 @@ import {
   Users, X, CheckCircle2, AlertCircle, 
   ShieldCheck, Briefcase, Phone, UserCircle, MessageSquare, 
   Cake, GraduationCap, HeartHandshake, Mail, ArrowRight, CalendarClock, 
-  PieChart, Award, Activity, Building, Hash, RefreshCw
+  PieChart, Award, Activity, Building, Hash, RefreshCw, Upload,
 } from "lucide-react";
 import clsx from "clsx";
 
 import EmployeeForm from "./EmployeeForm";
 import EmployeeProfile from "./EmployeeProfileFund";
+import ExcelImporter from "./components/ExcelImporter";
 
 export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   const T = useT();
@@ -38,6 +39,7 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
   
   const [currentView, setCurrentView] = useState(forcedEmployeeId ? "profile" : "dashboard"); 
   const [selectedEmp, setSelectedEmp] = useState(null);
+  const [showImporter, setShowImporter] = useState(false);
 
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
@@ -388,6 +390,9 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
           <button onClick={openAddForm} className="px-5 py-2.5 bg-white text-teal-700 hover:bg-teal-50 rounded-xl font-black text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 flex-1 md:flex-none">
             <UserPlus size={16}/> تسجيل عضو جديد
           </button>
+          <button onClick={() => setShowImporter(true)} className="px-4 py-2.5 bg-white/20 backdrop-blur-sm border border-white/30 hover:bg-white/30 rounded-xl font-black text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 flex-1 md:flex-none text-white">
+            <Upload size={14}/> استيراد Excel
+          </button>
         </div>
       </div>
 
@@ -652,6 +657,7 @@ export default function EmployeeDashboard({ forcedEmployeeId = "" } = {}) {
         )}
       </div>
 
+      {showImporter && <ExcelImporter onClose={() => setShowImporter(false)} />}
     </div>
   );
 }
